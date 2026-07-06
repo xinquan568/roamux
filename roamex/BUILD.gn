@@ -13,9 +13,10 @@ group("roamex") {
 test("roamex_unittests") {
   sources = [ "test/roamex_smoke_unittest.cc" ]
   deps = [
-    "//roamex/common",
     "//base",
+    "//base/test:run_all_unittests",  # provides main() + base::TestSuite (inits FeatureList, AtExitManager)
     "//base/test:test_support",
+    "//roamex/common",
     "//testing/gtest",
   ]
 }
