@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Additive //roamex/common — shared helpers (features, prefs). No upstream edit (plan §12.2).
+
+source_set("common") {
+  sources = [
+    "roamex_features.cc",
+    "roamex_features.h",
+    "roamex_prefs.cc",
+    "roamex_prefs.h",
+  ]
+  deps = [
+    "//base",
+    "//components/prefs",
+  ]
+}

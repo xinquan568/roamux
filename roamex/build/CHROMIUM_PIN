@@ -1,0 +1,4 @@
+# The pinned upstream Chromium milestone (Q(i4)-A: latest stable; re-pin every milestone cycle).
+# Set this to the exact stable tag checked out at bootstrap (BOOTSTRAP.md step 2), e.g. "141.0.7390.54".
+# TODO(roam-1): pin on first fetch.
+UNPINNED

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# Roamex reference GN args — the default UNSIGNED personal-alpha, unbranded build (roam-4 / plan §11.8, §12.3).
+# Use: gn gen out/Default --args="$(tr '\n' ' ' < roamex/build/args/reference.gn)"
+
+# --- Unbranded build (no Google API keys ⇒ Google sign-in/sync non-functional by construction; §7.3) ---
+is_chrome_branded = false
+is_official_build = false
+
+# --- macOS-only target (§7.1); Apple-silicon first ---
+target_os = "mac"
+target_cpu = "arm64"
+
+# --- Fast, debuggable iteration build (component build; symbols on). Release/universal2 comes at M6. ---
+is_debug = false
+is_component_build = true
+symbol_level = 1
+blink_symbol_level = 0
+
+# --- Roamex sign-in posture: NOT a keyed-and-authorized build (§7.3 state 1 "keyless"). ---
+# A distributor enables the optional path by importing google_keys.gni + setting this true (§12.3).
+# roamex_signin_authorized_build = false   # (declared by //roamex once the buildflag lands)
+
+# --- Optional distributor Google API keys (keep OUT of source; §12.3). Uncomment on a keyed build: ---
+# import("//roamex/build/google_keys.gni")
