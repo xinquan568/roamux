@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# roam-39 (R9 / §7.9): the issue-link gate. Asserts a consistent roam-<N> across the PR's head branch,
+# title, and body, and that #N is an open issue (not a PR). PR-scoped; reads the PR event's fields (NOT
+# the checked-out merge commit); fork-safe; uses the default read-only GITHUB_TOKEN for the gh lookup.
+name: issue-link
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+permissions:
+  contents: read
+  issues: read
+jobs:
+  check-issue-link:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert roam-N linkage (fail-closed open-issue lookup)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+        run: |
+          bash scripts/checks/check-issue-link.sh \
+            --branch "$PR_BRANCH" --title "$PR_TITLE" --body "$PR_BODY" --repo "$REPO"
