@@ -9,16 +9,47 @@ group("roamex") {
   deps = [ "//roamex/common" ]
 }
 
-# E0 hello-world unit test (roam-1 acceptance: "a trivial //roamex unit test runs").
+# All Roamex test binaries. gn_all reaches tests through this group (patch 0001), so adding a test
+# target here never touches the upstream patch again.
+group("roamex_tests") {
+  testonly = true
+  deps = [
+    ":roamex_browser_unittests",
+    ":roamex_unittests",
+  ]
+}
+
+# Fast unit tests — //roamex code + small deps only (no browser layer). Keep this target light.
 test("roamex_unittests") {
   sources = [
+    "test/roamex_features_unittest.cc",
     "test/roamex_overlay_mechanism_unittest.cc",
+    "test/roamex_prefs_unittest.cc",
     "test/roamex_smoke_unittest.cc",
   ]
   deps = [
     "//base",
     "//base/test:run_all_unittests",  # provides main() + base::TestSuite (inits FeatureList, AtExitManager)
     "//base/test:test_support",
+    "//components/prefs:test_support",
+    "//roamex/common",
+    "//testing/gtest",
+  ]
+}
+
+# Browser-layer tests — link upstream browser code (heavy first build). The roam-3 hook proof lives
+# here so the fast target stays light. Deps notes (both hit for real): //chrome/browser/prefs:impl
+# alone does not link (browser_prefs.cc needs the full //chrome/browser component), and a bare
+# //base test main crashes (keyed-service registrars CHECK the UI thread / TestingBrowserProcess) —
+# so the target uses Chrome's canonical unit-test main, //chrome/test:test_support_unit.
+test("roamex_browser_unittests") {
+  sources = [ "test/roamex_browser_prefs_hook_unittest.cc" ]
+  deps = [
+    "//base",
+    "//chrome/test:test_support_unit",
+    "//components/pref_registry",
+    "//components/sync_preferences:test_support",
+    "//content/test:test_support",
     "//roamex/common",
     "//testing/gtest",
   ]

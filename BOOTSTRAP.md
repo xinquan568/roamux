@@ -11,6 +11,7 @@ See the execution plan §11–§12 (`docs/discussion/2026-07-05-roamex-browser-f
 |---|---|
 | **≥ ~150 GB free disk** | Chromium checkout (~40 GB) + build output (~60–100 GB). **This is the gating requirement.** |
 | **Xcode (FULL — not just CLT) + Command Line Tools** | Chromium's macOS build runs `xcodebuild`, which the Command Line Tools alone do **not** provide (`gn gen` fails at `sdk_info.py` otherwise). Install full Xcode from the App Store or developer.apple.com, then: `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer && sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch`. Verify: `xcodebuild -version`. |
+| **Xcode Metal Toolchain** | A separate ~700 MB Xcode component; GPU-adjacent Chromium code compiles `.metal` shaders and fails without it (`cannot execute tool 'metal'`). Install: `xcodebuild -downloadComponent MetalToolchain` (no sudo). Discovered building the browser-prefs layer (roam-3). |
 | **`depot_tools` on `PATH`** | `gclient`, `gn`, `autoninja`, `fetch`. Installed by the bootstrap step below. |
 | **macOS on Apple silicon** | Target is macOS-only (universal2 later; §11.10). |
 
