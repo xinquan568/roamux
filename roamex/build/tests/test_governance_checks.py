@@ -87,6 +87,17 @@ class SecretScanTest(TmpTree):
                        "const char* K = \"AKIAZ7XQ2WPL4NR8YT3D\";  // roamex:allow-secret\n")
         self.assertNotEqual(run_check("secret_scan.py", f).returncode, 0)
 
+    def test_allow_marker_ignored_when_path_merely_contains_test_(self):
+        # 'test_' as a bare substring of a non-test path must NOT enable suppression.
+        f = self.write("roamex/browser/contest_manager.cc",
+                       "K = 'AKIAZ7XQ2WPL4NR8YT3D'  # roamex:allow-secret\n")
+        r = run_check("secret_scan.py", f, cwd=str(self.tmp))
+        # invoke with the repo-relative path so the dir/basename gate sees the real shape
+        r2 = subprocess.run([sys.executable, str(CHECKS / "secret_scan.py"),
+                             "roamex/browser/contest_manager.cc"],
+                            capture_output=True, text=True, cwd=str(self.tmp))
+        self.assertNotEqual(r2.returncode, 0)
+
 
 class CommitMsgTest(TmpTree):
     def test_conventional_accepted(self):

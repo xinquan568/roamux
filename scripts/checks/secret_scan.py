@@ -21,15 +21,18 @@ ALLOWLIST = ("EXAMPLE", "<your", "your-", "placeholder", "REPLACE", "dummy", "fa
 # fixtures + *.template), so a normal source/config change cannot silence detection and slip a real
 # credential past CI. Same idea as detect-secrets' pragma / bandit's nosec, but path-scoped.
 ALLOW_MARKER = "roamex:allow-secret"
-SUPPRESSIBLE_PATHS = ("roamex/build/tests/", "/tests/", "test_")  # fixtures
+SUPPRESSIBLE_DIRS = ("roamex/build/tests/", "/tests/")  # a real tests directory
 SUPPRESSIBLE_SUFFIXES = (".template",)
 
 
 def _suppressible(path):
     p = path.replace("\\", "/")
     name = p.rsplit("/", 1)[-1]
-    return (any(s in p for s in SUPPRESSIBLE_PATHS)
+    # Only genuine test files (basename test_*.py / *_test.*), files in a tests/ dir, or *.template
+    # may carry the marker — NOT an arbitrary source path that merely contains "test_" somewhere.
+    return (any(d in p for d in SUPPRESSIBLE_DIRS)
             or name.startswith("test_")
+            or "_test." in name
             or any(p.endswith(suf) for suf in SUPPRESSIBLE_SUFFIXES))
 
 
