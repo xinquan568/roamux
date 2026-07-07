@@ -19,10 +19,16 @@ done
 
 fail() { echo "issue-link: $1" >&2; exit 1; }
 
-# Per-surface numeric extraction (each captures only digits, in its own syntax).
-bn=$(printf '%s' "$BRANCH" | grep -oE '(^|/)roam-[0-9]+-' | grep -oE '[0-9]+' | head -1)
-tn=$(printf '%s' "$TITLE"  | grep -oE '\(roam-[0-9]+\)[[:space:]]*$' | grep -oE '[0-9]+' | head -1)
-bd=$(printf '%s' "$BODY"   | grep -oiE 'closes #[0-9]+' | grep -oE '[0-9]+' | head -1)
+# Per-surface numeric extraction. Precise, boundary-anchored regex via python (portable across
+# BSD/GNU grep, which disagree on \b): each pattern captures only the digits, in its own syntax, and
+# rejects near-misses — branch requires a trailing "-<slug>"; title requires a terminal "(roam-N)";
+# body requires a whole-word "Closes" and no trailing alnum after the number (so "Closes #12x" and
+# "Encloses #12" are rejected).
+extract() { printf '%s' "$2" | ROAMEX_RE="$1" python3 -c \
+  'import os,re,sys; m=re.search(os.environ["ROAMEX_RE"], sys.stdin.read()); sys.stdout.write(m.group(1) if m else "")'; }
+bn=$(extract '(?:^|/)roam-([0-9]+)-' "$BRANCH")
+tn=$(extract '\(roam-([0-9]+)\)\s*$' "$TITLE")
+bd=$(extract '(?i)(?:^|[^0-9A-Za-z])closes[ ]+#([0-9]+)(?![0-9A-Za-z])' "$BODY")
 
 [ -n "$bn" ] || fail "branch does not contain '.../roam-<N>-<slug>': '$BRANCH'"
 [ -n "$tn" ] || fail "title does not end with '(roam-<N>)': '$TITLE'"

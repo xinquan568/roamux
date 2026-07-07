@@ -48,9 +48,25 @@ class ConsistencyTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("mismatch", r.stderr)
 
-    def test_near_miss_no_number_fails(self):
-        r = run(branch="xinquan568/ai/roam-nope-slug", title="feat: x (roamex)", body="Closes #x")
-        self.assertNotEqual(r.returncode, 0)
+    def test_branch_roam_no_number_fails(self):
+        self.assertNotEqual(run(branch="xinquan568/ai/roam-nope-slug").returncode, 0)
+
+    def test_branch_roam_12x_fails(self):
+        self.assertNotEqual(run(branch="xinquan568/ai/roam-12x-slug").returncode, 0)
+
+    def test_title_roamex_not_roam_n_fails(self):
+        self.assertNotEqual(run(title="feat: x (roamex)").returncode, 0)
+
+    def test_body_closes_12x_rejected(self):
+        # 'Closes #12x' references #12x, not #12 — must not extract 12.
+        self.assertNotEqual(run(body="Closes #12x").returncode, 0)
+
+    def test_body_encloses_substring_rejected(self):
+        # 'Encloses #12' contains 'closes #12' but is not a real close directive.
+        self.assertNotEqual(run(body="Encloses #12").returncode, 0)
+
+    def test_body_empty_rejected(self):
+        self.assertNotEqual(run(body="").returncode, 0)
 
     def test_title_tag_not_terminal_fails(self):
         r = run(title="feat: (roam-12) trailing words")  # tag not at end
