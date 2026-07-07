@@ -62,22 +62,52 @@ class GenChangelogEndToEndTest(unittest.TestCase):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamex-cliff-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-    def test_renders_grouped_changelog_from_tagged_history(self):
+    def _sample_repo(self):
         d = self.tmp
         git(d, "init", "-q")
         git(d, "config", "user.email", "t@roamex"); git(d, "config", "user.name", "t")
+        # gen-changelog.sh reads cliff.toml at the repo root and installs the hooksPath is irrelevant.
         shutil.copy(CLIFF, d / "cliff.toml")
+        shutil.copy(SCRIPT, d / "gen-changelog.sh")
         (d / "a").write_text("1")
         git(d, "add", "."); git(d, "commit", "-qm", "feat(x): add a thing (roam-1)")
         (d / "b").write_text("2")
         git(d, "add", "."); git(d, "commit", "-qm", "fix(y): correct a thing (roam-2)")
         git(d, "tag", "v0.1.0")
-        out = subprocess.run(["git-cliff", "--config", "cliff.toml", "--tag", "v0.1.0"],
-                             cwd=d, capture_output=True, text=True, env=_clean_git_env())
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn("Features", out.stdout)
-        self.assertIn("Bug Fixes", out.stdout)
-        self.assertIn("add a thing", out.stdout.lower())  # upper_first capitalizes it
+        return d
+
+    def test_wrapper_writes_versioned_grouped_changelog(self):
+        # Full render via the ACTUAL wrapper — the tagged release section carries the version heading.
+        d = self._sample_repo()
+        r = subprocess.run(["bash", "gen-changelog.sh"], cwd=d,
+                           capture_output=True, text=True, env=_clean_git_env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cl = (d / "CHANGELOG.md").read_text()
+        self.assertIn("## [", cl)          # the version/date release heading (Fix 1)
+        self.assertIn("0.1.0", cl)         # the tag
+        self.assertIn("Features", cl)
+        self.assertIn("Bug Fixes", cl)
+        self.assertIn("add a thing", cl.lower())
+
+    def test_wrapper_check_prints_unreleased(self):
+        # --check dry-run: an untagged commit after the tag lands in the unreleased section.
+        d = self._sample_repo()
+        (d / "c").write_text("3")
+        git(d, "add", "."); git(d, "commit", "-qm", "docs: note something (roam-3)")
+        r = subprocess.run(["bash", "gen-changelog.sh", "--check"], cwd=d,
+                           capture_output=True, text=True, env=_clean_git_env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("## [unreleased]", r.stdout)
+        self.assertIn("Documentation", r.stdout)
+        self.assertFalse((d / "CHANGELOG.md").exists(), "--check must not write the file")
+
+    def test_wrapper_fails_loud_without_git_cliff(self):
+        # PATH scrubbed of git-cliff → the wrapper must exit non-zero with an install hint.
+        d = self._sample_repo()
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(d)}
+        r = subprocess.run(["bash", "gen-changelog.sh"], cwd=d, capture_output=True, text=True, env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Install", r.stderr + r.stdout)
 
 
 if __name__ == "__main__":
