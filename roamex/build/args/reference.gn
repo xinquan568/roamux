@@ -17,8 +17,9 @@ symbol_level = 1
 blink_symbol_level = 0
 
 # --- Roamex sign-in posture: NOT a keyed-and-authorized build (§7.3 state 1 "keyless"). ---
-# A distributor enables the optional path by importing google_keys.gni + setting this true (§12.3).
-# roamex_signin_authorized_build = false   # (declared by //roamex once the buildflag lands)
+# roamex_signin_authorized_build (declared in roamex/build/buildflags.gni, default false) stays
+# false here; a distributor enables the optional path via google_keys.gni (§12.3) — see
+# roamex/build/google_keys.gni.template. Keys alone are necessary but NOT sufficient.
 
 # --- Optional distributor Google API keys (keep OUT of source; §12.3). Uncomment on a keyed build: ---
 # import("//roamex/build/google_keys.gni")

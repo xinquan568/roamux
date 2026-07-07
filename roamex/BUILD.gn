@@ -6,7 +6,10 @@ import("//testing/test.gni")
 
 group("roamex") {
   # Net-new overlay areas are added here as their epics land (E1–E6).
-  deps = [ "//roamex/common" ]
+  deps = [
+    "//roamex/browser/signin",
+    "//roamex/common",
+  ]
 }
 
 # All Roamex test binaries. gn_all reaches tests through this group (patch 0001), so adding a test
@@ -23,6 +26,7 @@ group("roamex_tests") {
 test("roamex_unittests") {
   sources = [
     "test/roamex_features_unittest.cc",
+    "test/roamex_signin_build_state_unittest.cc",
     "test/roamex_overlay_mechanism_unittest.cc",
     "test/roamex_prefs_unittest.cc",
     "test/roamex_smoke_unittest.cc",
@@ -32,6 +36,7 @@ test("roamex_unittests") {
     "//base/test:run_all_unittests",  # provides main() + base::TestSuite (inits FeatureList, AtExitManager)
     "//base/test:test_support",
     "//components/prefs:test_support",
+    "//roamex/browser/signin",
     "//roamex/common",
     "//testing/gtest",
   ]
