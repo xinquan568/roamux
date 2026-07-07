@@ -1,4 +1,3 @@
 # The pinned upstream Chromium milestone (Q(i4)-A: latest stable; re-pin every milestone cycle).
-# Set this to the exact stable tag checked out at bootstrap (BOOTSTRAP.md step 2), e.g. "141.0.7390.54".
-# TODO(roam-1): pin on first fetch.
-UNPINNED
+# Milestone 149, stable channel (released 2026-06-25). Checked out + gclient-synced at bootstrap.
+149.0.7827.201

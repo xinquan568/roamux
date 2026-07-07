@@ -53,24 +53,24 @@ alternative once the overlay stabilizes. The `patches/` entry becomes a `gclient
 
 ```sh
 cd ~/chromium/src
-gn gen out/Default --args="$(tr '\n' ' ' < roamex/build/args/reference.gn)"
-autoninja -C out/Default roamex_unittests   # the E0 hello-world test target (roam-1); first build is hours
-out/Default/roamex_unittests                # should pass
+mkdir -p out/Default && cp roamex/build/args/reference.gn out/Default/args.gn  # args.gn keeps comments/newlines
+gn gen out/Default
+autoninja -C out/Default roamex_unittests   # the E0 hello-world test target (roam-1); first build is ~hours
+out/Default/roamex_unittests                # both RoamexSmokeTest cases should pass
 ```
-> **First-run validation:** wiring `//roamex` into Chromium's build graph may need a small top-level hook
-> (a `deps` entry so GN reaches `//roamex`, plan §12.4). Validate/adjust on the first `gn gen`; capture the
-> exact steps back into this file. Full Chromium builds are hours — always build the **touched target + its
-> test target**, never `all` (per the CI trust tiers, §12.6).
+> Use `out/Default/args.gn` — **not** `--args="$(tr '\n' ' ' …)"`; collapsing the arg file to one line turns
+> its first `#` comment into a comment that swallows the rest. Full Chromium builds are hours — always build
+> the **touched target + its test target**, never `all` (CI trust tiers, §12.6). A `test()` target needs a
+> linked `main` (`//base/test:run_all_unittests`) — already wired in `roamex/BUILD.gn`.
 
-## Status of this repo (E0 scaffolding)
+## Status of this repo (E0 foundation)
 
-Progress on the bootstrap machine so far:
-- ✅ depot_tools installed; Chromium **fetched** (checked out `152.0.7936.0` — this is `main`/tip; **re-pin to
-  the latest *stable* milestone tag** per Q(i4)-A and record it in `roamex/build/CHROMIUM_PIN`).
-- ✅ Overlay symlinked into `src/roamex`; the `//roamex` build-graph wiring found and captured as
+Bootstrap completed on the build machine:
+- ✅ depot_tools installed + persisted; full Xcode 26.6 active.
+- ✅ **Built green** — `roamex_unittests` compiles and both `RoamexSmokeTest` cases pass (roam-1 acceptance met).
+- ✅ Overlay symlinked into `src/roamex`; the `//roamex` build-graph wiring is
   `roamex/patches/0001-gn-all-add-roamex-targets.patch`.
-- ⛔ **Blocked at `gn gen`: full Xcode is missing** (only the Command Line Tools are installed, so `xcodebuild`
-  fails). **Reinstall full Xcode** (prereqs table) and re-run steps 4 → the build. `roam-1` acceptance
-  (`autoninja roamex_unittests` green) is pending that.
+- ✅ **Pinned to the latest stable milestone `149.0.7827.201` (M149)** per Q(i4)-A — see `roamex/build/CHROMIUM_PIN`.
+  (First build was verified on tip 152.0.7936.0, then re-pinned to stable.)
 
-Once it builds green, E7 (governance) and the feature epics can run via `/issue2pr chain --label <epic>`.
+Next: E0 roam-2..5, then E7 (governance), then the feature epics via `/issue2pr chain --label <epic>`.
