@@ -86,6 +86,21 @@ class OverrideStalenessTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(extra_rel, result.stdout + result.stderr)
 
+    def test_signatures_come_from_git_show_not_working_tree(self):
+        # Records, then mutates the upstream file WITHOUT committing or retagging: the gate must
+        # still pass because signatures read pristine content at the tag, never the working tree.
+        self.assertEqual(self.run_check("--update").returncode, 0)
+        (self.src / UPSTREAM_REL).write_text("// locally patched working tree (e.g. runhook output)\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pin_must_be_a_tag_not_a_commitish(self):
+        # A commit-ish that is not a milestone tag (e.g. HEAD) must NOT satisfy the pin gate.
+        self.assertEqual(self.run_check("--update").returncode, 0)
+        self.pin_file.write_text("HEAD\n")
+        result = self.run_check()
+        self.assertNotEqual(result.returncode, 0)
+
     def test_unresolvable_pin_hard_fails_with_fetch_hint(self):
         self.assertEqual(self.run_check("--update").returncode, 0)
         self.pin_file.write_text("3.0.0.0\n")  # tag does not exist

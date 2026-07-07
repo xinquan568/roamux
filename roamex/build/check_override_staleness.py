@@ -73,11 +73,14 @@ def main():
         print(f"FAIL: {pin_file} is missing or UNPINNED — pin Chromium first (BOOTSTRAP.md step 2).",
               file=sys.stderr)
         return 1
+    # Tag-only resolution: a bare commit-ish (HEAD, a branch, a SHA) must NOT satisfy the pin
+    # gate — only the milestone tag named in CHROMIUM_PIN counts (Step-5/Step-8 finding).
+    pin_ref = f"refs/tags/{pin}"
     resolves = subprocess.run(
-        ["git", "-C", str(args.chromium_src), "rev-parse", "--verify", f"{pin}^{{commit}}"],
+        ["git", "-C", str(args.chromium_src), "rev-parse", "--verify", f"{pin_ref}^{{commit}}"],
         capture_output=True)
     if resolves.returncode != 0:
-        print(f"FAIL: pin '{pin}' does not resolve in {args.chromium_src}.\n"
+        print(f"FAIL: tag '{pin}' does not resolve in {args.chromium_src}.\n"
               f"hint: git -C {args.chromium_src} fetch --depth=1 origin "
               f"+refs/tags/{pin}:refs/tags/{pin}", file=sys.stderr)
         return 1
@@ -85,7 +88,7 @@ def main():
     current = {}
     problems = []
     for rel_path in _override_paths(args.overlay):
-        digest = _pristine_sha256(args.chromium_src, pin, rel_path)
+        digest = _pristine_sha256(args.chromium_src, pin_ref, rel_path)
         if digest is None:
             problems.append(f"{rel_path}: no upstream counterpart at {pin} "
                             "(override of a nonexistent file?)")
