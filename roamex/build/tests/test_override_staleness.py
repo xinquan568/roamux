@@ -18,8 +18,16 @@ SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "check_override_stalen
 UPSTREAM_REL = "chrome/common/sample.h"
 
 
+def _git_env():
+    import os
+    return {k: v for k, v in os.environ.items()
+            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
+                         "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")}
+
+
 def git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True,
+                   env=_git_env())
 
 
 class OverrideStalenessTest(unittest.TestCase):

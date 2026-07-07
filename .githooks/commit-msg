@@ -1,0 +1,4 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# roam-38: Conventional Commits syntax (roam-N linkage is roam-39's gate).
+exec python3 scripts/checks/commit_msg.py "$1"

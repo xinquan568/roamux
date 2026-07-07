@@ -32,6 +32,48 @@ jobs:
           echo "Chromium checkout is available on the runner (self-hosted warm-cache tier, §12.6)."
       - name: Hermetic tooling tests (roam-2 — no Chromium checkout needed)
         run: python3 -m unittest discover -s roamex/build/tests -v
+  governance:
+    # roam-38 (§7.9): the CI MIRROR of the local hooks — runs the SAME checker scripts over the PR's
+    # changed files (same --diff-filter=ACM as pre-commit) + commit-message syntax, so --no-verify
+    # still fails at the PR. Fork-safe, no secrets, tier-1.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute changed files (base..PR-head, ACM — matches the pre-commit hook)
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Use the real PR head, NOT the checked-out synthetic merge commit (which is not Conventional).
+          if [ -n "$BASE" ] && [ -n "$HEAD_SHA" ]; then
+            git diff --name-only --diff-filter=ACM "$BASE...$HEAD_SHA" > changed.txt
+          else
+            git diff --name-only --diff-filter=ACM HEAD~1 HEAD > changed.txt   # push event
+          fi
+          echo "count=$(wc -l < changed.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+      - name: SPDX + secret-scan + overlay-structure (same scripts as the hook)
+        run: |
+          [ -s changed.txt ] || { echo "no changed files"; exit 0; }
+          tr '\n' '\0' < changed.txt | xargs -0 python3 scripts/checks/spdx_header.py
+          tr '\n' '\0' < changed.txt | xargs -0 python3 scripts/checks/secret_scan.py
+          tr '\n' '\0' < changed.txt | xargs -0 python3 scripts/checks/overlay_structure.py
+      - name: Conventional Commits (each PR commit subject — excludes the merge commit)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          fail=0
+          # base..head over the PR's OWN commits; the synthetic merge commit (HEAD) is not included.
+          for sha in $(git rev-list "$BASE..$HEAD_SHA"); do
+            git log -1 --format=%B "$sha" > /tmp/msg
+            python3 scripts/checks/commit_msg.py /tmp/msg || fail=1
+          done
+          exit $fail
+
   targeted-suite:
     # ROAMEX_CHROMIUM_DEPENDENT (announce): visible tier-2 status for every PR — where the Chromium
     # work runs, or exactly why it is skipped. Never fails; the work happens on self-hosted (roam-36).

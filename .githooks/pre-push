@@ -1,0 +1,4 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# roam-38: the test gate (P6). Honest degradation — hermetic suite always; gtests where a checkout exists.
+exec python3 scripts/checks/pre_push.py
