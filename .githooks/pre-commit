@@ -1,0 +1,13 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# roam-38: SPDX + secret-scan + overlay-structure over staged (ACM) files. CI mirrors this exactly.
+set -uo pipefail
+run_check() {
+  git diff --cached --name-only --diff-filter=ACM -z | xargs -0 python3 "scripts/checks/$1"
+}
+rc=0
+run_check spdx_header.py || rc=1
+run_check secret_scan.py || rc=1
+run_check overlay_structure.py || rc=1
+[ $rc -ne 0 ] && echo "pre-commit: governance checks failed (CI mirrors these; --no-verify will not save the PR)." >&2
+exit $rc
