@@ -65,30 +65,69 @@ class WorkflowInvariantsTest(unittest.TestCase):
         self.assertNotIn("secrets.", text,
                          "ci.yml runs for fork PRs — it must reference no secrets")
 
-    def test_ci_has_gated_targeted_suite(self):
+    @staticmethod
+    def _runs_on_selfhosted(block):
+        return any("runs-on:" in l and "self-hosted" in l for l in block.splitlines())
+
+    def _selfhosted_blocks(self, text):
+        return [b for b in _marked_job_blocks(text) if self._runs_on_selfhosted(b)]
+
+    def _hosted_blocks(self, text):
+        return [b for b in _marked_job_blocks(text) if not self._runs_on_selfhosted(b)]
+
+    def test_ci_hosted_announce_job_is_fork_aware(self):
         text = _read("ci.yml")
         self.assertIsNotNone(text, "ci.yml missing")
-        blocks = _marked_job_blocks(text)
-        self.assertTrue(blocks, "ci.yml must contain a marked Chromium-dependent targeted-suite job")
+        blocks = self._hosted_blocks(text)
+        self.assertTrue(blocks, "ci.yml must keep the hosted announce job (visible tier-2 status)")
         for block in blocks:
-            self.assertIn(CAPABILITY_VAR, block,
-                          "Chromium-dependent job lacks the capability gate")
-            self.assertIn(FORK_CONDITION, block,
-                          "Chromium-dependent PR job lacks the non-fork condition (R15)")
-            # Structural precedence (S8-1): comments don't count — the gate's run body must handle
-            # the fork path (writing enabled=false) BEFORE any path can write enabled=true.
-            code_lines = [l for l in block.splitlines() if not l.strip().startswith("#")]
-            code = "\n".join(code_lines)
+            self.assertIn(CAPABILITY_VAR, block, "announce job must reflect the capability state")
+            self.assertIn(FORK_CONDITION, block, "announce job must be fork-aware (R15)")
+            code = "\n".join(l for l in block.splitlines() if not l.strip().startswith("#"))
             fork_branch = code.find('if [ "$IS_FORK" = "true" ]')
-            self.assertNotEqual(fork_branch, -1,
-                                "gate run body must branch on IS_FORK (not merely mention it)")
-            enable_write = code.find("enabled=true")
-            self.assertNotEqual(enable_write, -1, "gate must be able to enable when appropriate")
-            self.assertLess(fork_branch, enable_write,
-                            "the fork check must precede the capability-enabled path (R15)")
-            fork_block = code[fork_branch:code.find("elif", fork_branch)]
-            self.assertIn("enabled=false", fork_block,
-                          "the fork branch must write enabled=false")
+            self.assertNotEqual(fork_branch, -1, "announce run body must branch on IS_FORK first")
+            self.assertNotIn("exit 1", code,
+                             "the announce job never fails — tier-2 work happens on self-hosted")
+
+    def test_ci_selfhosted_job_has_exact_trust_predicate(self):
+        # roam-36 (S5-1): the tier-2 predicate enumerates its arms exactly — protected-main pushes
+        # and same-repo (non-fork) PRs. A broad non-PR catch-all must never appear.
+        text = _read("ci.yml")
+        self.assertIsNotNone(text, "ci.yml missing")
+        blocks = self._selfhosted_blocks(text)
+        self.assertTrue(blocks, "ci.yml must contain the self-hosted targeted-suite job (roam-36)")
+        for block in blocks:
+            self.assertIn("[self-hosted, macos, chromium-builder]", block,
+                          "self-hosted job must pin the exact label triple")
+            self.assertIn(CAPABILITY_VAR, block, "missing the capability-variable arm")
+            self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'", block,
+                          "missing the protected-main push arm")
+            self.assertIn("github.event.pull_request.head.repo.fork == false", block,
+                          "missing the same-repo (non-fork) PR arm (R15)")
+            self.assertNotIn("event_name != 'pull_request'", block,
+                             "broad non-PR catch-all is forbidden (S5-1)")
+
+    def test_nightly_selfhosted_job_has_exact_trust_predicate(self):
+        text = _read("nightly.yml")
+        self.assertIsNotNone(text, "nightly.yml missing")
+        blocks = self._selfhosted_blocks(text)
+        self.assertTrue(blocks, "nightly.yml must contain the self-hosted nightly job (roam-36)")
+        for block in blocks:
+            self.assertIn("[self-hosted, macos, chromium-builder]", block,
+                          "self-hosted job must pin the exact label triple")
+            self.assertIn(CAPABILITY_VAR, block, "missing the capability-variable arm")
+            self.assertIn("github.event_name == 'schedule'", block, "missing the schedule arm")
+            self.assertIn("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+                          block, "manual dispatch must be main-only")
+            self.assertNotIn("event_name != 'pull_request'", block,
+                             "broad non-PR catch-all is forbidden (S5-1)")
+
+    def test_half_provisioned_placeholders_are_retired(self):
+        for name in ("ci.yml", "nightly.yml"):
+            text = _read(name)
+            self.assertIsNotNone(text, f"{name} missing")
+            self.assertNotIn("not wired yet", text,
+                             f"{name}: roam-5's loud placeholder must be retired by roam-36")
 
     def test_nightly_scheduled_and_gated(self):
         text = _read("nightly.yml")

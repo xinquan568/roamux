@@ -9,26 +9,20 @@ on:
 permissions:
   contents: read
 jobs:
-  full-suite:
-    # ROAMEX_CHROMIUM_DEPENDENT: nightly full Chromium build + suite (capability-gated).
+  hermetic-suite:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Hermetic suite (always runs)
         run: python3 -m unittest discover -s roamex/build/tests -v
-      - name: Gate (capability)
-        id: gate
-        env:
-          CAP: ${{ vars.ROAMEX_CI_CHROMIUM_RUNNER }}
-        run: |
-          if [ -z "$CAP" ]; then
-            echo "SKIPPED: full Chromium build needs the provisioned runner (roam-36 / I-0.6)." | tee -a "$GITHUB_STEP_SUMMARY"
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Full Chromium build + suite
-        if: steps.gate.outputs.enabled == 'true'
-        run: |
-          echo "::error::capability variable is set but the nightly build is not wired yet (roam-36)"
-          exit 1
+
+  nightly-selfhosted:
+    # ROAMEX_CHROMIUM_DEPENDENT: the nightly warm-base build + full Roamex suites (roam-36, §12.6).
+    # Arms enumerated exactly: the schedule (runs on the default branch) or a main-only manual
+    # dispatch. No non-PR catch-all.
+    if: ${{ vars.ROAMEX_CI_CHROMIUM_RUNNER != '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    runs-on: [self-hosted, macos, chromium-builder]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nightly warm-base build + Roamex suites
+        run: bash roamex/build/ci/tier2_job.sh

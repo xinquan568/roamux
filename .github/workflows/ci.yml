@@ -33,28 +33,31 @@ jobs:
       - name: Hermetic tooling tests (roam-2 — no Chromium checkout needed)
         run: python3 -m unittest discover -s roamex/build/tests -v
   targeted-suite:
-    # ROAMEX_CHROMIUM_DEPENDENT: the per-PR Chromium half (§12.6 tier-1). Gated on BOTH capability
-    # (vars.ROAMEX_CI_CHROMIUM_RUNNER — unset until roam-36 provisions a warm-cache runner) AND trust
-    # (fork PRs stay lint-only even after provisioning — R15, the hard security boundary).
+    # ROAMEX_CHROMIUM_DEPENDENT (announce): visible tier-2 status for every PR — where the Chromium
+    # work runs, or exactly why it is skipped. Never fails; the work happens on self-hosted (roam-36).
     runs-on: macos-14
     steps:
-      - name: Gate (capability + trust) — visible, never a silent green
-        id: gate
+      - name: Tier-2 status (visible, never a silent green)
         env:
           CAP: ${{ vars.ROAMEX_CI_CHROMIUM_RUNNER }}
           IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
         run: |
           if [ "$IS_FORK" = "true" ]; then
-            echo "SKIPPED: fork PR — tier-1 (lint/unit) only, per §12.6/R15." | tee -a "$GITHUB_STEP_SUMMARY"
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "tier-1 only: fork PR — self-hosted tier-2 is unreachable by design (R15)." | tee -a "$GITHUB_STEP_SUMMARY"
           elif [ -z "$CAP" ]; then
-            echo "SKIPPED: no capable Chromium runner provisioned (see roam-36 / I-0.6)." | tee -a "$GITHUB_STEP_SUMMARY"
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "SKIPPED: no capable Chromium runner provisioned (roam-36 not enabled)." | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "tier-2 runs on the self-hosted runner '$CAP' — see the targeted-suite-selfhosted job." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Build + run the targeted suite
-        if: steps.gate.outputs.enabled == 'true'
-        run: |
-          echo "::error::capability variable is set but the targeted-suite build is not wired yet (roam-36)"
-          exit 1
+
+  targeted-suite-selfhosted:
+    # ROAMEX_CHROMIUM_DEPENDENT: the tier-2 warm-base build + Roamex suites (roam-36, §12.6).
+    # Trust predicate enumerated exactly (no non-PR catch-all): protected-main pushes OR same-repo
+    # (non-fork) PRs — code someone with push rights already chose to push. Tighten to
+    # protected-refs/merge-queue if this repo ever gains outside collaborators.
+    if: ${{ vars.ROAMEX_CI_CHROMIUM_RUNNER != '' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) }}
+    runs-on: [self-hosted, macos, chromium-builder]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Warm-base incremental build + Roamex suites
+        run: bash roamex/build/ci/tier2_job.sh
