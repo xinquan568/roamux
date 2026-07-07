@@ -1,0 +1,2 @@
+# git-format patch files legitimately contain whitespace-only context/added lines.
+roamex/patches/*.patch -whitespace
