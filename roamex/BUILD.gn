@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# The //roamex overlay root (roam-1). Additive — the browser target depends on `//roamex` (plan §12.2).
+# Placed at src/roamex/ in the Chromium checkout (BOOTSTRAP.md step 3).
+
+import("//testing/test.gni")
+
+group("roamex") {
+  # Net-new overlay areas are added here as their epics land (E1–E6).
+  deps = [ "//roamex/common" ]
+}
+
+# E0 hello-world unit test (roam-1 acceptance: "a trivial //roamex unit test runs").
+test("roamex_unittests") {
+  sources = [ "test/roamex_smoke_unittest.cc" ]
+  deps = [
+    "//base",
+    "//base/test:run_all_unittests",  # provides main() + base::TestSuite (inits FeatureList, AtExitManager)
+    "//base/test:test_support",
+    "//roamex/common",
+    "//testing/gtest",
+  ]
+}

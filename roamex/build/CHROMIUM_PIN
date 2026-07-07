@@ -1,0 +1,3 @@
+# The pinned upstream Chromium milestone (Q(i4)-A: latest stable; re-pin every milestone cycle).
+# Milestone 149, stable channel (released 2026-06-25). Checked out + gclient-synced at bootstrap.
+149.0.7827.201
