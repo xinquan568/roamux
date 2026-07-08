@@ -63,26 +63,39 @@ size_t RoamexSecretImportStage::ImportPasswords() {
     return 0;
   }
   sql::Statement s(db.GetUniqueStatement(
-      "SELECT origin_url, username_value, password_value, signon_realm "
-      "FROM logins"));
+      "SELECT origin_url, action_url, username_element, username_value, "
+      "password_element, password_value, signon_realm, scheme, "
+      "blacklisted_by_user FROM logins"));
   if (!s.is_valid()) {
     return 0;
   }
   size_t imported = 0;
   while (s.Step()) {
-    std::string blob = s.ColumnString(2);
-    std::optional<std::string> password =
-        decryptor.DecryptV10(base::as_byte_span(blob));
-    if (!password) {
-      continue;  // Unparseable row — skip, don't abort the batch.
-    }
     password_manager::PasswordForm form;
     form.url = GURL(s.ColumnStringView(0));
-    form.username_value = s.ColumnString16(1);
-    form.password_value = base::UTF8ToUTF16(*password);
-    form.signon_realm = s.ColumnString(3);
+    form.action = GURL(s.ColumnStringView(1));
+    form.username_element = s.ColumnString16(2);
+    form.password_element = s.ColumnString16(4);
+    form.signon_realm = s.ColumnString(6);
+    form.scheme =
+        static_cast<password_manager::PasswordForm::Scheme>(s.ColumnInt(7));
+    const bool blocked = s.ColumnInt(8) != 0;
     if (!form.url.is_valid() || form.signon_realm.empty()) {
       continue;
+    }
+    if (blocked) {
+      // Declined-vs-empty: a "never save" entry has no ciphertext; import it as
+      // a blocked form rather than skipping it.
+      form.blocked_by_user = true;
+    } else {
+      std::string blob = s.ColumnString(5);
+      std::optional<std::string> password =
+          decryptor.DecryptV10(base::as_byte_span(blob));
+      if (!password) {
+        continue;  // Unparseable saved row — skip, don't abort the batch.
+      }
+      form.username_value = s.ColumnString16(3);
+      form.password_value = base::UTF8ToUTF16(*password);
     }
     writer_->AddPasswordForm(form);  // Re-encrypts under Roamex on store.
     ++imported;
@@ -167,13 +180,37 @@ std::vector<net::CanonicalCookie> RoamexSecretImportStage::ParseCookies() {
 void RoamexSecretImportStage::ImportCookies(
     base::OnceCallback<void(size_t)> done) {
   std::vector<net::CanonicalCookie> cookies = ParseCookies();
-  const size_t count = cookies.size();
-  writer_->AddCookies(cookies, base::BindOnce(std::move(done), count));
+  // AddCookies reports the count the destination store ACCEPTED (IsInclude).
+  writer_->AddCookies(cookies, std::move(done));
 }
 
 std::vector<net::CanonicalCookie>
 RoamexSecretImportStage::ParseCookiesForTesting() {
   return ParseCookies();
+}
+
+void RoamexSecretImportStage::Run(uint16_t items,
+                                  base::OnceCallback<void(Result)> done) {
+  // The browser-side secret half of an Edge import: invoked by the import flow
+  // (roam-20's first-run UI) with the user-selected item mask, in parallel with
+  // the utility-process non-secret importer. PASSWORDS/COOKIES are handled ONLY
+  // here (the utility importer never touches secrets).
+  auto result = std::make_unique<Result>();
+  if (items & user_data_importer::PASSWORDS) {
+    result->passwords_imported = ImportPasswords();
+  }
+  result->keychain_available = keychain_available_;
+  if (items & user_data_importer::COOKIES) {
+    ImportCookies(base::BindOnce(
+        [](std::unique_ptr<Result> result,
+           base::OnceCallback<void(Result)> done, size_t cookies) {
+          result->cookies_imported = cookies;
+          std::move(done).Run(*result);
+        },
+        std::move(result), std::move(done)));
+    return;
+  }
+  std::move(done).Run(*result);
 }
 
 }  // namespace roamex

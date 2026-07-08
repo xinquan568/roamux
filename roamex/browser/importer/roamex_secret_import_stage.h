@@ -7,6 +7,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
+#include "components/user_data_importer/common/importer_data_types.h"
 
 class ProfileWriter;
 
@@ -37,6 +38,21 @@ class RoamexSecretImportStage {
   RoamexSecretImportStage(const RoamexSecretImportStage&) = delete;
   RoamexSecretImportStage& operator=(const RoamexSecretImportStage&) = delete;
   ~RoamexSecretImportStage();
+
+  // The outcome of the secret half of an Edge import.
+  struct Result {
+    size_t passwords_imported = 0;
+    size_t cookies_imported = 0;
+    // False if the Keychain was declined/unavailable (the caller REPORTS this
+    // — passwords/cookies were not imported, never silently dropped).
+    bool keychain_available = false;
+  };
+
+  // The browser-side orchestration entry (roam-16 finding 1): given the
+  // user-selected `items` mask, imports the requested secret items and reports
+  // the Result. Invoked by the import flow (roam-20's first-run UI) alongside
+  // the utility-process non-secret importer.
+  void Run(uint16_t items, base::OnceCallback<void(Result)> done);
 
   // Decrypts and imports Edge passwords. Returns the number imported; a
   // declined/unavailable Keychain yields 0 and `keychain_available()` == false

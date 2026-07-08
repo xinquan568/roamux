@@ -14,6 +14,7 @@
 #include "chrome/browser/password_manager/password_manager_test_util.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
+#include "components/user_data_importer/common/importer_data_types.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_task_environment.h"
 #include "crypto/aes_cbc.h"
@@ -89,14 +90,14 @@ TEST_F(RoamexSecretImportStageTest, ImportsDecryptedPasswords) {
     sql::Database db(kTag);
     ASSERT_TRUE(db.Open(source().Append(FILE_PATH_LITERAL("Login Data"))));
     ASSERT_TRUE(db.Execute(
-        "CREATE TABLE logins(origin_url VARCHAR, username_element VARCHAR, "
-        "username_value VARCHAR, password_element VARCHAR, password_value "
-        "BLOB, signon_realm VARCHAR)"));
+        "CREATE TABLE logins(origin_url VARCHAR, action_url VARCHAR, "
+        "username_element VARCHAR, username_value VARCHAR, password_element "
+        "VARCHAR, password_value BLOB, signon_realm VARCHAR, scheme INTEGER, "
+        "blacklisted_by_user INTEGER)"));
     std::vector<uint8_t> blob = EdgeEncrypt("s3cret");
     sql::Statement stmt(db.GetUniqueStatement(
-        "INSERT INTO logins(origin_url, username_value, password_value, "
-        "signon_realm) VALUES('https://site.test/','alice',?,"
-        "'https://site.test/')"));
+        "INSERT INTO logins VALUES('https://site.test/','','','alice','',?,"
+        "'https://site.test/',0,0)"));
     stmt.BindBlob(0, blob);
     ASSERT_TRUE(stmt.Run());
   }
@@ -170,6 +171,50 @@ TEST_F(RoamexSecretImportStageTest, PartitionedCookieSkipped) {
   RoamexSecretImportStage stage(source(), writer(), &keychain);
   // Partitioned (non-empty top_frame_site_key) → filtered out.
   EXPECT_TRUE(stage.ParseCookiesForTesting().empty());
+}
+
+TEST_F(RoamexSecretImportStageTest, BlockedPasswordImportedNotSkipped) {
+  {
+    sql::Database db(kTag);
+    ASSERT_TRUE(db.Open(source().Append(FILE_PATH_LITERAL("Login Data"))));
+    ASSERT_TRUE(db.Execute(
+        "CREATE TABLE logins(origin_url VARCHAR, action_url VARCHAR, "
+        "username_element VARCHAR, username_value VARCHAR, password_element "
+        "VARCHAR, password_value BLOB, signon_realm VARCHAR, scheme INTEGER, "
+        "blacklisted_by_user INTEGER)"));
+    // A "never save" row: empty password blob, blacklisted_by_user=1.
+    ASSERT_TRUE(db.Execute(
+        "INSERT INTO logins VALUES('https://blocked.test/','','','','',X'',"
+        "'https://blocked.test/',0,1)"));
+  }
+  EdgeKeychainFake keychain(noErr);
+  RoamexSecretImportStage stage(source(), writer(), &keychain);
+  // Imported as a blocked form (declined-vs-empty), not silently dropped.
+  EXPECT_EQ(1u, stage.ImportPasswords());
+}
+
+TEST_F(RoamexSecretImportStageTest, RunImportsSelectedItems) {
+  {
+    sql::Database db(kTag);
+    ASSERT_TRUE(db.Open(source().Append(FILE_PATH_LITERAL("Login Data"))));
+    ASSERT_TRUE(db.Execute(
+        "CREATE TABLE logins(origin_url VARCHAR, action_url VARCHAR, "
+        "username_element VARCHAR, username_value VARCHAR, password_element "
+        "VARCHAR, password_value BLOB, signon_realm VARCHAR, scheme INTEGER, "
+        "blacklisted_by_user INTEGER)"));
+    std::vector<uint8_t> blob = EdgeEncrypt("s3cret");
+    sql::Statement stmt(db.GetUniqueStatement(
+        "INSERT INTO logins VALUES('https://site.test/','','','alice','',?,"
+        "'https://site.test/',0,0)"));
+    stmt.BindBlob(0, blob);
+    ASSERT_TRUE(stmt.Run());
+  }
+  EdgeKeychainFake keychain(noErr);
+  RoamexSecretImportStage stage(source(), writer(), &keychain);
+  base::test::TestFuture<RoamexSecretImportStage::Result> result;
+  stage.Run(user_data_importer::PASSWORDS, result.GetCallback());
+  EXPECT_EQ(1u, result.Get().passwords_imported);
+  EXPECT_TRUE(result.Get().keychain_available);
 }
 
 }  // namespace
