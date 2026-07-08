@@ -20,40 +20,44 @@ index 1aab47b6d0..54f0767df2 100644
    // Redirect to those lists for factories that are part of those modules.
    // Module specific registration functions:
 diff --git a/chrome/browser/ui/browser_live_tab_context.cc b/chrome/browser/ui/browser_live_tab_context.cc
-index a669a623c4..1b33d16d64 100644
+index a669a623c4..b0b80821d2 100644
 --- a/chrome/browser/ui/browser_live_tab_context.cc
 +++ b/chrome/browser/ui/browser_live_tab_context.cc
-@@ -19,6 +19,7 @@
+@@ -19,6 +19,8 @@
  #include "chrome/browser/glic/glic_tab_restore_helper.h"
  #include "chrome/browser/performance_manager/public/background_tab_loading_policy.h"
  #include "chrome/browser/profiles/profile.h"
++#include "roamex/browser/tabs/tab_initial_url_helper.h"
 +#include "roamex/browser/tabs/tab_uid_tab_helper.h"
  #include "chrome/browser/sessions/session_service_utils.h"
  #include "chrome/browser/sessions/tab_restore_service_factory.h"
  #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
-@@ -157,6 +158,9 @@ std::map<std::string, std::string> BrowserLiveTabContext::GetExtraDataForTab(
+@@ -157,6 +159,11 @@ std::map<std::string, std::string> BrowserLiveTabContext::GetExtraDataForTab(
  
    glic::PopulateGlicExtraData(tab_strip_model_->GetTabAtIndex(index),
                                &extra_data);
 +  // Roamex (roam-10): the durable tab uid rides closed-tab entries too.
 +  roamex::tabs::TabUidTabHelper::PopulateExtraData(
 +      tab_strip_model_->GetTabAtIndex(index), &extra_data);
++  roamex::tabs::TabInitialUrlHelper::PopulateExtraData(
++      tab_strip_model_->GetTabAtIndex(index), &extra_data);
  
    return extra_data;
  }
 diff --git a/chrome/browser/ui/browser_tabrestore.cc b/chrome/browser/ui/browser_tabrestore.cc
-index 9291009f10..3ed1826ff7 100644
+index 9291009f10..33eee6fb9f 100644
 --- a/chrome/browser/ui/browser_tabrestore.cc
 +++ b/chrome/browser/ui/browser_tabrestore.cc
-@@ -13,6 +13,7 @@
+@@ -13,6 +13,8 @@
  #include "chrome/browser/apps/app_service/web_contents_app_id_utils.h"
  #include "chrome/browser/glic/glic_tab_restore_helper.h"
  #include "chrome/browser/profiles/profile.h"
++#include "roamex/browser/tabs/tab_initial_url_helper.h"
 +#include "roamex/browser/tabs/tab_uid_tab_helper.h"
  #include "chrome/browser/sessions/session_restore.h"
  #include "chrome/browser/sessions/session_service_base.h"
  #include "chrome/browser/sessions/session_service_lookup.h"
-@@ -85,6 +86,10 @@ std::unique_ptr<WebContents> CreateRestoredTab(
+@@ -85,6 +87,12 @@ std::unique_ptr<WebContents> CreateRestoredTab(
                                 extension_app_id);
  
    glic::RestoreGlicStateFromExtraData(web_contents.get(), extra_data);
@@ -61,6 +65,8 @@ index 9291009f10..3ed1826ff7 100644
 +  // tab attach.
 +  roamex::tabs::TabUidTabHelper::SetPendingRestoredUid(web_contents.get(),
 +                                                       extra_data);
++  roamex::tabs::TabInitialUrlHelper::SetPendingRestoredInitialUrl(
++      web_contents.get(), extra_data);
  
    std::vector<std::unique_ptr<NavigationEntry>> entries =
        ContentSerializedNavigationBuilder::ToNavigationEntries(
