@@ -11,6 +11,7 @@ namespace roamex::prefs {
 inline constexpr char kTabStripPosition[] = "roamex.tabs.strip_position";                 // E1 (enum: top/bottom/left/right)
 inline constexpr char kReopenClosed[] = "roamex.tabs.visit_nav.reopen_closed";            // E4 (Q(new)-C, default off)
 inline constexpr char kSigninOptionalEntryPoint[] = "roamex.signin.optional_entry_point_enabled";  // E5 (Q(i3)-C, default off)
+inline constexpr char kShortcutBindings[] = "roamex.shortcuts";                           // E2/E4 (§4.3 rebinds; dict command-key -> chord)
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
