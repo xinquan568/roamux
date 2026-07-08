@@ -192,6 +192,24 @@ index 2f587ad325..b1dd7b7456 100644
      // TODO(crbug.com/475222200): When in immersive, swapping between tab
      // strip types create duplicate tab strips. Until that is resolved,
      // disable the ability to swap between tab strips while in immersive.
+diff --git a/chrome/browser/ui/views/frame/system_menu_model_builder.cc b/chrome/browser/ui/views/frame/system_menu_model_builder.cc
+index a0431bfa8d..1c91c38e32 100644
+--- a/chrome/browser/ui/views/frame/system_menu_model_builder.cc
++++ b/chrome/browser/ui/views/frame/system_menu_model_builder.cc
+@@ -123,8 +123,11 @@ void SystemMenuModelBuilder::BuildSystemMenuForBrowserWindow(
+   }
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+-  if (auto* controller =
+-          tabs::VerticalTabStripStateController::From(browser())) {
++  auto* controller = tabs::VerticalTabStripStateController::From(browser());
++  // Roamex (roam-8): only offer the toggle when it can act — upstream feature
++  // on, or a roamex-driven vertical display to switch back from.
++  if (controller && (tabs::IsVerticalTabsFeatureEnabled() ||
++                     controller->ShouldDisplayVerticalTabs())) {
+     // TODO(crbug.com/475222200): When in immersive, swapping between tab
+     // strip types create duplicate tab strips. Until that is resolved, disable
+     // the ability to swap between tab strips while in immersive.
 diff --git a/chrome/browser/ui/tabs/BUILD.gn b/chrome/browser/ui/tabs/BUILD.gn
 index 1477a4e..e5deeb3 100644
 --- a/chrome/browser/ui/tabs/BUILD.gn
@@ -257,3 +275,20 @@ index 3f3758f..582f3a8 100644
        }
      }
      layout.AddChild(views().vertical_tab_strip_region_view,
+diff --git a/chrome/browser/ui/tabs/tab_menu_model.cc b/chrome/browser/ui/tabs/tab_menu_model.cc
+index b933679..004535a 100644
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -345,7 +345,11 @@ void TabMenuModel::Build(int index) {
+     }
+   }
+ 
+-  if (tabs::kVerticalTabsToggleInTabContextMenu.Get() && controller) {
++  // Roamex (roam-8): only offer the toggle when it can act — upstream feature
++  // on, or a roamex-driven vertical display to switch back from.
++  if (tabs::kVerticalTabsToggleInTabContextMenu.Get() && controller &&
++      (tabs::IsVerticalTabsFeatureEnabled() ||
++       controller->ShouldDisplayVerticalTabs())) {
+     // TODO(crbug.com/475222200): When in immersive, swapping between tab
+     // strip types create duplicate tab strips. Until that is resolved,
+     // disable the ability to swap between tab strips while in immersive.
