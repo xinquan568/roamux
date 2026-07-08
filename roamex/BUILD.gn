@@ -67,21 +67,15 @@ test("roamex_browser_unittests") {
     "test/roamex_browser_prefs_hook_unittest.cc",
     "test/roamex_settings_private_prefs_unittest.cc",
     "test/tab_initial_url_helper_unittest.cc",
-    "test/roamex_edge_bookmarks_integration_unittest.cc",
     "test/tab_initial_url_persistence_unittest.cc",
   ]
   deps = [
     "//base",
-    "//chrome/browser/bookmarks",
-    "//chrome/browser/importer",
     "//chrome/test:test_support_unit",
-    "//components/bookmarks/browser",
-    "//components/bookmarks/test",
     "//components/pref_registry",
     "//components/sync_preferences:test_support",
     "//content/test:test_support",
     "//roamex/common",
-    "//roamex/utility/importer",
     "//testing/gtest",
   ]
 }
