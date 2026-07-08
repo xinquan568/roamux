@@ -2,6 +2,9 @@
 #ifndef ROAMEX_BROWSER_TABS_TAB_INITIAL_URL_HELPER_H_
 #define ROAMEX_BROWSER_TABS_TAB_INITIAL_URL_HELPER_H_
 
+#include <map>
+#include <string>
+
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "url/gurl.h"
@@ -38,6 +41,27 @@ class TabInitialUrlHelper
                                   content::WebContents* old_contents,
                                   content::WebContents* new_contents);
 
+  // ---- I-2.5 persistence (roam-14, §4.7) — rides roam-10's channels. ----
+  // Session extra-data key; value = "<0|1>" (lock bit) + the URL spec.
+  static constexpr char kExtraDataKey[] = "roamex.initial_url";
+  static std::string EncodeExtraData(const GURL& url, bool locked);
+  // Returns false (and leaves outputs untouched) on malformed/invalid input.
+  static bool DecodeExtraData(const std::string& value,
+                              GURL* url,
+                              bool* locked);
+  // Patch-0009 sibling (close-time; TabRestoreService channel).
+  static void PopulateExtraData(::tabs::TabInterface* tab,
+                                std::map<std::string, std::string>* extra_data);
+  // Patch-0009 sibling (AddRestoredTab: reopen-closed AND session restore).
+  // Pre-arms BEFORE the restore's first navigation; re-applies the lock.
+  static void SetPendingRestoredInitialUrl(
+      content::WebContents* web_contents,
+      const std::map<std::string, std::string>& extra_data);
+  // Patch-0012 hook (DuplicateTabAt, post-insert): §4.2 — a duplicated tab
+  // INHERITS value+lock (the uid re-mints; this helper copies).
+  static void OnTabDuplicated(content::WebContents* source_contents,
+                              content::WebContents* new_contents);
+
   TabInitialUrlHelper(const TabInitialUrlHelper&) = delete;
   TabInitialUrlHelper& operator=(const TabInitialUrlHelper&) = delete;
   ~TabInitialUrlHelper() override;
@@ -47,6 +71,8 @@ class TabInitialUrlHelper
   bool is_user_locked() const { return user_locked_; }
   void SetUserInitialUrl(const GURL& url);
   void SetRestoredInitialUrl(const GURL& url);
+  // Restore path with the persisted lock bit (locked == a user-edited value).
+  void SetRestoredInitialUrl(const GURL& url, bool locked);
 
   // content::WebContentsObserver:
   void DidFinishNavigation(
@@ -55,6 +81,11 @@ class TabInitialUrlHelper
  private:
   friend class content::WebContentsUserData<TabInitialUrlHelper>;
   explicit TabInitialUrlHelper(content::WebContents* web_contents);
+
+  // Writes the current state into the session-service channel (roam-10's
+  // uid Stamp() pattern); silently unpersisted where no session service
+  // exists (OTR).
+  void PersistToSession();
 
   GURL initial_url_;
   bool captured_ = false;

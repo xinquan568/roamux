@@ -3,6 +3,10 @@
 
 #include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sessions/session_service.h"
+#include "chrome/browser/sessions/session_service_factory.h"
+#include "components/sessions/content/session_tab_helper.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -59,6 +63,80 @@ void TabInitialUrlHelper::WillDiscardContents(
   new_helper->user_locked_ = old_helper->user_locked_;
 }
 
+// static
+std::string TabInitialUrlHelper::EncodeExtraData(const GURL& url, bool locked) {
+  return (locked ? "1" : "0") + url.spec();
+}
+
+// static
+bool TabInitialUrlHelper::DecodeExtraData(const std::string& value,
+                                          GURL* url,
+                                          bool* locked) {
+  if (value.size() < 2 || (value[0] != '0' && value[0] != '1')) {
+    return false;
+  }
+  GURL parsed(value.substr(1));
+  if (!parsed.is_valid()) {
+    return false;
+  }
+  *url = std::move(parsed);
+  *locked = value[0] == '1';
+  return true;
+}
+
+// static
+void TabInitialUrlHelper::PopulateExtraData(
+    ::tabs::TabInterface* tab,
+    std::map<std::string, std::string>* extra_data) {
+  content::WebContents* contents = tab ? tab->GetContents() : nullptr;
+  TabInitialUrlHelper* helper = contents ? FromWebContents(contents) : nullptr;
+  if (helper && helper->has_initial_url()) {
+    (*extra_data)[kExtraDataKey] =
+        EncodeExtraData(helper->initial_url_, helper->user_locked_);
+  }
+}
+
+// static
+void TabInitialUrlHelper::SetPendingRestoredInitialUrl(
+    content::WebContents* web_contents,
+    const std::map<std::string, std::string>& extra_data) {
+  auto it = extra_data.find(kExtraDataKey);
+  if (it == extra_data.end()) {
+    return;
+  }
+  GURL url;
+  bool locked = false;
+  if (!DecodeExtraData(it->second, &url, &locked)) {
+    return;  // Malformed persisted data: restore proceeds uncaptured.
+  }
+  MaybeCreateForWebContents(web_contents);
+  TabInitialUrlHelper* helper = FromWebContents(web_contents);
+  if (helper) {
+    // Pre-arm BEFORE the restore's first navigation; a locked value stays
+    // edit-locked across restore (§4.7).
+    helper->SetRestoredInitialUrl(url, locked);
+  }
+}
+
+// static
+void TabInitialUrlHelper::OnTabDuplicated(content::WebContents* source_contents,
+                                          content::WebContents* new_contents) {
+  TabInitialUrlHelper* source =
+      source_contents ? FromWebContents(source_contents) : nullptr;
+  if (!source || !source->has_initial_url()) {
+    return;
+  }
+  MaybeCreateForWebContents(new_contents);
+  TabInitialUrlHelper* clone = FromWebContents(new_contents);
+  if (clone) {
+    // §4.2: a duplicated tab INHERITS value+lock (the uid re-mints).
+    clone->initial_url_ = source->initial_url_;
+    clone->captured_ = source->captured_;
+    clone->user_locked_ = source->user_locked_;
+    clone->PersistToSession();
+  }
+}
+
 TabInitialUrlHelper::TabInitialUrlHelper(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       content::WebContentsUserData<TabInitialUrlHelper>(*web_contents) {}
@@ -69,12 +147,37 @@ void TabInitialUrlHelper::SetUserInitialUrl(const GURL& url) {
   initial_url_ = url;
   captured_ = true;
   user_locked_ = true;
+  PersistToSession();
 }
 
 void TabInitialUrlHelper::SetRestoredInitialUrl(const GURL& url) {
+  SetRestoredInitialUrl(url, /*locked=*/false);
+}
+
+void TabInitialUrlHelper::SetRestoredInitialUrl(const GURL& url, bool locked) {
   initial_url_ = url;
   captured_ = true;
-  user_locked_ = false;
+  user_locked_ = locked;
+  PersistToSession();
+}
+
+void TabInitialUrlHelper::PersistToSession() {
+  // The uid Stamp() pattern (roam-10): OTR/absent session service degrade to
+  // silently-unpersisted (§4.7 / D5).
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  if (!profile || profile->IsOffTheRecord()) {
+    return;
+  }
+  SessionService* session_service =
+      SessionServiceFactory::GetForProfile(profile);
+  if (!session_service) {
+    return;
+  }
+  session_service->AddTabExtraData(
+      sessions::SessionTabHelper::IdForWindowContainingTab(web_contents()),
+      sessions::SessionTabHelper::IdForTab(web_contents()), kExtraDataKey,
+      EncodeExtraData(initial_url_, user_locked_));
 }
 
 void TabInitialUrlHelper::DidFinishNavigation(
@@ -126,6 +229,7 @@ void TabInitialUrlHelper::DidFinishNavigation(
   }
   initial_url_ = head;
   captured_ = true;
+  PersistToSession();
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(TabInitialUrlHelper);

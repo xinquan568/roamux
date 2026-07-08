@@ -64,6 +64,7 @@ test("roamex_browser_unittests") {
     "test/roamex_browser_prefs_hook_unittest.cc",
     "test/roamex_settings_private_prefs_unittest.cc",
     "test/tab_initial_url_helper_unittest.cc",
+    "test/tab_initial_url_persistence_unittest.cc",
   ]
   deps = [
     "//base",
@@ -85,6 +86,8 @@ test("roamex_browsertests") {
     "test/roamex_frame_rtl_fullscreen_browsertest.cc",
     "test/roamex_initial_url_browsertest.cc",
     "test/roamex_reload_initial_url_browsertest.mm",
+    "test/roamex_initial_url_edit_browsertest.cc",
+    "test/roamex_initial_url_restore_browsertest.cc",
     "test/roamex_shortcuts_browsertest.mm",
     "test/roamex_tab_uid_browsertest.cc",
     "test/roamex_tab_strip_bottom_layout_browsertest.cc",
