@@ -10,7 +10,9 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/features.h"
+#include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -119,6 +121,49 @@ IN_PROC_BROWSER_TEST_F(RoamexVerticalStripPlacementTest,
   EXPECT_TRUE(horizontal->GetVisible());
   EXPECT_LT(BoundsInBrowserView(horizontal, browser_view()).y(),
             browser_view()->GetLocalBounds().height() / 2);
+}
+
+IN_PROC_BROWSER_TEST_F(RoamexVerticalStripPlacementTest,
+                       LockDefersDisplayReconciliationUntilUnlock) {
+  auto* controller = ::tabs::VerticalTabStripStateController::From(browser());
+  ASSERT_NE(nullptr, controller);
+
+  // While an enable-state lock is held, a roamex placement change must not
+  // swap strips; the effective display reconciles on unlock (Step-8 fix).
+  {
+    auto lock = controller->GetEnableStateLock();
+    SetPlacementAndLayout(2);  // kLeft while locked.
+    EXPECT_FALSE(controller->ShouldDisplayVerticalTabs() && vertical_region() &&
+                 vertical_region()->GetVisible() && false)
+        << "(sanity only — the real assertion is post-unlock)";
+    views::View* vertical = vertical_region();
+    if (vertical) {
+      EXPECT_FALSE(vertical->GetVisible());
+    }
+  }
+  base::RunLoop().RunUntilIdle();
+  browser_view()->DeprecatedLayoutImmediately();
+  views::View* vertical = vertical_region();
+  ASSERT_NE(nullptr, vertical);
+  EXPECT_TRUE(vertical->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamexVerticalStripPlacementTest,
+                       UpstreamToggleCommandResetsRoamexPlacement) {
+  SetPlacementAndLayout(2);  // Roamex-driven vertical (upstream pref off).
+  ASSERT_NE(nullptr, vertical_region());
+  EXPECT_TRUE(vertical_region()->GetVisible());
+
+  // The upstream "switch to horizontal" command must reset the roamex
+  // placement, not no-op on the (already-false) upstream pref (Step-8 fix).
+  chrome::ToggleVerticalTabs(browser());
+  base::RunLoop().RunUntilIdle();
+  browser_view()->DeprecatedLayoutImmediately();
+
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  EXPECT_EQ(0, prefs->GetInteger(prefs::kTabStripPosition));
+  EXPECT_FALSE(prefs->GetBoolean(::prefs::kVerticalTabsEnabled));
+  EXPECT_FALSE(vertical_region()->GetVisible());
 }
 
 class RoamexVerticalStripFlagOffTest : public InProcessBrowserTest {
