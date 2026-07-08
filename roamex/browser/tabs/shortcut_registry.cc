@@ -90,8 +90,10 @@ RebindResult ValidateRebind(const PrefService* prefs,
                             const RoamexShortcut& entry,
                             const Chord& chord,
                             base::span<const Chord> reserved) {
-  // A chord needs a key and at least one non-shift modifier.
-  if (chord.keycode == 0 || !(chord.cmd || chord.ctrl || chord.opt)) {
+  // A chord needs a plausible Carbon keycode (0 IS a key: kVK_ANSI_A) and at
+  // least one non-shift modifier.
+  if (chord.keycode < 0 || chord.keycode > 0x7F ||
+      !(chord.cmd || chord.ctrl || chord.opt)) {
     return RebindResult::kInvalid;
   }
   for (const Chord& taken : reserved) {

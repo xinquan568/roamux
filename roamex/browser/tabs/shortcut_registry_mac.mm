@@ -11,6 +11,8 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/cocoa/accelerators_cocoa.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/events/keycodes/dom/dom_code.h"
+#include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 
 namespace roamex::tabs {
@@ -63,11 +65,14 @@ int CommandForKeyEventOverride(NSEvent* event) {
                          ChordFromEvent(event));
 }
 
-std::vector<Chord> EnumerateReservedChords() {
+std::vector<Chord> EnumerateReservedChords(int exclude_command_id) {
   std::vector<Chord> reserved;
   // 1) The AcceleratorsCocoa table (ui::Accelerator: EF_* + VKEY_*).
   AcceleratorsCocoa* accelerators = AcceleratorsCocoa::GetInstance();
   for (const auto& [command, accelerator] : *accelerators) {
+    if (command == exclude_command_id) {
+      continue;  // The command's own default row is not a conflict.
+    }
     Chord chord;
     chord.cmd = (accelerator.modifiers() & ui::EF_COMMAND_DOWN) != 0;
     chord.shift = (accelerator.modifiers() & ui::EF_SHIFT_DOWN) != 0;
@@ -92,6 +97,14 @@ std::vector<Chord> EnumerateReservedChords() {
     CollectMenuKeyEquivalents(main_menu, &reserved);
   }
   return reserved;
+}
+
+int CarbonKeycodeFromDomCodeString(const std::string& code) {
+  const ui::DomCode dom_code = ui::KeycodeConverter::CodeStringToDomCode(code);
+  if (dom_code == ui::DomCode::NONE) {
+    return -1;
+  }
+  return ui::KeycodeConverter::DomCodeToNativeKeycode(dom_code);
 }
 
 }  // namespace roamex::tabs

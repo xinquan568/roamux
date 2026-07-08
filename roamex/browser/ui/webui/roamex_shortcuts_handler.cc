@@ -95,16 +95,33 @@ base::ListValue RoamexShortcutsHandler::BuildShortcutList() {
 std::string RoamexShortcutsHandler::Rebind(const std::string& pref_key,
                                            const base::DictValue& chord_dict) {
   Profile* profile = Profile::FromWebUI(web_ui());
-  std::optional<tabs::Chord> chord = tabs::Chord::FromDict(chord_dict);
-  if (!chord) {
+  // Wire format from the recorder: modifier booleans + the DOM `code` string;
+  // mapped into the Carbon domain here (Step-8 finding 1).
+  const std::string* code = chord_dict.FindString("code");
+  std::optional<bool> cmd = chord_dict.FindBool("cmd");
+  std::optional<bool> shift = chord_dict.FindBool("shift");
+  std::optional<bool> ctrl = chord_dict.FindBool("ctrl");
+  std::optional<bool> opt = chord_dict.FindBool("opt");
+  if (!code || !cmd || !shift || !ctrl || !opt) {
     return "invalid";
   }
+  tabs::Chord chord_value;
+  chord_value.cmd = *cmd;
+  chord_value.shift = *shift;
+  chord_value.ctrl = *ctrl;
+  chord_value.opt = *opt;
+  chord_value.keycode = tabs::CarbonKeycodeFromDomCodeString(*code);
+  if (chord_value.keycode < 0) {
+    return "invalid";
+  }
+  std::optional<tabs::Chord> chord = chord_value;
   for (const tabs::RoamexShortcut* entry :
        tabs::EnabledShortcuts(tabs::AllShortcuts())) {
     if (pref_key != entry->pref_key) {
       continue;
     }
-    const std::vector<tabs::Chord> reserved = tabs::EnumerateReservedChords();
+    const std::vector<tabs::Chord> reserved =
+        tabs::EnumerateReservedChords(entry->command_id);
     switch (tabs::ValidateRebind(profile->GetPrefs(), tabs::AllShortcuts(),
                                  *entry, *chord, reserved)) {
       case tabs::RebindResult::kOk:

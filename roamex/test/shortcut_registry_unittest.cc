@@ -85,12 +85,21 @@ TEST_F(ShortcutRegistryTest, ValidateRebindTruthTable) {
   base::test::ScopedFeatureList features;
   features.InitAndEnableFeature(features::kInitialUrl);
   const RoamexShortcut& entry = kTestTable[0];
-  // Invalid: no keycode / shift-only.
+  // Invalid: out-of-range keycode / shift-only. Keycode 0 IS a key
+  // (kVK_ANSI_A) and must validate.
   EXPECT_EQ(RebindResult::kInvalid,
-            ValidateRebind(&pref_service_, kTestTable, entry, Chord{}, {}));
+            ValidateRebind(&pref_service_, kTestTable, entry,
+                           Chord{.cmd = true, .keycode = -1}, {}));
+  EXPECT_EQ(RebindResult::kInvalid,
+            ValidateRebind(&pref_service_, kTestTable, entry,
+                           Chord{.cmd = true, .keycode = 0x200}, {}));
   EXPECT_EQ(RebindResult::kInvalid,
             ValidateRebind(&pref_service_, kTestTable, entry,
                            Chord{.shift = true, .keycode = 5}, {}));
+  EXPECT_EQ(RebindResult::kOk,
+            ValidateRebind(&pref_service_, kTestTable, entry,
+                           Chord{.cmd = true, .opt = true, .keycode = 0}, {}))
+      << "Ctrl/Cmd+A (Carbon keycode 0) is a valid chord";
   // Reserved conflict.
   const Chord reserved[] = {kCtrlCmdY};
   EXPECT_EQ(

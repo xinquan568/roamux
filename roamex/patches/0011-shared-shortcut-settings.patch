@@ -133,7 +133,7 @@ index 5e0a09805b..239128e96e 100644
              pref="{{prefs.bookmark_bar.show_tab_groups}}"
              label="$i18n{showTabGroupsInBookmarksBar}"
 diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
-index 3c0e5f0ca3..f586cc2156 100644
+index 3c0e5f0ca3..ea3c4f5767 100644
 --- a/chrome/browser/resources/settings/appearance_page/appearance_page.ts
 +++ b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
 @@ -27,6 +27,7 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
@@ -224,7 +224,7 @@ index 3c0e5f0ca3..f586cc2156 100644
 +        shift: event.shiftKey,
 +        ctrl: event.ctrlKey,
 +        opt: event.altKey,
-+        keycode: event.keyCode,
++        code: event.code,
 +      };
 +      sendWithPromise('roamexRebindShortcut', this.roamexRecordingKey_, chord)
 +          .then((result: unknown) => {

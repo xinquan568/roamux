@@ -57,13 +57,23 @@ class RoamexShortcutsTest : public InProcessBrowserTest {
  protected:
   PrefService* prefs() { return browser()->profile()->GetPrefs(); }
 
-  std::string Rebind(const tabs::Chord& chord) {
+  std::string Rebind(bool cmd,
+                     bool shift,
+                     bool ctrl,
+                     bool opt,
+                     const std::string& dom_code) {
     content::TestWebUI test_web_ui;
     test_web_ui.set_web_contents(
         browser()->tab_strip_model()->GetActiveWebContents());
     ExposedHandler handler;
     handler.set_web_ui(&test_web_ui);
-    return handler.RebindForTesting("reload_initial_url", chord.ToDict());
+    base::DictValue chord;
+    chord.Set("cmd", cmd);
+    chord.Set("shift", shift);
+    chord.Set("ctrl", ctrl);
+    chord.Set("opt", opt);
+    chord.Set("code", dom_code);
+    return handler.RebindForTesting("reload_initial_url", chord);
   }
 
   base::test::ScopedFeatureList features_;
@@ -83,8 +93,9 @@ IN_PROC_BROWSER_TEST_F(RoamexShortcutsTest, DefaultChordDispatches) {
 IN_PROC_BROWSER_TEST_F(RoamexShortcutsTest, RebindPersistsAndRedispatches) {
   const tabs::Chord default_chord =
       tabs::GetCurrentChord(prefs(), tabs::AllShortcuts()[0]);
+  // The recorder sends the DOM code string; persisted in the CARBON domain.
+  EXPECT_EQ("", Rebind(true, false, true, false, "KeyY"));
   const tabs::Chord new_chord{.cmd = true, .ctrl = true, .keycode = kVK_ANSI_Y};
-  EXPECT_EQ("", Rebind(new_chord));
 
   // Persisted in the pref…
   const base::DictValue& bindings = prefs()->GetDict(prefs::kShortcutBindings);
@@ -100,12 +111,12 @@ IN_PROC_BROWSER_TEST_F(RoamexShortcutsTest, RebindPersistsAndRedispatches) {
 }
 
 IN_PROC_BROWSER_TEST_F(RoamexShortcutsTest, ConflictingChordsRejected) {
-  // Reserved: Cmd+R is IDC_RELOAD's chord.
-  EXPECT_EQ("reserved",
-            Rebind(tabs::Chord{.cmd = true, .keycode = kVK_ANSI_R}));
-  // Invalid: shift-only modifier.
-  EXPECT_EQ("invalid",
-            Rebind(tabs::Chord{.shift = true, .keycode = kVK_ANSI_R}));
+  // UI-entered Cmd+R ("KeyR") maps to Carbon kVK_ANSI_R and must be rejected
+  // as the browser reload chord.
+  EXPECT_EQ("reserved", Rebind(true, false, false, false, "KeyR"));
+  // Invalid: shift-only modifier; unmappable code string.
+  EXPECT_EQ("invalid", Rebind(false, true, false, false, "KeyR"));
+  EXPECT_EQ("invalid", Rebind(true, false, true, false, "NotACode"));
   // No pref writes happened.
   EXPECT_EQ(nullptr, prefs()
                          ->GetDict(prefs::kShortcutBindings)
