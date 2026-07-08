@@ -10,6 +10,7 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/tab_list/tab_list_interface.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -133,6 +134,26 @@ IN_PROC_BROWSER_TEST_F(RoamexTabUidTest, OtrIsIsolatedAndUnpersisted) {
   EXPECT_TRUE(otr_service->IsLive(helper->uid()));
   EXPECT_FALSE(service()->IsLive(helper->uid()))
       << "OTR identities never enter the regular registry";
+}
+
+IN_PROC_BROWSER_TEST_F(RoamexTabUidTest, DiscardKeepsTheSameUid) {
+  // A background tab (the active tab cannot be discarded).
+  ASSERT_TRUE(ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL("about:blank"), WindowOpenDisposition::NEW_BACKGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP));
+  ASSERT_EQ(2, browser()->tab_strip_model()->count());
+  const std::string uid = UidOfTabAt(1);
+  ASSERT_FALSE(uid.empty());
+
+  // Drive the canonical discard flow — the same live tab gets replacement
+  // contents; identity must survive without a re-stamp.
+  TabListInterface* tab_list = TabListInterface::From(browser());
+  ASSERT_NE(nullptr, tab_list);
+  ASSERT_NE(nullptr, tab_list->DiscardTab(tab_list->GetTab(1)->GetHandle()));
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ(uid, UidOfTabAt(1));
+  EXPECT_TRUE(service()->IsLive(uid));
 }
 
 class RoamexTabUidFlagOffTest : public InProcessBrowserTest {

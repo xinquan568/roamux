@@ -23,8 +23,6 @@ namespace roamex::tabs {
 // tab-level session extra_data (never in OTR), and unregisters on destruction
 // so closed-tab reopen can reuse the uid.
 //
-// Known v1 limitation (documented for E4): tab discard replaces the
-// WebContents, which re-mints; revisit when E4 consumes the uid.
 class TabUidTabHelper : public content::WebContentsUserData<TabUidTabHelper> {
  public:
   static constexpr char kExtraDataKey[] = "roamex.tab_uid";
@@ -37,7 +35,14 @@ class TabUidTabHelper : public content::WebContentsUserData<TabUidTabHelper> {
   static void PopulateExtraData(::tabs::TabInterface* tab,
                                 std::map<std::string, std::string>* extra_data);
 
-  // Patch-0009 entry point (c): stashes the restored uid from tab-level
+  // Patch-0009 entry point (c): discard/contents-replacement — carries the
+  // SAME uid onto the replacement WebContents (a discard is the same live
+  // tab; §6.2 identity must survive it).
+  static void WillDiscardContents(::tabs::TabInterface* tab,
+                                  content::WebContents* old_contents,
+                                  content::WebContents* new_contents);
+
+  // Patch-0009 entry point (d): stashes the restored uid from tab-level
   // session extra_data on the not-yet-inserted WebContents; adopted at
   // attach.
   static void SetPendingRestoredUid(

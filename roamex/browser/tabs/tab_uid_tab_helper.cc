@@ -68,6 +68,27 @@ void TabUidTabHelper::MaybeCreateForTab(::tabs::TabInterface& tab,
 }
 
 // static
+void TabUidTabHelper::WillDiscardContents(::tabs::TabInterface* tab,
+                                          content::WebContents* old_contents,
+                                          content::WebContents* new_contents) {
+  TabUidTabHelper* old_helper = FromWebContents(old_contents);
+  if (!old_helper || !new_contents) {
+    return;
+  }
+  Profile* profile = old_helper->profile_;
+  TabUidService* service = TabUidServiceFactory::GetForProfile(profile);
+  const std::string uid = old_helper->uid();
+  // Free the uid under the old id now; the old helper's destructor Unregister
+  // then no-ops. The replacement adopts the SAME uid via the pending channel.
+  service->Unregister(old_helper->tab_id_);
+  new_contents->SetUserData(
+      PendingRestoredTabUid::UserDataKey(),
+      base::WrapUnique(new PendingRestoredTabUid(new_contents, uid)));
+  new_contents->SetUserData(UserDataKey(), base::WrapUnique(new TabUidTabHelper(
+                                               new_contents, profile)));
+}
+
+// static
 void TabUidTabHelper::PopulateExtraData(
     ::tabs::TabInterface* tab,
     std::map<std::string, std::string>* extra_data) {

@@ -65,7 +65,7 @@ index 9291009f10..3ed1826ff7 100644
    std::vector<std::unique_ptr<NavigationEntry>> entries =
        ContentSerializedNavigationBuilder::ToNavigationEntries(
 diff --git a/chrome/browser/ui/tabs/tab_features.cc b/chrome/browser/ui/tabs/tab_features.cc
-index 230fa95035..f1b103e552 100644
+index 230fa95035..3623840564 100644
 --- a/chrome/browser/ui/tabs/tab_features.cc
 +++ b/chrome/browser/ui/tabs/tab_features.cc
 @@ -23,6 +23,7 @@
@@ -86,6 +86,17 @@ index 230fa95035..f1b103e552 100644
    tab_subscriptions_.push_back(webui::InitEmbeddingContext(&tab));
  
    // TODO(crbug.com/346148554): Do not create a SidePanelRegistry or
+@@ -624,6 +628,10 @@ void TabFeatures::WillDiscardContents(tabs::TabInterface* tab,
+ 
+   Profile* profile = tab->GetBrowserWindowInterface()->GetProfile();
+ 
++  // Roamex (roam-10): a discard is the same live tab — carry the uid across.
++  roamex::tabs::TabUidTabHelper::WillDiscardContents(tab, old_contents,
++                                                     new_contents);
++
+   // Deregister side-panel entries that are web-contents scoped rather than tab
+   // scoped.
+   side_panel_registry_->Deregister(
 diff --git a/chrome/browser/ui/tabs/BUILD.gn b/chrome/browser/ui/tabs/BUILD.gn
 index e5deeb3..e132ab8 100644
 --- a/chrome/browser/ui/tabs/BUILD.gn
