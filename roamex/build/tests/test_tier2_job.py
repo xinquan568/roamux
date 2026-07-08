@@ -36,6 +36,16 @@ class Tier2JobScriptTest(unittest.TestCase):
     def test_staleness_gate_runs(self):
         self.assertIn("check_override_staleness.py", self.code)
 
+    def test_all_three_suites_build_and_run(self):
+        # roam-6 (WB-CI): the browser-test suite joined the tier-2 gate; a regression to the
+        # two-suite line must fail here, not silently in CI.
+        self.assertIn(
+            "roamex_unittests roamex_browser_unittests roamex_browsertests",
+            self.code)
+        for binary in ("roamex_unittests", "roamex_browser_unittests",
+                       "roamex_browsertests"):
+            self.assertIn('"${OUT}/%s"' % binary, self.code)
+
     def test_no_sudo_no_secret_use(self):
         self.assertNotIn("sudo", self.code)
         self.assertNotIn("secrets.", self.text)
