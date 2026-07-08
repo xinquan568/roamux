@@ -16,3 +16,12 @@ source_set("common") {
     "//ui/gfx/geometry",
   ]
 }
+
+# roam-16: the crypto passkey seam (friended in crypto/subtle_passkey.h by 0014).
+source_set("crypto_passkey") {
+  sources = [
+    "roamex_crypto_passkey.cc",
+    "roamex_crypto_passkey.h",
+  ]
+  deps = [ "//crypto" ]
+}

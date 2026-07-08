@@ -220,11 +220,10 @@ TEST(EdgeDetectionTest, PresentWithFourNonSecretBitsWhenDirExists) {
   const uint16_t expected = user_data_importer::HISTORY |
                             user_data_importer::FAVORITES |
                             user_data_importer::SEARCH_ENGINES |
-                            user_data_importer::AUTOFILL_FORM_DATA;
+                            user_data_importer::AUTOFILL_FORM_DATA |
+                            user_data_importer::PASSWORDS |
+                            user_data_importer::COOKIES;
   EXPECT_EQ(expected, profile->services_supported);
-  // Never advertises secrets (roam-16).
-  EXPECT_EQ(0, profile->services_supported & user_data_importer::PASSWORDS);
-  EXPECT_EQ(0, profile->services_supported & user_data_importer::COOKIES);
 }
 
 TEST(EdgeDetectionTest, AbsentWhenDirMissing) {

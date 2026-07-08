@@ -37,5 +37,7 @@ runs manually / from the build gate.
 
 | `0013-edge-chromium-importer.patch` | **persistent** | the ImporterList family (roam-15): `TYPE_EDGE_CHROMIUM` + `VISIT_SOURCE_EDGE_IMPORTED`, the IPC ImporterType range raise (both maxes), the `#if IS_MAC` `CreateImporterByType` case, the flag-gated macOS `DetectRoamexEdgeProfiles` (calls the pure `roamex::DetectEdgeSourceProfile`), the `in_process_importer_bridge` VisitSource map, the UMA bucket + `enums.xml` value 8, the `sql/histograms.xml` DatabaseTag, and the `chrome/utility` + `chrome/browser/importer` + `chrome/test` BUILD wiring |
 
+| `0014-edge-secrets-keychain-oscrypt.patch` | **persistent** | the §5.2 secrets surface (roam-16): a `roamex::MakeCryptoPassKey()` friend in `crypto/subtle_passkey.h` (for the Edge-key PBKDF2), `ProfileWriter::AddCookies` (plaintext CanonicalCookies → CookieManager, re-encrypting under Roamex), and the test BUILD wiring (`chrome/browser/importer` secret-stage source_set + its `chrome/test` registration) |
+
 Each patch is **tiny, reviewed, and fails loudly on rebase**. Keep the surface minimal — it is the
 rebase-cost surface tracked by §7.6/§12.5; the authoritative hook inventory is plan **§12.2**.

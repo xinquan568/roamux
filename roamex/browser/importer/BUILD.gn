@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# roam-16: the browser-side Edge secret decryptor (Keychain read + Edge decrypt
+# in one process; only plaintext leaves).
+source_set("importer") {
+  sources = [
+    "edge_secret_decryptor.h",
+    "edge_secret_decryptor.mm",
+    "roamex_secret_import_stage.h",
+    "roamex_secret_import_stage.mm",
+  ]
+  deps = [
+    "//base",
+    "//chrome/browser/importer:impl",
+    "//components/password_manager/core/browser:password_form",
+    "//crypto",
+    "//net",
+    "//roamex/common:crypto_passkey",
+    "//sql",
+    "//url",
+  ]
+}

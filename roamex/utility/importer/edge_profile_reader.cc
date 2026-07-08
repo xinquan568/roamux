@@ -148,7 +148,12 @@ std::optional<user_data_importer::SourceProfile> DetectEdgeSourceProfile(
   edge.services_supported = user_data_importer::HISTORY |
                             user_data_importer::FAVORITES |
                             user_data_importer::SEARCH_ENGINES |
-                            user_data_importer::AUTOFILL_FORM_DATA;
+                            user_data_importer::AUTOFILL_FORM_DATA |
+                            // roam-16: passwords/cookies now imported by the
+                            // browser-side secret stage (not the utility
+                            // importer).
+                            user_data_importer::PASSWORDS |
+                            user_data_importer::COOKIES;
   return edge;
 }
 
