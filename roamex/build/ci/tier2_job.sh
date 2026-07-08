@@ -35,9 +35,12 @@ if [ ! -d "${OUT}" ]; then
   cp -Rc out/Default "${OUT}"
 fi
 
-autoninja -C "${OUT}" roamex_unittests roamex_browser_unittests
+autoninja -C "${OUT}" roamex_unittests roamex_browser_unittests roamex_browsertests
 "${OUT}/roamex_unittests"
 "${OUT}/roamex_browser_unittests"
+# roam-6: the settings-surface DOM suite. Filtered to the roamex tests to keep tier-2 wall-clock
+# sane while E1 is the only browser-test suite; widen as later epics add suites.
+"${OUT}/roamex_browsertests" --gtest_filter="Roamex*"
 
 # Staleness gate against this job's overlay.
 python3 "${GITHUB_WORKSPACE}/roamex/build/check_override_staleness.py" \

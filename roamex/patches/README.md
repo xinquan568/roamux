@@ -25,6 +25,8 @@ runs manually / from the build gate.
 | `0002-chromium-src-include-redirect.patch` | **persistent** | enables `chromium_src` shadowing (one `include_dirs` line, §12.2 mechanism 2) |
 | `0003-sample-marker.patch` | **sample** | one-line inert marker proving the runhook end-to-end (roam-2 test) |
 | `0004-register-profile-prefs.patch` | **persistent** | the §12.2 registrar hook (roam-3): `roamex::prefs::RegisterProfilePrefs` call + include in `browser_prefs.cc`, plus the `//roamex/common` dep edge on its owning GN target |
+| `0005-tab-menu-tab-strip-position.patch` | **persistent** | the §12.2 tab-strip context-menu hook (roam-6): flag-gated "Tab strip position (Roamex)" submenu (member + `Build()` call in `TabMenuModel`) plus the `//roamex/browser/ui/tabs` dep edge |
+| `0006-settings-appearance-tab-strip-position.patch` | **persistent** | the settings WebUI insertion (roam-6; **maintainer-authorized §12.2 mechanism revision**, see issue #6 — at pin M149 the `chromium_src` include-redirect cannot reach `build_webui()` resource lists, so the insertion lands as this minimal patch): Appearance-page row + `settings_private` allowlist entry + `roamexTabStripPositionEnabled` loadTimeData, plus the `//roamex/common` dep edge on `//chrome/browser/ui` |
 
 Each patch is **tiny, reviewed, and fails loudly on rebase**. Keep the surface minimal — it is the
 rebase-cost surface tracked by §7.6/§12.5; the authoritative hook inventory is plan **§12.2**.

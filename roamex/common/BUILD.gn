@@ -7,6 +7,8 @@ source_set("common") {
     "roamex_features.h",
     "roamex_prefs.cc",
     "roamex_prefs.h",
+    "tab_strip_placement.cc",
+    "tab_strip_placement.h",
   ]
   deps = [
     "//base",

@@ -8,6 +8,7 @@ group("roamex") {
   # Net-new overlay areas are added here as their epics land (E1–E6).
   deps = [
     "//roamex/browser/signin",
+    "//roamex/browser/ui/tabs",
     "//roamex/common",
   ]
 }
@@ -18,6 +19,7 @@ group("roamex_tests") {
   testonly = true
   deps = [
     ":roamex_browser_unittests",
+    ":roamex_browsertests",
     ":roamex_unittests",
   ]
 }
@@ -30,6 +32,8 @@ test("roamex_unittests") {
     "test/roamex_overlay_mechanism_unittest.cc",
     "test/roamex_prefs_unittest.cc",
     "test/roamex_smoke_unittest.cc",
+    "test/tab_strip_placement_unittest.cc",
+    "test/tab_strip_position_menu_unittest.cc",
   ]
   deps = [
     "//base",
@@ -37,8 +41,10 @@ test("roamex_unittests") {
     "//base/test:test_support",
     "//components/prefs:test_support",
     "//roamex/browser/signin",
+    "//roamex/browser/ui/tabs",
     "//roamex/common",
     "//testing/gtest",
+    "//ui/menus",
   ]
 }
 
@@ -48,7 +54,10 @@ test("roamex_unittests") {
 # //base test main crashes (keyed-service registrars CHECK the UI thread / TestingBrowserProcess) —
 # so the target uses Chrome's canonical unit-test main, //chrome/test:test_support_unit.
 test("roamex_browser_unittests") {
-  sources = [ "test/roamex_browser_prefs_hook_unittest.cc" ]
+  sources = [
+    "test/roamex_browser_prefs_hook_unittest.cc",
+    "test/roamex_settings_private_prefs_unittest.cc",
+  ]
   deps = [
     "//base",
     "//chrome/test:test_support_unit",
@@ -57,5 +66,28 @@ test("roamex_browser_unittests") {
     "//content/test:test_support",
     "//roamex/common",
     "//testing/gtest",
+  ]
+}
+
+# Settings-surface DOM tests (roam-6 WB-T4) — the overlay's browser_tests-style target: full
+# browser bring-up via Chrome's canonical browser-test runner. Kept to the roamex suites; tier-2
+# CI runs it filtered (RoamexTabStripPosition*) per roamex/build/ci/tier2_job.sh.
+test("roamex_browsertests") {
+  defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
+  sources = [ "test/roamex_tab_strip_position_settings_browsertest.cc" ]
+  deps = [
+    "//base",
+    "//base/test:test_support",
+    "//chrome:packed_resources",
+    "//chrome/browser",
+    "//chrome/browser/ui",
+    "//chrome/test:browser_tests_runner",
+    "//chrome/test:test_support",
+    "//chrome/test:test_support_ui",
+    "//components/prefs",
+    "//content/test:test_support",
+    "//roamex/common",
+    "//testing/gtest",
+    "//url",
   ]
 }
