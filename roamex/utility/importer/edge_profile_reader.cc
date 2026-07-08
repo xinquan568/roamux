@@ -66,7 +66,15 @@ void CollectBookmarks(
   const std::u16string title = base::UTF8ToUTF16(*name);
   if (*type == "folder") {
     const base::ListValue* children = node.FindList("children");
-    if (!children) {
+    if (!children || children->empty()) {
+      // Preserve empty folders (roam-15 review finding 2): emit an is_folder
+      // entry so ProfileWriter recreates it.
+      user_data_importer::ImportedBookmarkEntry entry;
+      entry.in_toolbar = in_toolbar;
+      entry.is_folder = true;
+      entry.path = path;
+      entry.title = title;
+      out->push_back(std::move(entry));
       return;
     }
     std::vector<std::u16string> child_path = path;
@@ -108,9 +116,17 @@ void CollectRoot(const base::DictValue& root,
   if (!children) {
     return;
   }
+  // Toolbar entries need a leading sentinel: ProfileWriter skips path[0] when
+  // importing to an empty bar (so the real first folder survives). Non-toolbar
+  // roots import under the destination folder, so no sentinel.
+  std::vector<std::u16string> seed;
+  if (in_toolbar) {
+    const std::string* name = root.FindString("name");
+    seed.push_back(name ? base::UTF8ToUTF16(*name) : u"Bookmarks bar");
+  }
   for (const base::Value& child : *children) {
     if (child.is_dict()) {
-      CollectBookmarks(child.GetDict(), /*path=*/{}, in_toolbar, out);
+      CollectBookmarks(child.GetDict(), seed, in_toolbar, out);
     }
   }
 }
@@ -152,6 +168,9 @@ std::vector<user_data_importer::ImporterURLRow> EdgeProfileReader::ReadHistory()
   sql::Statement s(db.GetUniqueStatement(
       "SELECT url, title, visit_count, typed_count, last_visit_time "
       "FROM urls WHERE hidden = 0 ORDER BY last_visit_time DESC"));
+  if (!s.is_valid()) {  // Schema drift (missing table/column): soft-fail.
+    return rows;
+  }
   while (s.Step()) {
     GURL url(s.ColumnStringView(0));
     if (!url.is_valid()) {
@@ -208,6 +227,9 @@ EdgeProfileReader::ReadSearchEngines() const {
   }
   sql::Statement s(
       db.GetUniqueStatement("SELECT short_name, keyword, url FROM keywords"));
+  if (!s.is_valid()) {
+    return engines;
+  }
   while (s.Step()) {
     user_data_importer::SearchEngineInfo engine;
     engine.display_name = s.ColumnString16(0);
@@ -232,6 +254,9 @@ std::vector<ImporterAutofillFormDataEntry> EdgeProfileReader::ReadAutofill()
   sql::Statement s(db.GetUniqueStatement(
       "SELECT name, value, count, date_created, date_last_used "
       "FROM autofill"));
+  if (!s.is_valid()) {
+    return entries;
+  }
   while (s.Step()) {
     ImporterAutofillFormDataEntry entry;
     entry.name = s.ColumnString16(0);

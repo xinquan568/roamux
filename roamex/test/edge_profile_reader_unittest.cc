@@ -106,8 +106,11 @@ TEST_F(EdgeProfileReaderTest, BookmarksFullFidelity) {
   EXPECT_EQ(u"Wiki", entries[0].title);
   EXPECT_EQ("https://wiki.test/", entries[0].url.spec());
   EXPECT_TRUE(entries[0].in_toolbar);
-  ASSERT_EQ(1u, entries[0].path.size());
-  EXPECT_EQ(u"Work", entries[0].path[0]);
+  // A leading toolbar sentinel (bar name) precedes the real folder so
+  // ProfileWriter's skip-first-element keeps "Work".
+  ASSERT_EQ(2u, entries[0].path.size());
+  EXPECT_EQ(u"Bookmarks bar", entries[0].path[0]);
+  EXPECT_EQ(u"Work", entries[0].path[1]);
   EXPECT_EQ(added, entries[0].creation_time);
 }
 
@@ -145,6 +148,40 @@ TEST_F(EdgeProfileReaderTest, MalformedBookmarksSoftFail) {
   ASSERT_TRUE(base::WriteFile(dir().Append(FILE_PATH_LITERAL("Bookmarks")),
                               "{not valid json"));
   EXPECT_TRUE(EdgeProfileReader(dir()).ReadBookmarks().empty());
+}
+
+TEST_F(EdgeProfileReaderTest, CorruptedHistorySchemaSoftFails) {
+  // A History DB missing the expected columns must not crash — empty result.
+  sql::Database db(kFixtureTag);
+  ASSERT_TRUE(db.Open(dir().Append(FILE_PATH_LITERAL("History"))));
+  ASSERT_TRUE(db.Execute("CREATE TABLE urls(id INTEGER PRIMARY KEY)"));
+  EXPECT_TRUE(EdgeProfileReader(dir()).ReadHistory().empty());
+}
+
+TEST_F(EdgeProfileReaderTest, CorruptedWebDataSchemaSoftFails) {
+  sql::Database db(kFixtureTag);
+  ASSERT_TRUE(db.Open(dir().Append(FILE_PATH_LITERAL("Web Data"))));
+  ASSERT_TRUE(db.Execute("CREATE TABLE unrelated(x INTEGER)"));
+  EdgeProfileReader reader(dir());
+  EXPECT_TRUE(reader.ReadSearchEngines().empty());
+  EXPECT_TRUE(reader.ReadAutofill().empty());
+}
+
+TEST_F(EdgeProfileReaderTest, EmptyFoldersPreserved) {
+  const std::string json = R"({"roots":{"bookmark_bar":{"type":"folder",
+    "name":"Bookmarks bar","children":[{"type":"folder","name":"Empty",
+    "children":[]}]},"other":{"type":"folder","name":"Other","children":[]},
+    "synced":{"type":"folder","name":"Mobile","children":[]}}})";
+  ASSERT_TRUE(
+      base::WriteFile(dir().Append(FILE_PATH_LITERAL("Bookmarks")), json));
+  auto entries = EdgeProfileReader(dir()).ReadBookmarks();
+  ASSERT_EQ(1u,
+            entries.size());  // the empty "other"/"synced" roots emit nothing
+  EXPECT_TRUE(entries[0].is_folder);
+  EXPECT_EQ(u"Empty", entries[0].title);
+  EXPECT_TRUE(entries[0].in_toolbar);
+  ASSERT_EQ(1u, entries[0].path.size());
+  EXPECT_EQ(u"Bookmarks bar", entries[0].path[0]);
 }
 
 TEST_F(EdgeProfileReaderTest, CopyToTempLeavesSourceUntouched) {
