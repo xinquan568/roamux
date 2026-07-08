@@ -6,12 +6,16 @@
 
 source_set("tabs") {
   sources = [
+    "shortcut_registry.cc",
+    "shortcut_registry.h",
     "tab_uid_service.cc",
     "tab_uid_service.h",
   ]
   deps = [
     "//base",
     "//components/keyed_service/core",
+    "//components/prefs",
     "//components/sessions",
+    "//roamex/common",
   ]
 }
