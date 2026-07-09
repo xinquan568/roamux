@@ -7,6 +7,15 @@ source_set("tab_visit") {
   sources = [
     "settled_visit_journal_service.cc",
     "settled_visit_journal_service.h",
+
+    # roam-23 (I-4.3): the pure, UI-free commit-decision predicate shared by the
+    # observer bridge (UI target) and its unit test. The bridge + its factory
+    # are Profile/UI-facing and are compiled into //chrome/browser/ui/tabs via
+    # patch 0016 (NOT listed here — keeping this source_set free of
+    # //chrome/browser/ui).
+    "tab_visit_activation_class.h",
+    "visit_url_filter.cc",
+    "visit_url_filter.h",
     "visits_store.cc",
     "visits_store.h",
   ]
