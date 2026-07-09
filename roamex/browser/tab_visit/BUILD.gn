@@ -8,6 +8,11 @@ source_set("tab_visit") {
     "settled_visit_journal_service.cc",
     "settled_visit_journal_service.h",
 
+    # roam-24 (I-4.4): the pure derived-MRU + frozen-gesture Back/Forward
+    # traversal controller. Pure logic (//base only) — no Profile/UI/SQLite.
+    "tab_traversal_controller.cc",
+    "tab_traversal_controller.h",
+
     # roam-23 (I-4.3): the pure, UI-free commit-decision predicate shared by the
     # observer bridge (UI target) and its unit test. The bridge + its factory
     # are Profile/UI-facing and are compiled into //chrome/browser/ui/tabs via
