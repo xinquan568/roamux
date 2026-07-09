@@ -5,6 +5,7 @@
 
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/task/sequenced_task_runner.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
@@ -28,9 +29,72 @@ constexpr base::TimeDelta kSettleDebounce = base::Milliseconds(900);
 }  // namespace
 
 TabVisitTraversalCoordinator::TabVisitTraversalCoordinator(Profile* profile)
-    : profile_(profile) {}
+    : profile_(profile) {
+  // roam-26: reload the persisted uid-journal into the MRU commit-log so
+  // traversal survives a restart. DEFER the load to the next UI-thread task —
+  // reaching another KeyedService (the journal factory) here in the ctor would
+  // re-enter GetServiceForBrowserContext during this service's own construction
+  // and deadlock profile init.
+  if (base::FeatureList::IsEnabled(features::kTabVisitNav)) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&TabVisitTraversalCoordinator::LoadPersistedJournal,
+                       weak_factory_.GetWeakPtr()));
+  }
+}
 
 TabVisitTraversalCoordinator::~TabVisitTraversalCoordinator() = default;
+
+void TabVisitTraversalCoordinator::LoadPersistedJournal() {
+  if (SettledVisitJournalService* journal =
+          SettledVisitJournalFactory::GetForProfile(profile_)) {
+    journal->GetVisits(
+        base::BindOnce(&TabVisitTraversalCoordinator::OnJournalLoaded,
+                       weak_factory_.GetWeakPtr()));
+  } else {
+    OnJournalLoaded({});  // Nothing persisted (disabled / OTR) — mark loaded.
+  }
+}
+
+void TabVisitTraversalCoordinator::OnJournalLoaded(std::vector<VisitRow> rows) {
+  // Persisted history is OLDER than anything appended at runtime during the
+  // async read: [persisted…] ++ [runtime…]. Drop empty-uid (legacy) rows.
+  std::vector<std::string> merged;
+  merged.reserve(rows.size() + settled_uid_log_.size());
+  for (const VisitRow& row : rows) {
+    if (!row.tab_uid.empty()) {
+      merged.push_back(row.tab_uid);
+    }
+  }
+  for (const std::string& uid : settled_uid_log_) {
+    merged.push_back(uid);
+  }
+  // Coalesce consecutive duplicates (incl. the persisted/runtime boundary).
+  settled_uid_log_.clear();
+  for (std::string& uid : merged) {
+    if (settled_uid_log_.empty() || settled_uid_log_.back() != uid) {
+      settled_uid_log_.push_back(std::move(uid));
+    }
+  }
+  journal_loaded_ = true;
+  journal_loaded_callbacks_.Notify();
+}
+
+base::CallbackListSubscription
+TabVisitTraversalCoordinator::AddJournalLoadedCallback(
+    base::RepeatingClosure cb) {
+  if (journal_loaded_) {
+    cb.Run();  // Already loaded — refresh immediately.
+    return {};
+  }
+  return journal_loaded_callbacks_.Add(std::move(cb));
+}
+
+void TabVisitTraversalCoordinator::OnReachabilityMaybeChanged() {
+  if (journal_loaded_) {
+    journal_loaded_callbacks_.Notify();  // Refresh per-window command state.
+  }
+}
 
 // static
 std::string TabVisitTraversalCoordinator::UidOf(
@@ -169,7 +233,8 @@ void TabVisitTraversalCoordinator::Settle() {
       if (IsRecordableVisitUrl(url)) {
         if (SettledVisitJournalService* journal =
                 SettledVisitJournalFactory::GetForProfile(profile_)) {
-          journal->RecordVisit(url);  // Exactly one append for the gesture.
+          // roam-26: uid-keyed, so the settled visit survives a restart.
+          journal->RecordVisit(*uid, url);  // Exactly one append per gesture.
         }
       }
     }

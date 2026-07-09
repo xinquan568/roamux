@@ -38,13 +38,18 @@ class SettledVisitJournalService : public KeyedService {
       delete;
   ~SettledVisitJournalService() override;
 
-  // Appends a settled visit (async; committed on the store sequence). No-op
-  // when the feature is disabled.
-  void RecordVisit(const GURL& url);
+  // Appends a settled visit keyed by the durable per-tab uid (roam-26) — async;
+  // committed on the store sequence. No-op when the feature is disabled.
+  void RecordVisit(const std::string& tab_uid, const GURL& url);
 
   // Reads all retained visits (oldest-first) and runs `callback` on the
   // caller's sequence. Returns an empty vector when the feature is disabled.
   void GetVisits(base::OnceCallback<void(std::vector<VisitRow>)> callback);
+
+  // Reads all persisted tab-state rows and runs `callback` on the caller's
+  // sequence (for the startup reload). Empty when disabled / in-memory-empty.
+  void GetAllTabStates(
+      base::OnceCallback<void(std::vector<TabStateRow>)> callback);
 
   // --- Tab-state sidecar (roam-22 / I-4.2) ---
 

@@ -4,6 +4,7 @@
 
 #include <memory>
 
+#include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "ui/events/event_observer.h"
 
@@ -41,6 +42,8 @@ class TabVisitGestureWatcher : public ui::EventObserver {
 
   const raw_ptr<BrowserWindowInterface> browser_;
   std::unique_ptr<views::EventMonitor> event_monitor_;
+  // roam-26: refresh Back/Forward enablement once the persisted MRU loads.
+  base::CallbackListSubscription journal_loaded_sub_;
 };
 
 }  // namespace roamex::tab_visit

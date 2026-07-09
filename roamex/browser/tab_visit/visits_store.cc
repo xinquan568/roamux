@@ -17,9 +17,11 @@ namespace {
 constexpr char kDatabaseTag[] = "RoamexSettledVisitJournal";
 
 // v1 (roam-21): the `visits` table. v2 (roam-22): adds the `tab_state` sidecar.
-// Compatible version stays 1 — a v1 build can still open a v2 DB (it just
-// ignores the `tab_state` table).
-constexpr int kCurrentVersion = 2;
+// v3 (roam-26): adds the durable `tab_uid` column to `visits` so the settled-
+// visit journal is keyed by the durable per-tab uid (§6.2) and the MRU survives
+// a restart. Compatible version stays 1 — an older build can still open a v3 DB
+// (it ignores the extra column / table).
+constexpr int kCurrentVersion = 3;
 constexpr int kCompatibleVersion = 1;
 
 int64_t ToStorage(base::Time t) {
@@ -56,6 +58,7 @@ bool VisitsStore::InitSchema() {
   static constexpr char kCreateVisits[] =
       "CREATE TABLE IF NOT EXISTS visits("
       "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+      "tab_uid TEXT NOT NULL DEFAULT '',"
       "url TEXT NOT NULL,"
       "visited_at INTEGER NOT NULL)";
   // The persisted tab-state sidecar (roam-22). Keyed by the durable
@@ -77,12 +80,26 @@ bool VisitsStore::InitSchema() {
       !db_.Execute(kCreateVisits) || !db_.Execute(kCreateTabState)) {
     return false;
   }
-  // Forward migration: advance an older (v1, visits-only) journal to v2 after
-  // the idempotent `tab_state` creation above, leaving `visits` and its rows
-  // intact.
-  if (meta.GetVersionNumber() < kCurrentVersion &&
-      !meta.SetVersionNumber(kCurrentVersion)) {
-    return false;
+  // Forward migration to v3. The `tab_state` table was created idempotently
+  // above (the v1->v2 step). The v2->v3 step adds the `tab_uid` column to an
+  // existing `visits` table — but `ALTER TABLE ADD COLUMN` is NOT idempotent,
+  // so it is guarded by a column-existence check and wrapped with the version
+  // bump in a single transaction. A crash after the ALTER but before the bump
+  // leaves a partial DB (column present, version 2); the guard then skips the
+  // ALTER and just bumps — no duplicate-column error, no raze, rows preserved.
+  if (meta.GetVersionNumber() < kCurrentVersion) {
+    sql::Transaction txn(&db_);
+    if (!txn.Begin()) {
+      return false;
+    }
+    if (!db_.DoesColumnExist("visits", "tab_uid") &&
+        !db_.Execute(
+            "ALTER TABLE visits ADD COLUMN tab_uid TEXT NOT NULL DEFAULT ''")) {
+      return false;
+    }
+    if (!meta.SetVersionNumber(kCurrentVersion) || !txn.Commit()) {
+      return false;
+    }
   }
   return true;
 }
@@ -141,7 +158,9 @@ std::vector<TabStateRow> VisitsStore::ReadTabStates() {
   return rows;
 }
 
-void VisitsStore::Append(const std::string& url, base::Time visited_at) {
+void VisitsStore::Append(const std::string& tab_uid,
+                         const std::string& url,
+                         base::Time visited_at) {
   if (!db_.is_open()) {
     return;
   }
@@ -150,10 +169,11 @@ void VisitsStore::Append(const std::string& url, base::Time visited_at) {
     return;
   }
 
-  sql::Statement insert(
-      db_.GetUniqueStatement("INSERT INTO visits(url,visited_at) VALUES(?,?)"));
-  insert.BindString(0, url);
-  insert.BindInt64(1, ToStorage(visited_at));
+  sql::Statement insert(db_.GetUniqueStatement(
+      "INSERT INTO visits(tab_uid,url,visited_at) VALUES(?,?,?)"));
+  insert.BindString(0, tab_uid);
+  insert.BindString(1, url);
+  insert.BindInt64(2, ToStorage(visited_at));
   if (!insert.Run()) {
     return;
   }
@@ -177,12 +197,13 @@ std::vector<VisitRow> VisitsStore::ReadAll() {
     return rows;
   }
   sql::Statement s(db_.GetUniqueStatement(
-      "SELECT id,url,visited_at FROM visits ORDER BY id ASC"));
+      "SELECT id,tab_uid,url,visited_at FROM visits ORDER BY id ASC"));
   while (s.Step()) {
     VisitRow row;
     row.id = s.ColumnInt64(0);
-    row.url = s.ColumnString(1);
-    row.visited_at = FromStorage(s.ColumnInt64(2));
+    row.tab_uid = s.ColumnString(1);
+    row.url = s.ColumnString(2);
+    row.visited_at = FromStorage(s.ColumnInt64(3));
     rows.push_back(std::move(row));
   }
   return rows;

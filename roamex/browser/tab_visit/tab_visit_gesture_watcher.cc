@@ -3,6 +3,7 @@
 
 #include <set>
 
+#include "base/functional/bind.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -28,6 +29,15 @@ TabVisitGestureWatcher::TabVisitGestureWatcher(BrowserWindowInterface* browser)
   event_monitor_ = views::EventMonitor::CreateWindowMonitor(
       this, browser_->GetWindow()->GetNativeWindow(),
       {ui::EventType::kKeyPressed, ui::EventType::kKeyReleased});
+  // roam-26: refresh this window's Back/Forward enablement once the persisted
+  // MRU finishes loading (fires immediately if it already has).
+  if (TabVisitTraversalCoordinator* coordinator =
+          TabVisitTraversalCoordinatorFactory::GetForProfile(
+              browser_->GetProfile())) {
+    journal_loaded_sub_ =
+        coordinator->AddJournalLoadedCallback(base::BindRepeating(
+            &TabVisitGestureWatcher::RefreshCommands, base::Unretained(this)));
+  }
 }
 
 TabVisitGestureWatcher::~TabVisitGestureWatcher() = default;

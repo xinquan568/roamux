@@ -38,12 +38,13 @@ SettledVisitJournalService::SettledVisitJournalService(bool in_memory,
 
 SettledVisitJournalService::~SettledVisitJournalService() = default;
 
-void SettledVisitJournalService::RecordVisit(const GURL& url) {
+void SettledVisitJournalService::RecordVisit(const std::string& tab_uid,
+                                             const GURL& url) {
   if (store_.is_null()) {
     return;
   }
   store_.AsyncCall(&VisitsStore::Append)
-      .WithArgs(url.spec(), base::Time::Now());
+      .WithArgs(tab_uid, url.spec(), base::Time::Now());
 }
 
 void SettledVisitJournalService::GetVisits(
@@ -53,6 +54,15 @@ void SettledVisitJournalService::GetVisits(
     return;
   }
   store_.AsyncCall(&VisitsStore::ReadAll).Then(std::move(callback));
+}
+
+void SettledVisitJournalService::GetAllTabStates(
+    base::OnceCallback<void(std::vector<TabStateRow>)> callback) {
+  if (store_.is_null()) {
+    std::move(callback).Run({});
+    return;
+  }
+  store_.AsyncCall(&VisitsStore::ReadTabStates).Then(std::move(callback));
 }
 
 void SettledVisitJournalService::SetTabState(TabStateRow row) {
