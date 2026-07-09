@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "roamex/browser/importer/roamex_indexed_db_import_stage.h"
 
+#include <fcntl.h>
+
 #include <map>
 #include <utility>
 #include <vector>
@@ -9,11 +11,32 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/task/thread_pool.h"
+#include "build/build_config.h"
 #include "roamex/browser/importer/edge_indexed_db_reader.h"
+
+#if BUILDFLAG(IS_APPLE)
+#include <stdio.h>  // renameatx_np, RENAME_EXCL
+#endif
 
 namespace roamex {
 
 namespace {
+
+// Atomically publishes the staged directory `from` to `to`, FAILING rather than
+// overwriting if `to` already exists. On macOS — the only platform the Edge
+// importer runs on — this is a single renameatx_np(RENAME_EXCL) syscall, so
+// there is no check->rename TOCTOU: a store appearing at `to` after staging
+// makes publish fail (-> rollback) instead of being clobbered (POSIX rename()
+// would atomically replace an empty directory). On other platforms, where this
+// importer never runs, it degrades to a rechecked move.
+bool PublishExclusive(const base::FilePath& from, const base::FilePath& to) {
+#if BUILDFLAG(IS_APPLE)
+  return renameatx_np(AT_FDCWD, from.value().c_str(), AT_FDCWD,
+                      to.value().c_str(), RENAME_EXCL) == 0;
+#else
+  return !base::PathExists(to) && base::Move(from, to);
+#endif
+}
 
 // The origin "base" for grouping related store dirs: for legacy
 // `<id>.indexeddb.leveldb` / `<id>.indexeddb.blob`, the base is `<id>`; for a
@@ -83,14 +106,14 @@ size_t CopyStores(base::FilePath source_path, base::FilePath dest_profile_dir) {
       staged.emplace_back(staging, dest_idb.Append(src.BaseName()));
     }
 
-    // Publish: recheck EACH final path is absent immediately before the rename
-    // (closes the stage→publish TOCTOU); an intra-IndexedDB/ Move into a
-    // confirmed-absent target cannot merge or overwrite. Roll back only the
-    // paths WE created on ANY failure; unpublished temps are swept below.
+    // Publish each staged member with an atomic no-replace rename: if a store
+    // for that origin already exists (the early no-clobber missed it, or one
+    // raced in after staging), publish FAILS and we roll back rather than
+    // clobber. Roll back only the paths WE created; temps are swept below.
     std::vector<base::FilePath> published;
     if (ok) {
       for (const auto& [staging, final_path] : staged) {
-        if (base::PathExists(final_path) || !base::Move(staging, final_path)) {
+        if (!PublishExclusive(staging, final_path)) {
           ok = false;
           break;
         }
