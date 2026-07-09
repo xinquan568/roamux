@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# roam-21 (I-4.1): the settled-visit journal service + its writable SQLite store.
+# The Profile-facing factory (settled_visit_journal_factory.*) is NOT listed here —
+# it needs //chrome/browser/profiles and is compiled into the upstream tab target
+# via patch 0015's `sources +=` (the two-piece pattern from roam-10 / patch 0009).
+source_set("tab_visit") {
+  sources = [
+    "settled_visit_journal_service.cc",
+    "settled_visit_journal_service.h",
+    "visits_store.cc",
+    "visits_store.h",
+  ]
+  deps = [
+    "//base",
+    "//components/keyed_service/core",
+    "//roamex/common",
+    "//sql",
+    "//url",
+  ]
+}
