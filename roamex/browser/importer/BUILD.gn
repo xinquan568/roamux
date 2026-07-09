@@ -3,8 +3,12 @@
 # in one process; only plaintext leaves).
 source_set("importer") {
   sources = [
+    "edge_local_storage_reader.cc",
+    "edge_local_storage_reader.h",
     "edge_secret_decryptor.h",
     "edge_secret_decryptor.mm",
+    "roamex_origin_storage_import_stage.cc",
+    "roamex_origin_storage_import_stage.h",
     "roamex_secret_import_stage.h",
     "roamex_secret_import_stage.mm",
   ]
