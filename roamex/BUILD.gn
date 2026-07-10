@@ -124,6 +124,7 @@ test("roamex_browsertests") {
     "test/roamex_tab_uid_browsertest.cc",
     "test/roamex_tab_visit_gesture_browsertest.cc",
     "test/roamex_tab_visit_observer_browsertest.cc",
+    "test/roamex_tab_visit_reopen_browsertest.cc",
     "test/roamex_tab_visit_restart_browsertest.cc",
     "test/roamex_tab_visit_uid_flag_matrix_browsertest.cc",
     "test/roamex_three_carrier_survival_browsertest.cc",

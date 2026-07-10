@@ -7,8 +7,9 @@
 #include <vector>
 
 #include "base/callback_list.h"
+#include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
-#include "base/functional/callback_forward.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
@@ -92,6 +93,23 @@ class TabVisitTraversalCoordinator : public KeyedService {
   // insert/removal. No-op before the load.
   void OnReachabilityMaybeChanged();
 
+  // roam-27 (I-4.7): the reopen action. `fn(target, uid, last_known_url)`
+  // reopens the closed tab with durable `uid` into `target`'s window (exact via
+  // TabRestoreService, else a fresh tab at `last_known_url` re-stamped with the
+  // old uid), returning success. It lives in a //chrome/browser/ui shim (needs
+  // Browser); the ui layer injects it here so the ui/tabs coordinator can
+  // invoke reopen without a GN cycle.
+  using ReopenFn = base::RepeatingCallback<
+      bool(BrowserWindowInterface*, const std::string&, const std::string&)>;
+  void SetReopenFn(ReopenFn fn);
+  bool has_reopen_fn() const { return !reopen_fn_.is_null(); }
+
+  // roam-27: record a just-closed tab as reopenable (its full sidecar row, so
+  // last_known_url/window_id are available synchronously). Called by the bridge
+  // at close time, before the async sidecar persist — so a gesture immediately
+  // after a close sees the uid as reopenable. Clears any stale tombstone.
+  void AddReopenable(const TabStateRow& row);
+
   // Command enablement (§6.3): during a gesture, delegate to the controller;
   // before a gesture, a Back is enabled iff the commit-log has a reachable uid
   // older than the tail, and a Forward is disabled.
@@ -125,8 +143,28 @@ class TabVisitTraversalCoordinator : public KeyedService {
 
   // Resolve a uid to its live tab across the profile's Browsers, or nullopt.
   std::optional<TabLocation> ResolveUid(const std::string& uid) const;
-  // The profile's currently-live tab uids (the reachable set; reopen-off).
+  // The profile's currently-live tab uids.
   base::flat_set<std::string> CollectLiveUids() const;
+  // The traversal reachable set: live uids, plus closed-but-reopenable uids
+  // when `reopen_closed` is on. Reopen-off ⇒ exactly CollectLiveUids()
+  // (unchanged).
+  base::flat_set<std::string> CollectReachableUids() const;
+  // True iff the `reopen_closed` pref is enabled for this profile.
+  bool ReopenClosedEnabled() const;
+  // Try to reopen a closed-reopenable uid (via the injected ReopenFn) and
+  // rebind its sidecar row (closed=false). Returns true if a tab was reopened.
+  bool TryReopenClosedUid(const std::string& uid);
+  // Flip the sidecar row to closed=false and drop the uid from the reopenable
+  // cache (adding a tombstone so a stale async reload can't resurrect it).
+  void RebindSidecar(const TabStateRow& row);
+  // Loads closed-reopenable rows from the persisted sidecar (startup /
+  // refresh), skipping uids that were reopened this session (the tombstone
+  // set).
+  void LoadReopenableFromSidecar();
+  void OnReopenableLoaded(std::vector<TabStateRow> rows);
+  // The target window to reopen into (the row's window if live, else the first
+  // normal window of the profile).
+  BrowserWindowInterface* ReopenTargetWindow(const TabStateRow& row) const;
   // The uid of a tab's WebContents (roam-10 helper), or empty.
   static std::string UidOf(content::WebContents* web_contents);
 
@@ -139,6 +177,17 @@ class TabVisitTraversalCoordinator : public KeyedService {
   bool traversal_active_ = false;
   bool journal_loaded_ = false;  // roam-26: persisted MRU reloaded at startup.
   base::RepeatingClosureList journal_loaded_callbacks_;
+  // roam-27: closed-but-reopenable tabs (uid -> full sidecar row) + a tombstone
+  // set of uids reopened this session (so a stale async reload can't resurrect
+  // them) + the injected reopen action (lives in a //chrome/browser/ui shim).
+  base::flat_map<std::string, TabStateRow> reopenable_;
+  base::flat_set<std::string> recently_reopened_;
+  // uid -> intended URL for tabs reopened during the CURRENT gesture. A
+  // fallback-reopened tab's navigation is not committed by Settle time, so the
+  // settled visit is recorded from this authoritative last_known_url instead of
+  // the (still-empty) committed URL. Cleared at every gesture end.
+  base::flat_map<std::string, std::string> reopened_url_by_uid_;
+  ReopenFn reopen_fn_;
   base::OneShotTimer
       debounce_timer_;  // Owned here (per-profile), not per-window.
   base::WeakPtrFactory<TabVisitTraversalCoordinator> weak_factory_{this};

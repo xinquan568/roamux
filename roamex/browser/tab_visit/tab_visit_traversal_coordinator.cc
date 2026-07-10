@@ -11,12 +11,14 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "roamex/browser/tab_visit/settled_visit_journal_factory.h"
 #include "roamex/browser/tab_visit/settled_visit_journal_service.h"
 #include "roamex/browser/tab_visit/visit_url_filter.h"
 #include "roamex/browser/tabs/tab_uid_tab_helper.h"
 #include "roamex/common/roamex_features.h"
+#include "roamex/common/roamex_prefs.h"
 #include "ui/base/base_window.h"
 #include "url/gurl.h"
 
@@ -51,6 +53,9 @@ void TabVisitTraversalCoordinator::LoadPersistedJournal() {
     journal->GetVisits(
         base::BindOnce(&TabVisitTraversalCoordinator::OnJournalLoaded,
                        weak_factory_.GetWeakPtr()));
+    // roam-27: also load the persisted closed-tab rows so tabs closed before a
+    // restart are reopenable when the pref is on.
+    LoadReopenableFromSidecar();
   } else {
     OnJournalLoaded({});  // Nothing persisted (disabled / OTR) — mark loaded.
   }
@@ -162,7 +167,7 @@ void TabVisitTraversalCoordinator::EnsureGesture() {
   }
   anchor_uid_ =
       settled_uid_log_.empty() ? std::string() : settled_uid_log_.back();
-  controller_.BeginGesture(settled_uid_log_, CollectLiveUids());
+  controller_.BeginGesture(settled_uid_log_, CollectReachableUids());
   traversal_active_ = true;
 }
 
@@ -178,7 +183,11 @@ void TabVisitTraversalCoordinator::StepAndActivate(bool forward) {
   std::optional<TabIdentity> uid =
       forward ? controller_.Forward() : controller_.Back();
   if (uid) {
-    if (std::optional<TabLocation> loc = ResolveUid(*uid)) {
+    std::optional<TabLocation> loc = ResolveUid(*uid);
+    if (!loc && TryReopenClosedUid(*uid)) {
+      loc = ResolveUid(*uid);  // Now live (reopened).
+    }
+    if (loc) {
       ActivateLocation(*loc);
     }
   }
@@ -226,10 +235,25 @@ void TabVisitTraversalCoordinator::Settle() {
   // moving off) the anchor is not a new visit, so it must not re-append the
   // current tab (F1). A landed-but-now-closed tab commits nothing.
   if (uid && *uid != anchor_uid_) {
-    if (std::optional<TabLocation> loc = ResolveUid(*uid)) {
+    std::optional<TabLocation> loc = ResolveUid(*uid);
+    if (!loc && TryReopenClosedUid(*uid)) {
+      loc = ResolveUid(*uid);  // Reopened the closed landing (§6.6).
+    }
+    if (loc) {
       ActivateLocation(*loc);
       RecordSettledUid(*uid);
-      const GURL& url = loc->web_contents->GetLastCommittedURL();
+      GURL url = loc->web_contents->GetLastCommittedURL();
+      // roam-27: an EVICTION-fallback reopen appends a blank WebContents and
+      // navigates asynchronously, so by Settle time its committed URL is not
+      // yet recordable. Fall back to the authoritative last_known_url captured
+      // when the tab was closed, so the settled visit is still persisted
+      // (exactly one append per gesture, survives a restart).
+      if (!IsRecordableVisitUrl(url)) {
+        auto it = reopened_url_by_uid_.find(*uid);
+        if (it != reopened_url_by_uid_.end()) {
+          url = GURL(it->second);
+        }
+      }
       if (IsRecordableVisitUrl(url)) {
         if (SettledVisitJournalService* journal =
                 SettledVisitJournalFactory::GetForProfile(profile_)) {
@@ -240,6 +264,7 @@ void TabVisitTraversalCoordinator::Settle() {
     }
   }
   // Clear LAST — after the settle activation has been suppressed.
+  reopened_url_by_uid_.clear();  // Per-gesture; reset for the next gesture.
   traversal_active_ = false;
 }
 
@@ -247,6 +272,7 @@ void TabVisitTraversalCoordinator::CancelGesture() {
   debounce_timer_.Stop();
   if (traversal_active_) {
     controller_.Settle();  // Drop the pure state without committing.
+    reopened_url_by_uid_.clear();
     traversal_active_ = false;
   }
 }
@@ -255,12 +281,121 @@ bool TabVisitTraversalCoordinator::CanGoBack() const {
   if (traversal_active_) {
     return controller_.CanGoBack();
   }
-  return CanBeginBackTraversal(settled_uid_log_, CollectLiveUids());
+  return CanBeginBackTraversal(settled_uid_log_, CollectReachableUids());
 }
 
 bool TabVisitTraversalCoordinator::CanGoForward() const {
   // Before a gesture the tail is already the most-recent tab (nothing newer).
   return traversal_active_ && controller_.CanGoForward();
+}
+
+bool TabVisitTraversalCoordinator::ReopenClosedEnabled() const {
+  return profile_ && profile_->GetPrefs() &&
+         profile_->GetPrefs()->GetBoolean(prefs::kReopenClosed);
+}
+
+base::flat_set<std::string> TabVisitTraversalCoordinator::CollectReachableUids()
+    const {
+  base::flat_set<std::string> uids = CollectLiveUids();
+  if (ReopenClosedEnabled()) {
+    for (const auto& [uid, row] : reopenable_) {
+      uids.insert(uid);  // closed-but-reopenable.
+    }
+  }
+  return uids;
+}
+
+void TabVisitTraversalCoordinator::SetReopenFn(ReopenFn fn) {
+  reopen_fn_ = std::move(fn);
+}
+
+void TabVisitTraversalCoordinator::AddReopenable(const TabStateRow& row) {
+  if (row.restore_key.empty()) {
+    return;
+  }
+  recently_reopened_.erase(
+      row.restore_key);  // A fresh close clears the tombstone.
+  reopenable_[row.restore_key] = row;
+  OnReachabilityMaybeChanged();  // Back enablement may have changed
+                                 // (reopen-on).
+}
+
+BrowserWindowInterface* TabVisitTraversalCoordinator::ReopenTargetWindow(
+    const TabStateRow& row) const {
+  // Prefer the tab's ORIGINAL window if it is still live (so an eviction-
+  // fallback tab lands back where it was closed from); else the first normal
+  // window of the profile. For an EXACT restore the target only supplies the
+  // LiveTabContext (WindowOpenDisposition::UNKNOWN honors the entry's own saved
+  // placement regardless), but the fallback appends into this window, so the
+  // original-window match matters there.
+  BrowserWindowInterface* fallback = nullptr;
+  for (BrowserWindowInterface* browser : GetAllBrowserWindowInterfaces()) {
+    if (browser->GetProfile() != profile_ ||
+        browser->GetType() != BrowserWindowInterface::TYPE_NORMAL) {
+      continue;
+    }
+    if (row.window_id != 0 && browser->GetSessionID().id() == row.window_id) {
+      return browser;  // The original window is still live.
+    }
+    if (!fallback) {
+      fallback = browser;
+    }
+  }
+  return fallback;
+}
+
+bool TabVisitTraversalCoordinator::TryReopenClosedUid(const std::string& uid) {
+  if (!ReopenClosedEnabled() || reopen_fn_.is_null()) {
+    return false;
+  }
+  auto it = reopenable_.find(uid);
+  if (it == reopenable_.end()) {
+    return false;
+  }
+  const TabStateRow row = it->second;  // Copy before the map is mutated.
+  BrowserWindowInterface* target = ReopenTargetWindow(row);
+  if (!target || !reopen_fn_.Run(target, uid, row.last_known_url)) {
+    return false;  // Reopen failed — leave the sidecar closed.
+  }
+  // Remember the intended URL so Settle can persist the visit even when a
+  // fallback reopen's navigation has not committed yet (F1).
+  reopened_url_by_uid_[uid] = row.last_known_url;
+  RebindSidecar(row);
+  return true;
+}
+
+void TabVisitTraversalCoordinator::RebindSidecar(const TabStateRow& row) {
+  reopenable_.erase(row.restore_key);
+  recently_reopened_.insert(
+      row.restore_key);  // Async reload must not resurrect.
+  TabStateRow reopened = row;
+  reopened.closed = false;
+  if (SettledVisitJournalService* journal =
+          SettledVisitJournalFactory::GetForProfile(profile_)) {
+    journal->SetTabState(std::move(reopened));  // Single-sidecar rebind.
+  }
+}
+
+void TabVisitTraversalCoordinator::LoadReopenableFromSidecar() {
+  if (SettledVisitJournalService* journal =
+          SettledVisitJournalFactory::GetForProfile(profile_)) {
+    journal->GetAllTabStates(
+        base::BindOnce(&TabVisitTraversalCoordinator::OnReopenableLoaded,
+                       weak_factory_.GetWeakPtr()));
+  }
+}
+
+void TabVisitTraversalCoordinator::OnReopenableLoaded(
+    std::vector<TabStateRow> rows) {
+  for (TabStateRow& row : rows) {
+    if (!row.closed || row.restore_key.empty() ||
+        recently_reopened_.contains(row.restore_key)) {
+      continue;  // Open, keyless, or reopened-this-session (tombstone).
+    }
+    // Do NOT clobber a synchronously-added row (sync is authoritative).
+    reopenable_.try_emplace(row.restore_key, row);
+  }
+  OnReachabilityMaybeChanged();
 }
 
 void TabVisitTraversalCoordinator::Shutdown() {
