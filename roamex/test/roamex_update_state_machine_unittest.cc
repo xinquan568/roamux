@@ -72,7 +72,8 @@ TEST(UpdateStateMachineTest, SkippedVersionSuppressesAvailable) {
   sm.OnEvent({UpdateEventType::kCheckStarted});
   // The skipped version does not surface as available.
   EXPECT_EQ(sm.OnEvent(Found("2.0.0")).status, UpdateStatus::kUpToDate);
-  // A different version still surfaces.
+  // A different version surfaces on the next check.
+  sm.OnEvent({UpdateEventType::kCheckStarted});
   EXPECT_EQ(sm.OnEvent(Found("2.0.1")).status, UpdateStatus::kAvailable);
 }
 
@@ -86,6 +87,26 @@ TEST(UpdateStateMachineTest, IllegalTransitionsAreNoOps) {
   p.received = 10;
   p.total = 100;
   EXPECT_EQ(sm.OnEvent(p).status, UpdateStatus::kIdle);
+  // kUpToDate / kUpdateFound are only outcomes of a check — ignored from idle.
+  EXPECT_EQ(sm.OnEvent({UpdateEventType::kUpToDate}).status,
+            UpdateStatus::kIdle);
+  EXPECT_EQ(sm.OnEvent(Found("2.0.0")).status, UpdateStatus::kIdle);
+  // kUpdateFound does not overwrite a download in flight.
+  sm.OnEvent({UpdateEventType::kCheckStarted});
+  sm.OnEvent(Found("2.0.0"));
+  sm.OnEvent({UpdateEventType::kDownloadStarted});
+  EXPECT_EQ(sm.OnEvent(Found("3.0.0")).status, UpdateStatus::kDownloading);
+}
+
+TEST(UpdateStateMachineTest, ProgressIsClampedToUnitRange) {
+  UpdateStateMachine sm;
+  sm.OnEvent({UpdateEventType::kCheckStarted});
+  sm.OnEvent(Found("2.0.0"));
+  sm.OnEvent({UpdateEventType::kDownloadStarted});
+  UpdateEvent over{UpdateEventType::kDownloadProgress};
+  over.received = 500;
+  over.total = 200;  // > 100%
+  EXPECT_DOUBLE_EQ(sm.OnEvent(over).progress, 1.0);
 }
 
 }  // namespace

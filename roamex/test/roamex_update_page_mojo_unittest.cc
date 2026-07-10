@@ -61,5 +61,33 @@ TEST_F(UpdatePageMojoTest, CommandsCapturedAndStateBroadcast) {
   EXPECT_EQ(page.last_version, "2.0.0");
 }
 
+TEST_F(UpdatePageMojoTest, FactoryBindPushesInitialSnapshotAndDrivenState) {
+  FakeUpdatePageHandler handler;
+  FakeUpdatePageHandlerFactory factory(&handler);
+  RecordingPage page;
+  mojo::Receiver<mojom::UpdatePage> page_receiver{&page};
+  mojo::Remote<mojom::UpdatePageHandlerFactory> factory_remote;
+  factory.Bind(factory_remote.BindNewPipeAndPassReceiver());
+
+  mojo::Remote<mojom::UpdatePageHandler> handler_remote;
+  factory_remote->CreatePageHandler(
+      page_receiver.BindNewPipeAndPassRemote(),
+      handler_remote.BindNewPipeAndPassReceiver());
+  factory_remote.FlushForTesting();
+  page_receiver.FlushForTesting();
+  // Bootstrap: the initial snapshot was pushed.
+  EXPECT_GE(page.count, 1);
+  EXPECT_EQ(page.last_status, mojom::UpdateStatus::kIdle);
+
+  // A state-machine-driven event reaches the page as OnStateChanged.
+  handler.DriveEvent({UpdateEventType::kCheckStarted});
+  UpdateEvent found{UpdateEventType::kUpdateFound};
+  found.version = "9.9.9";
+  handler.DriveEvent(found);
+  page_receiver.FlushForTesting();
+  EXPECT_EQ(page.last_status, mojom::UpdateStatus::kAvailable);
+  EXPECT_EQ(page.last_version, "9.9.9");
+}
+
 }  // namespace
 }  // namespace roamex::updates

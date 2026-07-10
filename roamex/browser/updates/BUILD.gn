@@ -19,6 +19,9 @@ source_set("test_support") {
     "fake_update_page_handler.cc",
     "fake_update_page_handler.h",
   ]
-  public_deps = [ "//roamex/mojom" ]
+  public_deps = [
+    ":update_state_machine",
+    "//roamex/mojom",
+  ]
   deps = [ "//mojo/public/cpp/bindings" ]
 }

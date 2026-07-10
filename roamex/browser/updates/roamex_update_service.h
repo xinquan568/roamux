@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -59,10 +61,12 @@ class RoamexUpdateService : public KeyedService,
   void PushSnapshot(const UpdateSnapshot& snapshot);
 
   UpdateStateMachine state_machine_;
-  std::unique_ptr<SparkleOwner> sparkle_owner_;
+  // Ref-counted process-wide Sparkle owner (not owned uniquely).
+  raw_ptr<SparkleOwner> shared_owner_ = nullptr;
   mojo::Receiver<mojom::UpdatePageHandlerFactory> factory_receiver_{this};
   mojo::Receiver<mojom::UpdatePageHandler> handler_receiver_{this};
   mojo::Remote<mojom::UpdatePage> page_;
+  base::WeakPtrFactory<RoamexUpdateService> weak_factory_{this};
 };
 
 }  // namespace roamex::updates

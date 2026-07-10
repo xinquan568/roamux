@@ -153,26 +153,17 @@ namespace roamex::updates {
 
 // The process-wide Sparkle owner: exactly one SPUUpdater + conformer for the
 // whole app (updates are app-wide), shared by every per-profile service.
-class SparkleOwner;
-SparkleOwner* g_process_owner = nullptr;
-
+// One process-wide Sparkle owner shared by every per-profile facade (updates
+// are app-wide). Ref-counted by the facades; the single SPUUpdater is created
+// on first Acquire and torn down when the last facade Releases. The event
+// callback is re-pointed at whichever facade currently holds the reference via
+// a shared sink, so a facade going away never leaves a dangling callback.
 class SparkleOwner {
  public:
-  explicit SparkleOwner(EventCallback cb) {
-    g_process_owner = this;
-    driver_ = [[RoamexUpdateUserDriver alloc] initWithCallback:std::move(cb)];
-    updater_ = [[SPUUpdater alloc] initWithHostBundle:[NSBundle mainBundle]
-                                    applicationBundle:[NSBundle mainBundle]
-                                           userDriver:driver_
-                                             delegate:nil];
-    NSError* error = nil;
-    [updater_ startUpdater:&error];
-  }
-  ~SparkleOwner() {
-    if (g_process_owner == this) {
-      g_process_owner = nullptr;
-    }
-  }
+  static SparkleOwner* AcquireShared(EventCallback cb);
+  void Release();
+
+  void SetEventSink(EventCallback cb) { *sink_ = std::move(cb); }
 
   void CheckForUpdates() { [updater_ checkForUpdates]; }
   void Download() { [driver_ commandDownload]; }
@@ -182,9 +173,53 @@ class SparkleOwner {
   }
 
  private:
+  SparkleOwner() {
+    sink_ = std::make_shared<EventCallback>();
+    auto sink = sink_;
+    driver_ = [[RoamexUpdateUserDriver alloc]
+        initWithCallback:base::BindRepeating(
+                             [](std::shared_ptr<EventCallback> s,
+                                const UpdateEvent& e) {
+                               if (*s) {
+                                 s->Run(e);
+                               }
+                             },
+                             sink)];
+    updater_ = [[SPUUpdater alloc] initWithHostBundle:[NSBundle mainBundle]
+                                    applicationBundle:[NSBundle mainBundle]
+                                           userDriver:driver_
+                                             delegate:nil];
+    NSError* error = nil;
+    [updater_ startUpdater:&error];
+  }
+  ~SparkleOwner() = default;
+
+  int refcount_ = 0;
+  std::shared_ptr<EventCallback> sink_;
   RoamexUpdateUserDriver* driver_ = nil;
   SPUUpdater* updater_ = nil;
 };
+
+SparkleOwner* g_process_owner = nullptr;
+
+// static
+SparkleOwner* SparkleOwner::AcquireShared(EventCallback cb) {
+  if (!g_process_owner) {
+    g_process_owner = new SparkleOwner();
+  }
+  ++g_process_owner->refcount_;
+  g_process_owner->SetEventSink(std::move(cb));
+  return g_process_owner;
+}
+
+void SparkleOwner::Release() {
+  if (--refcount_ <= 0) {
+    if (g_process_owner == this) {
+      g_process_owner = nullptr;
+    }
+    delete this;
+  }
+}
 
 namespace {
 // The menu "Check for Updates…" seam routes here (roam-85: one owner).
@@ -196,12 +231,23 @@ void RouteMenuCheckToOwner() {
 }  // namespace
 
 RoamexUpdateService::RoamexUpdateService() {
-  sparkle_owner_ = std::make_unique<SparkleOwner>(base::BindRepeating(
-      &RoamexUpdateService::OnUpdateEvent, base::Unretained(this)));
+  shared_owner_ = SparkleOwner::AcquireShared(base::BindRepeating(
+      &RoamexUpdateService::OnUpdateEvent, weak_factory_.GetWeakPtr()));
+  // Route the menu "Check for Updates…" to the single owner (roam-32 retires
+  // its standard-controller path while a service exists).
   roamex::app::SetCheckForUpdatesHandler(&RouteMenuCheckToOwner);
 }
 
-RoamexUpdateService::~RoamexUpdateService() = default;
+RoamexUpdateService::~RoamexUpdateService() {
+  if (shared_owner_) {
+    shared_owner_->Release();
+    shared_owner_ = nullptr;
+  }
+  // F2: no owner left -> the menu falls back to the standard controller.
+  if (!g_process_owner) {
+    roamex::app::SetCheckForUpdatesHandler(nullptr);
+  }
+}
 
 void RoamexUpdateService::BindFactory(
     mojo::PendingReceiver<mojom::UpdatePageHandlerFactory> receiver) {
@@ -220,17 +266,17 @@ void RoamexUpdateService::CreatePageHandler(
 }
 
 void RoamexUpdateService::CheckForUpdates() {
-  sparkle_owner_->CheckForUpdates();
+  shared_owner_->CheckForUpdates();
 }
 void RoamexUpdateService::Download() {
-  sparkle_owner_->Download();
+  shared_owner_->Download();
 }
 void RoamexUpdateService::InstallAndRelaunch() {
-  sparkle_owner_->InstallAndRelaunch();
+  shared_owner_->InstallAndRelaunch();
 }
 void RoamexUpdateService::Skip(const std::string& version) {
   state_machine_.SetSkippedVersion(version);
-  sparkle_owner_->Skip(version);
+  shared_owner_->Skip(version);
 }
 
 void RoamexUpdateService::OnUpdateEvent(const UpdateEvent& event) {

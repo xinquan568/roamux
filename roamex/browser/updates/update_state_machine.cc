@@ -27,10 +27,17 @@ UpdateSnapshot UpdateStateMachine::OnEvent(const UpdateEvent& event) {
       break;
 
     case UpdateEventType::kUpToDate:
-      snapshot_.status = UpdateStatus::kUpToDate;
+      // Only meaningful as the result of a check.
+      if (snapshot_.status == UpdateStatus::kChecking) {
+        snapshot_.status = UpdateStatus::kUpToDate;
+      }
       break;
 
     case UpdateEventType::kUpdateFound:
+      // Only the outcome of a check surfaces an update.
+      if (snapshot_.status != UpdateStatus::kChecking) {
+        break;
+      }
       if (!event.version.empty() && event.version == skipped_version_) {
         // A skipped version is treated as up-to-date (never surfaced).
         snapshot_.status = UpdateStatus::kUpToDate;
@@ -51,7 +58,8 @@ UpdateSnapshot UpdateStateMachine::OnEvent(const UpdateEvent& event) {
 
     case UpdateEventType::kDownloadProgress:
       if (snapshot_.status == UpdateStatus::kDownloading && event.total > 0) {
-        snapshot_.progress = static_cast<double>(event.received) / event.total;
+        double p = static_cast<double>(event.received) / event.total;
+        snapshot_.progress = p < 0.0 ? 0.0 : (p > 1.0 ? 1.0 : p);
       }
       break;
 

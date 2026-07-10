@@ -1,13 +1,9 @@
 --- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
 +++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
-@@ -203,6 +203,14 @@
- #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
- #include "chrome/browser/profiles/batch_upload/batch_upload_service_factory.h"
- #include "chrome/browser/profiles/renderer_updater_factory.h"
-+#include "roamex/browser/tab_visit/settled_visit_journal_factory.h"
-+#include "roamex/browser/tab_visit/tab_visit_observer_bridge_factory.h"
-+#include "roamex/browser/tab_visit/tab_visit_traversal_coordinator_factory.h"
-+#include "roamex/browser/tabs/tab_uid_service_factory.h"
+@@ -207,6 +207,10 @@
+ #include "roamex/browser/tab_visit/tab_visit_observer_bridge_factory.h"
+ #include "roamex/browser/tab_visit/tab_visit_traversal_coordinator_factory.h"
+ #include "roamex/browser/tabs/tab_uid_service_factory.h"
 +#include "roamex/app/app_buildflags.h"
 +#if BUILDFLAG(ROAMEX_ENABLE_SPARKLE)
 +#include "roamex/browser/updates/roamex_update_service_factory.h"
@@ -15,18 +11,10 @@
  #include "chrome/browser/push_messaging/push_messaging_service_factory.h"
  #include "chrome/browser/reading_list/reading_list_model_factory.h"
  #include "chrome/browser/reduce_accept_language/reduce_accept_language_factory.h"
-@@ -648,6 +656,19 @@
- // static
- void ChromeBrowserMainExtraPartsProfiles::
-     EnsureBrowserContextKeyedServiceFactoriesBuilt() {
-+  // Roamex (roam-10): durable tab uid registry.
-+  roamex::tabs::TabUidServiceFactory::GetInstance();
-+  // Roamex (roam-21): settled-visit journal (E4 tab-visit-nav).
-+  roamex::tab_visit::SettledVisitJournalFactory::GetInstance();
-+  // Roamex (roam-23): eager tab-visit observer bridge (E4 tab-visit-nav).
-+  roamex::tab_visit::TabVisitObserverBridgeFactory::GetInstance();
-+  // Roamex (roam-25): eager per-profile tab-visit traversal coordinator.
-+  roamex::tab_visit::TabVisitTraversalCoordinatorFactory::GetInstance();
+@@ -660,6 +664,11 @@
+   roamex::tab_visit::TabVisitObserverBridgeFactory::GetInstance();
+   // Roamex (roam-25): eager per-profile tab-visit traversal coordinator.
+   roamex::tab_visit::TabVisitTraversalCoordinatorFactory::GetInstance();
 +#if BUILDFLAG(ROAMEX_ENABLE_SPARKLE)
 +  // Roamex (roam-85): the update service (per-profile facade over one
 +  // process-wide Sparkle owner).
@@ -45,11 +33,18 @@
  import("//build/config/chromeos/ui_mode.gni")
  import("//chrome/common/features.gni")
  import("//components/captive_portal/core/features.gni")
-@@ -925,6 +926,26 @@
-   if (enable_offline_pages) {
+@@ -597,6 +598,7 @@
+   sources = [ "chrome_browser_main_extra_parts_profiles.cc" ]
+ 
+   deps = [
++    "//roamex/app:app_buildflags",
+     ":misc",
+     ":profile_manager",
+     ":profile_util",
+@@ -926,6 +928,24 @@
      deps += [ "//chrome/browser/offline_pages" ]
    }
-+
+ 
 +  if (roamex_enable_sparkle) {
 +    # Roamex (roam-85): the update service/factory compiled into this target
 +    # (has the profile deps); ObjC++ + Sparkle + the update mojom.
@@ -61,7 +56,6 @@
 +    ]
 +    deps += [
 +      "//mojo/public/cpp/bindings",
-+      "//roamex/app:app_buildflags",
 +      "//roamex/app:sparkle_updater",
 +      "//roamex/browser/updates:update_state_machine",
 +      "//roamex/mojom",
