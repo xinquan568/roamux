@@ -2,13 +2,16 @@
 #include "roamex/browser/tab_visit/tab_visit_observer_bridge.h"
 
 #include <memory>
+#include <string>
 
 #include "base/feature_list.h"
 #include "base/notreached.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/tab_list/tab_removed_reason.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/web_contents.h"
 #include "roamex/browser/tab_visit/settled_visit_journal_factory.h"
 #include "roamex/browser/tab_visit/settled_visit_journal_service.h"
@@ -42,6 +45,40 @@ TabActivationChange ToActivationChange(TabStripModelChange::Type type) {
   NOTREACHED();
 }
 
+// roam-26: persist a `tab_state` closed row for every tab in a `kRemoved`
+// change that is really being DELETED (a close), keyed by its durable uid, so
+// it survives a restart. Moves (tear-off / side-panel) keep the tab live and
+// are excluded. uid + URL are read synchronously here, while the removed
+// contents are still valid in the observer callback.
+void PersistClosedTabsToSidecar(const TabStripModelChange& change,
+                                SettledVisitJournalService* journal) {
+  const TabStripModelChange::Remove* remove = change.GetRemove();
+  if (!remove) {
+    return;
+  }
+  for (const TabStripModelChange::RemovedTab& removed : remove->contents) {
+    const bool will_delete =
+        removed.remove_reason == TabRemovedReason::kDeleted ||
+        removed.remove_reason == TabRemovedReason::kDeletedAndExpandSidePanel;
+    if (!will_delete) {
+      continue;
+    }
+    content::WebContents* contents = removed.contents;
+    tabs::TabUidTabHelper* helper =
+        contents ? tabs::TabUidTabHelper::FromWebContents(contents) : nullptr;
+    if (!helper || helper->uid().empty()) {
+      continue;
+    }
+    TabStateRow row;
+    row.restore_key = helper->uid();
+    row.closed = true;
+    row.window_id =
+        sessions::SessionTabHelper::IdForWindowContainingTab(contents).id();
+    row.last_known_url = contents->GetLastCommittedURL().spec();
+    journal->SetTabState(std::move(row));
+  }
+}
+
 }  // namespace
 
 TabVisitObserverBridge::TabVisitObserverBridge(Profile* profile)
@@ -61,6 +98,29 @@ void TabVisitObserverBridge::OnTabStripModelChanged(
     TabStripModel* tab_strip_model,
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
+  SettledVisitJournalService* journal =
+      SettledVisitJournalFactory::GetForProfile(profile_);
+  TabVisitTraversalCoordinator* coordinator =
+      TabVisitTraversalCoordinatorFactory::GetForProfile(profile_);
+
+  // roam-26 (structural): on a REAL close, persist the tab's sidecar closed row
+  // so its state survives a restart (retained-and-skipped). This runs BEFORE
+  // the activation-commit path and is NOT gated by traversal suppression — a
+  // close during an active gesture must still persist. Tear-off / side-panel
+  // MOVE reasons keep the tab live, so they are excluded.
+  if (journal && change.type() == TabStripModelChange::kRemoved) {
+    PersistClosedTabsToSidecar(change, journal);
+  }
+
+  // roam-26: a tab insert/removal changes the reachable-live-uid set, so
+  // Back/Forward command enablement should be recomputed — important after a
+  // restart, where restored tabs register their durable uids as they attach
+  // (background inserts that no active-tab change would otherwise refresh).
+  if (coordinator && (change.type() == TabStripModelChange::kInserted ||
+                      change.type() == TabStripModelChange::kRemoved)) {
+    coordinator->OnReachabilityMaybeChanged();
+  }
+
   if (!ShouldCommitActivation(ToActivationChange(change.type()),
                               selection.active_tab_changed())) {
     return;
@@ -73,28 +133,27 @@ void TabVisitObserverBridge::OnTabStripModelChanged(
   // roam-25: while a traversal gesture previews tabs, the coordinator owns the
   // single settle-commit — suppress the bridge's per-activation commit so a
   // gesture yields exactly one append (§6.3).
-  TabVisitTraversalCoordinator* coordinator =
-      TabVisitTraversalCoordinatorFactory::GetForProfile(profile_);
   if (coordinator && coordinator->IsTraversalActive()) {
     return;
   }
 
-  // A normal settled activation contributes the tab's durable uid to the
-  // traversal MRU commit-log (the ordering source, keyed by uid not URL).
-  if (coordinator) {
-    if (tabs::TabUidTabHelper* helper =
-            tabs::TabUidTabHelper::FromWebContents(new_contents)) {
-      coordinator->RecordSettledUid(helper->uid());
-    }
+  // The settled tab's durable uid keys both the volatile MRU commit-log and the
+  // persisted journal row (roam-26: RecordVisit is uid-keyed).
+  std::string tab_uid;
+  if (tabs::TabUidTabHelper* helper =
+          tabs::TabUidTabHelper::FromWebContents(new_contents)) {
+    tab_uid = helper->uid();
+  }
+  if (coordinator && !tab_uid.empty()) {
+    coordinator->RecordSettledUid(tab_uid);
   }
 
   const GURL& url = new_contents->GetLastCommittedURL();
   if (!IsRecordableVisitUrl(url)) {
     return;
   }
-  if (SettledVisitJournalService* journal =
-          SettledVisitJournalFactory::GetForProfile(profile_)) {
-    journal->RecordVisit(url);
+  if (journal) {
+    journal->RecordVisit(tab_uid, url);
   }
 }
 

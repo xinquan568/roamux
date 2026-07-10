@@ -6,11 +6,15 @@
 #include <string>
 #include <vector>
 
+#include "base/callback_list.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "roamex/browser/tab_visit/tab_traversal_controller.h"
+#include "roamex/browser/tab_visit/visits_store.h"
 
 class BrowserWindowInterface;
 class Profile;
@@ -73,6 +77,21 @@ class TabVisitTraversalCoordinator : public KeyedService {
   // pure controller's gesture_active(), which clears mid-Settle).
   bool IsTraversalActive() const { return traversal_active_; }
 
+  // roam-26: true once the persisted uid-journal has been loaded into the MRU
+  // commit-log at startup. `AddJournalLoadedCallback` runs `cb` immediately if
+  // the load already completed, else on completion — a per-window watcher uses
+  // it to refresh Back/Forward command enablement after the async load.
+  bool IsJournalLoaded() const { return journal_loaded_; }
+  base::CallbackListSubscription AddJournalLoadedCallback(
+      base::RepeatingClosure cb);
+
+  // roam-26: the reachable-live-uid set may have changed (e.g. a restored tab
+  // just registered its durable uid), so Back/Forward enablement should be
+  // recomputed. Re-fires the journal-loaded callbacks (which refresh per-window
+  // command state) once the journal has loaded. Called by the bridge on tab
+  // insert/removal. No-op before the load.
+  void OnReachabilityMaybeChanged();
+
   // Command enablement (§6.3): during a gesture, delegate to the controller;
   // before a gesture, a Back is enabled iff the commit-log has a reachable uid
   // older than the tail, and a Forward is disabled.
@@ -88,6 +107,15 @@ class TabVisitTraversalCoordinator : public KeyedService {
     raw_ptr<content::WebContents> web_contents;
     int index;
   };
+
+  // Issues the one-shot persisted-journal read (posted from the ctor, off the
+  // reentrant KeyedService construction path).
+  void LoadPersistedJournal();
+
+  // Merges the persisted uid-journal (older prefix) with any runtime appends
+  // (newer suffix) that accrued during the async load, coalescing the boundary,
+  // then notifies journal-loaded callbacks (roam-26 startup reload).
+  void OnJournalLoaded(std::vector<VisitRow> rows);
 
   // Starts a gesture if none is active (freezes the MRU + reachable set).
   void EnsureGesture();
@@ -109,8 +137,11 @@ class TabVisitTraversalCoordinator : public KeyedService {
   // on it is not a new visit — prevents re-appending the current tab (§6.3).
   std::string anchor_uid_;
   bool traversal_active_ = false;
+  bool journal_loaded_ = false;  // roam-26: persisted MRU reloaded at startup.
+  base::RepeatingClosureList journal_loaded_callbacks_;
   base::OneShotTimer
       debounce_timer_;  // Owned here (per-profile), not per-window.
+  base::WeakPtrFactory<TabVisitTraversalCoordinator> weak_factory_{this};
 };
 
 }  // namespace roamex::tab_visit

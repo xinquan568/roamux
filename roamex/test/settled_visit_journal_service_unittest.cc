@@ -90,7 +90,7 @@ TEST_F(SettledVisitJournalServiceTest, OtrRecordsInMemoryNeverOnDisk) {
   Profile* otr = profile_.GetPrimaryOTRProfile(/*create_if_needed=*/true);
   SettledVisitJournalService* service =
       SettledVisitJournalFactory::GetForProfile(otr);
-  service->RecordVisit(GURL("https://incognito.test/x"));
+  service->RecordVisit("u", GURL("https://incognito.test/x"));
 
   // Drain the store sequence: the visit is retained in memory ...
   std::vector<VisitRow> rows = GetVisitsSync(service);
@@ -109,7 +109,7 @@ TEST_F(SettledVisitJournalServiceTest, RegularJournalPersistsAcrossReopen) {
       dir.GetPath().Append(FILE_PATH_LITERAL("RoamexTabVisits"));
   {
     SettledVisitJournalService service(/*in_memory=*/false, path);
-    service.RecordVisit(GURL("https://persist.test/y"));
+    service.RecordVisit("u", GURL("https://persist.test/y"));
     ASSERT_EQ(1u, GetVisitsSync(&service).size());  // barrier: commit lands
     service.Shutdown();
   }
@@ -183,7 +183,7 @@ TEST_F(SettledVisitJournalServiceDisabledTest, FeatureDisabledCreatesNoDb) {
   SettledVisitJournalService* service =
       SettledVisitJournalFactory::GetForProfile(&profile_);
   ASSERT_TRUE(service);
-  service->RecordVisit(GURL("https://disabled.test/z"));
+  service->RecordVisit("u", GURL("https://disabled.test/z"));
   // Inert: no visits, no journal file.
   EXPECT_TRUE(GetVisitsSync(service).empty());
   EXPECT_FALSE(base::PathExists(JournalPath(&profile_)));

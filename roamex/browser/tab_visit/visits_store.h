@@ -17,6 +17,9 @@ namespace roamex::tab_visit {
 // One settled-visit row.
 struct VisitRow {
   int64_t id = 0;
+  // The durable per-tab uid (roam-10) this visit belongs to (v3 / roam-26).
+  // Empty for legacy pre-v3 rows.
+  std::string tab_uid;
   std::string url;
   base::Time visited_at;
 };
@@ -63,7 +66,9 @@ class VisitsStore {
 
   // Appends a visit and trims the table back to kMaxVisits (oldest-out), in one
   // transaction. No-op if the store is not open.
-  void Append(const std::string& url, base::Time visited_at);
+  void Append(const std::string& tab_uid,
+              const std::string& url,
+              base::Time visited_at);
 
   // All retained visits, oldest-first (ascending id).
   std::vector<VisitRow> ReadAll();

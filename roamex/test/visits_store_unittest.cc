@@ -38,7 +38,7 @@ TEST_F(VisitsStoreTest, AppendOnlyElevenEntryScenarioInOrder) {
   ASSERT_TRUE(store.OpenInMemory());
   const base::Time t0 = base::Time::Now();
   for (int i = 0; i < 11; ++i) {
-    store.Append(base::StringPrintf("https://example.test/%d", i),
+    store.Append("u", base::StringPrintf("https://example.test/%d", i),
                  t0 + base::Seconds(i));
   }
   std::vector<VisitRow> rows = store.ReadAll();
@@ -54,7 +54,7 @@ TEST_F(VisitsStoreTest, Cap999FifoEvictsOldest) {
   ASSERT_TRUE(store.OpenInMemory());
   const base::Time t0 = base::Time::Now();
   for (int i = 0; i < 1000; ++i) {
-    store.Append(base::StringPrintf("https://example.test/%d", i),
+    store.Append("u", base::StringPrintf("https://example.test/%d", i),
                  t0 + base::Milliseconds(i));
   }
   EXPECT_EQ(VisitsStore::kMaxVisits, store.RowCount());
@@ -69,7 +69,7 @@ TEST_F(VisitsStoreTest, OnDiskCreatesFileInMemoryDoesNot) {
   {
     VisitsStore file_store;
     ASSERT_TRUE(file_store.Open(DbPath()));
-    file_store.Append("https://a.test/", base::Time::Now());
+    file_store.Append("u", "https://a.test/", base::Time::Now());
   }
   EXPECT_TRUE(base::PathExists(DbPath()));
 
@@ -78,7 +78,7 @@ TEST_F(VisitsStoreTest, OnDiskCreatesFileInMemoryDoesNot) {
   {
     VisitsStore mem_store;
     ASSERT_TRUE(mem_store.OpenInMemory());
-    mem_store.Append("https://b.test/", base::Time::Now());
+    mem_store.Append("u", "https://b.test/", base::Time::Now());
     EXPECT_EQ(1u, mem_store.ReadAll().size());
   }
   // An in-memory store never creates any file (no path was ever supplied).
@@ -90,7 +90,7 @@ TEST_F(VisitsStoreTest, PersistsAcrossCloseAndReopen) {
   {
     VisitsStore store;
     ASSERT_TRUE(store.Open(DbPath()));
-    store.Append("https://persist.test/x", t);
+    store.Append("u", "https://persist.test/x", t);
   }
   VisitsStore reopened;
   ASSERT_TRUE(reopened.Open(DbPath()));
@@ -105,7 +105,7 @@ TEST_F(VisitsStoreTest, CorruptDatabaseIsRazedAndReset) {
   VisitsStore store;
   ASSERT_TRUE(store.Open(DbPath()));
   EXPECT_EQ(0u, store.RowCount());
-  store.Append("https://after-raze.test/", base::Time::Now());
+  store.Append("u", "https://after-raze.test/", base::Time::Now());
   EXPECT_EQ(1u, store.RowCount());
 }
 
@@ -177,12 +177,95 @@ TEST_F(VisitsStoreTest, MigratesRealV1JournalPreservingVisits) {
     EXPECT_TRUE(store.GetTabState("k"));
   }
 
-  // The stored schema version has advanced to 2.
+  // The stored schema version has advanced to the current version (v1 -> v3).
   sql::Database db(sql::Database::Tag("RoamexSettledVisitJournal"));
   ASSERT_TRUE(db.Open(DbPath()));
   sql::MetaTable meta;
-  ASSERT_TRUE(meta.Init(&db, /*version=*/2, /*compatible_version=*/1));
-  EXPECT_EQ(2, meta.GetVersionNumber());
+  ASSERT_TRUE(meta.Init(&db, /*version=*/3, /*compatible_version=*/1));
+  EXPECT_EQ(3, meta.GetVersionNumber());
+}
+
+// roam-26: a genuine v2 journal (visits + tab_state, no tab_uid column)
+// migrates to v3 — the tab_uid column is added, existing visits are preserved,
+// and the new column defaults to ''.
+TEST_F(VisitsStoreTest, MigratesRealV2JournalAddingUidColumn) {
+  {
+    sql::Database db(sql::Database::Tag("RoamexSettledVisitJournal"));
+    ASSERT_TRUE(db.Open(DbPath()));
+    sql::MetaTable meta;
+    ASSERT_TRUE(meta.Init(&db, /*version=*/2, /*compatible_version=*/1));
+    ASSERT_TRUE(
+        db.Execute("CREATE TABLE visits(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "url TEXT NOT NULL,visited_at INTEGER NOT NULL)"));
+    ASSERT_TRUE(
+        db.Execute("CREATE TABLE tab_state(restore_key TEXT PRIMARY KEY,"
+                   "closed INTEGER NOT NULL,window_id INTEGER NOT NULL,"
+                   "last_known_url TEXT NOT NULL)"));
+    sql::Statement s(db.GetUniqueStatement(
+        "INSERT INTO visits(url,visited_at) VALUES(?,?)"));
+    s.BindString(0, "https://v2.test/");
+    s.BindInt64(1, 222222);
+    ASSERT_TRUE(s.Run());
+  }
+
+  {
+    VisitsStore store;
+    ASSERT_TRUE(store.Open(DbPath()));
+    std::vector<VisitRow> visits = store.ReadAll();
+    ASSERT_EQ(1u, visits.size());
+    EXPECT_EQ("https://v2.test/", visits[0].url);
+    EXPECT_EQ("", visits[0].tab_uid);  // Legacy row: default ''.
+    // A fresh uid-keyed append round-trips.
+    store.Append("uid-new", "https://v3.test/", base::Time::Now());
+    visits = store.ReadAll();
+    ASSERT_EQ(2u, visits.size());
+    EXPECT_EQ("uid-new", visits[1].tab_uid);
+  }
+
+  sql::Database db(sql::Database::Tag("RoamexSettledVisitJournal"));
+  ASSERT_TRUE(db.Open(DbPath()));
+  sql::MetaTable meta;
+  ASSERT_TRUE(meta.Init(&db, /*version=*/3, /*compatible_version=*/1));
+  EXPECT_EQ(3, meta.GetVersionNumber());
+}
+
+// roam-26: a PARTIAL migration (a crash added the tab_uid column but the
+// version is still 2) must complete cleanly — the column-existence guard skips
+// the non-idempotent ALTER, the version bumps to 3, and no raze/data loss
+// occurs.
+TEST_F(VisitsStoreTest, PartialV3MigrationDoesNotRaze) {
+  {
+    sql::Database db(sql::Database::Tag("RoamexSettledVisitJournal"));
+    ASSERT_TRUE(db.Open(DbPath()));
+    sql::MetaTable meta;
+    ASSERT_TRUE(meta.Init(&db, /*version=*/2, /*compatible_version=*/1));
+    // The tab_uid column is ALREADY present, but the version is still 2.
+    ASSERT_TRUE(
+        db.Execute("CREATE TABLE visits(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "tab_uid TEXT NOT NULL DEFAULT '',url TEXT NOT NULL,"
+                   "visited_at INTEGER NOT NULL)"));
+    sql::Statement s(db.GetUniqueStatement(
+        "INSERT INTO visits(tab_uid,url,visited_at) VALUES(?,?,?)"));
+    s.BindString(0, "uid-partial");
+    s.BindString(1, "https://partial.test/");
+    s.BindInt64(2, 333333);
+    ASSERT_TRUE(s.Run());
+  }
+
+  {
+    VisitsStore store;
+    ASSERT_TRUE(store.Open(DbPath()));  // Must NOT raze on duplicate-column.
+    std::vector<VisitRow> visits = store.ReadAll();
+    ASSERT_EQ(1u, visits.size());  // Row preserved.
+    EXPECT_EQ("https://partial.test/", visits[0].url);
+    EXPECT_EQ("uid-partial", visits[0].tab_uid);
+  }
+
+  sql::Database db(sql::Database::Tag("RoamexSettledVisitJournal"));
+  ASSERT_TRUE(db.Open(DbPath()));
+  sql::MetaTable meta;
+  ASSERT_TRUE(meta.Init(&db, /*version=*/3, /*compatible_version=*/1));
+  EXPECT_EQ(3, meta.GetVersionNumber());
 }
 
 }  // namespace
