@@ -116,6 +116,21 @@ class RoamexSigningConfigTest(unittest.TestCase):
         self.assertIn("sparkle:Autoupdate", ordered)
         self.assertIn("sparkle:Sparkle.framework", ordered)
 
+    def test_load_base_returns_none_without_chromium_checkout(self):
+        # No signing package on a bare dir -> None (plan-preview fallback).
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamex-noc-"))
+        self.addCleanup(_rmtree, tmp)
+        self.assertIsNone(
+            roamex_signing_config.load_chromium_config_base(tmp))
+
+    def test_config_class_reports_roamex_over_a_stub_chromium_base(self):
+        class StubChromiumConfig:
+            @property
+            def app_product(self):
+                return "Chromium"
+        cls = roamex_signing_config.make_roamex_config_class(StubChromiumConfig)
+        self.assertEqual(cls().app_product, "Roamex")
+
 
 class CombinedOrderTest(unittest.TestCase):
     def test_outer_app_is_last_no_nested_after(self):

@@ -86,6 +86,8 @@ jobs:
           ROAMEX_NOTARY_PRIVATE_KEY: ${{ secrets.ROAMEX_NOTARY_PRIVATE_KEY }}
         run: |
           bash roamex/app/release/keychain_setup.sh
+          # Same-step: $GITHUB_ENV is not yet visible here, so source the file.
+          source "${RUNNER_TEMP}/roamex-signing/env.sh"
           python3 roamex/app/release/sign_roamex.py \
             --mode signed \
             --app "${ROAMEX_APP}" \

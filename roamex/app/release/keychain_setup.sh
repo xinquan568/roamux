@@ -41,10 +41,21 @@ IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
 printf '%s' "$ROAMEX_NOTARY_PRIVATE_KEY" | base64 --decode > "$NOTARY_KEY"
 chmod 600 "$NOTARY_KEY"
 
-# Emit to $GITHUB_ENV directly (values quoted safe there); print nothing else.
+# Write a SOURCEABLE env file so the SAME workflow step can use these before
+# the sign call ($GITHUB_ENV only exposes vars to LATER steps). Values are
+# single-quoted (the identity CN has spaces + parentheses). Also mirror the
+# keychain path to $GITHUB_ENV so the always() cleanup step can find it.
+ENV_FILE="$WORK/env.sh"
 {
-  echo "ROAMEX_SIGN_IDENTITY=${IDENTITY}"
-  echo "ROAMEX_NOTARY_KEY_PATH=${NOTARY_KEY}"
-  echo "ROAMEX_SIGNING_KEYCHAIN=${KEYCHAIN}"
-} >> "${GITHUB_ENV:?run inside a GitHub Actions step}"
-echo "[ok] signing keychain provisioned under RUNNER_TEMP"
+  printf "export ROAMEX_SIGN_IDENTITY='%s'
+" "$IDENTITY"
+  printf "export ROAMEX_NOTARY_KEY_PATH='%s'
+" "$NOTARY_KEY"
+  printf "export ROAMEX_SIGNING_KEYCHAIN='%s'
+" "$KEYCHAIN"
+} > "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+if [ -n "${GITHUB_ENV:-}" ]; then
+  echo "ROAMEX_SIGNING_KEYCHAIN=${KEYCHAIN}" >> "$GITHUB_ENV"
+fi
+echo "[ok] signing keychain provisioned; source ${ENV_FILE}"

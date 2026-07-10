@@ -46,6 +46,11 @@ def make_roamex_config_class(base_cls):
     return RoamexCodeSignConfig
 
 
+def sparkle_part_keys():
+    """Stable keys for the Sparkle parts, deepest-first (framework last)."""
+    return [f"sparkle:{pathlib.PurePath(p).name}" for p in SPARKLE_PART_PATHS]
+
+
 def roamex_get_parts(chromium_parts, ordered_keys):
     """Return an ordered list of part keys with the Sparkle parts injected
     immediately before the outer-app key (assumed last in `ordered_keys`).
@@ -55,6 +60,21 @@ def roamex_get_parts(chromium_parts, ordered_keys):
     if not keys:
         raise ValueError("no chromium parts to order")
     outer = keys[-1]
-    sparkle_keys = [f"sparkle:{pathlib.PurePath(p).name}"
-                    for p in SPARKLE_PART_PATHS]
-    return keys[:-1] + sparkle_keys + [outer]
+    return keys[:-1] + sparkle_part_keys() + [outer]
+
+
+def load_chromium_config_base(chromium_src):
+    """Return Chromium's CodeSignConfig class from a checkout, or None if the
+    signing package is not importable (i.e. not on the release builder)."""
+    import importlib
+    import sys
+    mac = pathlib.Path(chromium_src) / "chrome" / "installer" / "mac"
+    if not (mac / "signing" / "config_factory.py").is_file():
+        return None
+    if str(mac) not in sys.path:
+        sys.path.insert(0, str(mac))
+    try:
+        cf = importlib.import_module("signing.config_factory")
+        return cf.get_class()
+    except Exception:
+        return None
