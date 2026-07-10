@@ -32,19 +32,6 @@
        ":chrome_app_strings_bundle_data",
        ":chrome_resources",
        ":chrome_versioned_bundle_data",
---- a/chrome/app/generated_resources.grd
-+++ b/chrome/app/generated_resources.grd
-@@ -15809,6 +15809,10 @@
-           Help
-         </message>
-         <!-- App menu -->
-+        <!-- Roamex (roam-32): the Sparkle "Check for Updates…" menu item. -->
-+        <message name="IDS_ROAMEX_CHECK_FOR_UPDATES" desc="Mac menu item to check for Roamex app updates." translateable="false">
-+          Check for Updates…
-+        </message>
-         <message name="IDS_ABOUT_MAC" desc="The Mac menu item to open the about box.">
-           About <ph name="PRODUCT_NAME">$1<ex>Google Chrome</ex></ph>
-         </message>
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
 @@ -9,6 +9,7 @@
@@ -55,16 +42,15 @@
  import("//build/config/python.gni")
  import("//build/config/ui.gni")
  import("//chrome/browser/buildflags.gni")
-@@ -649,6 +650,8 @@
+@@ -649,6 +650,7 @@
    ]
  
    deps = [
 +    "//roamex/app:app_buildflags",
-+    "//roamex/common",
+     "//roamex/common",
      ":active_use_util",
      ":browser_features",
-     ":browser_process",
-@@ -1656,6 +1659,13 @@
+@@ -1657,6 +1659,13 @@
      "//chrome/browser/ui/webauthn:impl",
    ]
  
@@ -78,18 +64,6 @@
    if (enable_webui_ntp) {
      deps += [
        "//chrome/browser/new_tab_page",
-@@ -4195,6 +4205,11 @@
-       "fullscreen_mac.mm",
-       "global_keyboard_shortcuts_mac.h",
-       "global_keyboard_shortcuts_mac.mm",
-+      # Roamex (roam-13): the shared shortcut surface (mac-only product).
-+      "//roamex/browser/tabs/shortcut_registry_mac.h",
-+      "//roamex/browser/tabs/shortcut_registry_mac.mm",
-+      "//roamex/browser/ui/webui/roamex_shortcuts_handler.cc",
-+      "//roamex/browser/ui/webui/roamex_shortcuts_handler.h",
-       "icon_loader_mac.mm",
-       "memory_details_mac.cc",
-       "platform_util_mac.mm",
 --- a/chrome/browser/app_controller_mac.mm
 +++ b/chrome/browser/app_controller_mac.mm
 @@ -3,6 +3,11 @@
@@ -153,7 +127,7 @@
                    .action(@selector(orderFrontStandardAboutPanel:)),
 +#if BUILDFLAG(ROAMEX_ENABLE_SPARKLE)
 +              // Roamex (roam-32): Sparkle "Check for Updates…".
-+              Item(IDS_ROAMEX_CHECK_FOR_UPDATES)
++              Item(IDS_COMPONENTS_CHECK_FOR_UPDATE)
 +                  .target(app_delegate)
 +                  .action(@selector(roamexCheckForUpdates:)),
 +#endif
