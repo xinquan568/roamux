@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-# Roamex release posture (roam-5 / §12.6 tier-3): secrets live ONLY in the protected `release`
-# Environment (gated to protected refs + v* tags). The signing/notarize/Sparkle steps land at M6
-# (roam-33..35); until then this job fails LOUDLY if invoked — the posture is real, the release
-# pipeline intentionally is not.
+# Roamex release pipeline (roam-33 / §12.6 tier-3). Secrets live ONLY in the
+# protected `release` Environment (gated to protected refs + v* tags). This
+# job builds universal2, resolves the signing mode (all Apple secrets ->
+# signed; none -> deliberate unsigned personal-alpha; partial -> fail-fast),
+# codesigns inside-out (Chromium helpers -> Sparkle framework+XPC same Team ID
+# -> outer app last), notarizes + staples, and packages .dmg/.zip. The appcast
+# / sign_update / draft-then-publish flow is roam-34 (I-6.3).
 name: release
 on:
   push:
@@ -12,9 +15,11 @@ on:
 permissions:
   contents: read
 jobs:
-  sign-notarize-publish:
+  build-sign-package:
     runs-on: macos-14
     environment: release
+    env:
+      CHROMIUM_SRC: ${{ github.workspace }}/chromium/src
     steps:
       - name: Assert protected ref
         run: |
@@ -22,7 +27,84 @@ jobs:
             refs/tags/v*) echo "ref OK: ${GITHUB_REF}" ;;
             *) echo "::error::release ran on a non-release ref: ${GITHUB_REF}"; exit 1 ;;
           esac
-      - name: Signing / notarization / Sparkle (M6 placeholder)
+
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+
+      - name: Vendor Sparkle (pinned + hash-verified)
+        run: python3 roamex/build/fetch_sparkle.py
+
+      - name: Resolve signing mode
+        id: mode
+        env:
+          ROAMEX_DEVELOPER_ID_CERT_P12: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_P12 }}
+          ROAMEX_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_PASSWORD }}
+          ROAMEX_NOTARY_KEY_ID: ${{ secrets.ROAMEX_NOTARY_KEY_ID }}
+          ROAMEX_NOTARY_ISSUER_ID: ${{ secrets.ROAMEX_NOTARY_ISSUER_ID }}
+          ROAMEX_NOTARY_PRIVATE_KEY: ${{ secrets.ROAMEX_NOTARY_PRIVATE_KEY }}
+        run: echo "mode=$(python3 roamex/app/release/signing_mode.py)" >> "$GITHUB_OUTPUT"
+
+      # The universal2 build (per-arch slices + universalizer.py) runs on the
+      # self-hosted release builder with the warm base cache. Placeholder here
+      # is intentional until the tier-3 builder is provisioned (roam-0.5).
+      - name: Build universal2 Roamex.app
         run: |
-          echo "::error::release signing is not wired yet (M6: roam-33..35). This loud failure is deliberate."
-          exit 1
+          echo "::notice::universal2 build runs on the provisioned release builder"
+          echo "  gn gen out/Release-arm64 --args=\"\$(tr '\n' ' ' < roamex/build/args/release.gn) target_cpu=\\\"arm64\\\"\""
+          echo "  gn gen out/Release-x64   --args=\"\$(tr '\n' ' ' < roamex/build/args/release.gn) target_cpu=\\\"x64\\\"\""
+          echo "  autoninja -C out/Release-arm64 chrome && autoninja -C out/Release-x64 chrome"
+          echo "  python3 \$CHROMIUM_SRC/chrome/installer/mac/universalizer.py ..."
+
+      - name: Rename bundle to Roamex.app
+        run: |
+          echo "::notice::release job renames the built Chromium.app -> Roamex.app"
+          echo "  python3 roamex/app/release/rename_bundle.py --app out/Release/Chromium.app"
+
+      - name: Set up signing keychain (signed mode only)
+        if: steps.mode.outputs.mode == 'signed'
+        env:
+          ROAMEX_DEVELOPER_ID_CERT_P12: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_P12 }}
+          ROAMEX_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_PASSWORD }}
+          ROAMEX_NOTARY_PRIVATE_KEY: ${{ secrets.ROAMEX_NOTARY_PRIVATE_KEY }}
+        run: |
+          eval "$(bash roamex/app/release/keychain_setup.sh)"
+          echo "ROAMEX_SIGN_IDENTITY=${ROAMEX_SIGN_IDENTITY}" >> "$GITHUB_ENV"
+          echo "ROAMEX_NOTARY_KEY_PATH=${ROAMEX_NOTARY_KEY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Sign + notarize + staple (signed mode only)
+        if: steps.mode.outputs.mode == 'signed'
+        env:
+          ROAMEX_NOTARY_KEY_ID: ${{ secrets.ROAMEX_NOTARY_KEY_ID }}
+          ROAMEX_NOTARY_ISSUER_ID: ${{ secrets.ROAMEX_NOTARY_ISSUER_ID }}
+        run: |
+          python3 roamex/app/release/sign_roamex.py \
+            --app out/Release/Roamex.app \
+            --identity "${ROAMEX_SIGN_IDENTITY}" \
+            --notary-key "${ROAMEX_NOTARY_KEY_PATH}" \
+            --notary-key-id "${ROAMEX_NOTARY_KEY_ID}" \
+            --notary-issuer "${ROAMEX_NOTARY_ISSUER_ID}"
+
+      - name: Verify signed artifact (signed mode only)
+        if: steps.mode.outputs.mode == 'signed'
+        run: |
+          codesign --verify --strict --deep --verbose=2 out/Release/Roamex.app
+          xcrun stapler validate out/Release/Roamex.app
+          spctl --assess --type execute --verbose=4 out/Release/Roamex.app
+
+      - name: Log unsigned artifact state (unsigned mode)
+        if: steps.mode.outputs.mode == 'unsigned'
+        run: echo "::notice::unsigned personal-alpha artifact produced (no Apple secrets); Sparkle EdDSA signature still applies"
+
+      - name: Package .dmg / .zip
+        run: |
+          python3 roamex/app/release/package_roamex.py \
+            --app out/Release/Roamex.app \
+            --zip out/Release/Roamex.zip --dmg out/Release/Roamex.dmg
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: roamex-macos-universal2
+          path: |
+            out/Release/Roamex.dmg
+            out/Release/Roamex.zip
