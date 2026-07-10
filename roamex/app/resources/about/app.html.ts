@@ -20,9 +20,14 @@ export function getHtml(this: RoamexAboutAppElement) {
 
     ${this.updatesAvailable_ ? html`
       <div class="check-row">
+        ${this.isChecking_() ? html`
+          <span id="spinner" class="spinner"></span>` : ''}
         <span id="statusPill" class="pill">${this.getStatusLabel_()}</span>
         <button id="checkNow" @click="${this.onCheckNowClick_}">Check Now</button>
       </div>
+
+      ${this.isError_() ? html`
+        <div id="errorText" class="error">${this.snapshot_.error}</div>` : ''}
 
       ${this.shouldShowCard_() ? html`
         <div id="updateCard" class="update-card">

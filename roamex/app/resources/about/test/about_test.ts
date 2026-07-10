@@ -6,6 +6,7 @@
 import 'chrome://roamex-about/app.js';
 
 import {RoamexAboutAppElement} from 'chrome://roamex-about/app.js';
+import {BrowserProxyImpl} from 'chrome://roamex-about/browser_proxy.js';
 import type {BrowserProxy} from 'chrome://roamex-about/browser_proxy.js';
 import {UpdateStatus, type UpdateSnapshot} from 'chrome://roamex-about/update_page.mojom-webui.js';
 import {assertEquals, assertTrue, assertFalse} from 'chrome://webui-test/chai_assert.js';
@@ -60,6 +61,8 @@ suite('RoamexAbout', function() {
 
   setup(async function() {
     fake = new FakeProxy();
+    // Inject before construction so no real Mojo bind ever fires (F3).
+    BrowserProxyImpl.setInstance(fake);
     element = new RoamexAboutAppElement();
     element.setProxyForTesting(fake);
     document.body.appendChild(element);
@@ -129,5 +132,63 @@ suite('RoamexAbout', function() {
   test('check now issues a check', function() {
     q('checkNow')!.click();
     assertEquals(1, fake.checkCount);
+  });
+
+  test('checking shows a spinner and pill text', async function() {
+    fake.push({status: UpdateStatus.kChecking});
+    await element.updateComplete;
+    assertTrue(!!q('spinner'));
+    assertEquals('Checking for updates…', q('statusPill')!.textContent!.trim());
+    assertFalse(!!q('updateCard'));
+  });
+
+  test('up to date shows pill and no card', async function() {
+    fake.push({status: UpdateStatus.kUpToDate});
+    await element.updateComplete;
+    assertEquals('Roamex is up to date', q('statusPill')!.textContent!.trim());
+    assertFalse(!!q('updateCard'));
+    assertFalse(!!q('spinner'));
+  });
+
+  test('available renders version, date and notes', async function() {
+    fake.push({
+      status: UpdateStatus.kAvailable,
+      version: '2.0.0',
+      date: '2026-07-01',
+      notes: 'Shiny new build',
+    });
+    await element.updateComplete;
+    assertTrue(q('updateCard')!.textContent!.includes('2.0.0'));
+    assertTrue(q('updateCard')!.textContent!.includes('2026-07-01'));
+    assertTrue(q('updateCard')!.textContent!.includes('Shiny new build'));
+    // Available: download + skip present; restart + progress absent.
+    assertTrue(!!q('download'));
+    assertTrue(!!q('skip'));
+    assertFalse(!!q('restart'));
+    assertFalse(!!q('progress'));
+  });
+
+  test('downloading shows progress, not download buttons', async function() {
+    fake.push({status: UpdateStatus.kDownloading, progress: 0.5});
+    await element.updateComplete;
+    assertTrue(!!q('progress'));
+    assertFalse(!!q('download'));
+    assertFalse(!!q('restart'));
+  });
+
+  test('ready shows only restart', async function() {
+    fake.push({status: UpdateStatus.kReadyToInstall});
+    await element.updateComplete;
+    assertTrue(!!q('restart'));
+    assertFalse(!!q('download'));
+    assertFalse(!!q('progress'));
+  });
+
+  test('error renders error text and no card', async function() {
+    fake.push({status: UpdateStatus.kError, error: 'network down'});
+    await element.updateComplete;
+    assertTrue(!!q('errorText'));
+    assertEquals('network down', q('errorText')!.textContent!.trim());
+    assertFalse(!!q('updateCard'));
   });
 });

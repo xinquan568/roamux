@@ -46,11 +46,17 @@ export class RoamexAboutAppElement extends CrLitElement {
   protected accessor updatesAvailable_: boolean =
       loadTimeData.getBoolean('updatesAvailable');
 
-  private proxy_: BrowserProxy = BrowserProxyImpl.getInstance();
+  private proxy_: BrowserProxy|null = null;
 
   override connectedCallback() {
     super.connectedCallback();
+    // Only reach out to Mojo when the update service is available; hidden /
+    // unavailable controls must never issue handler calls. Lazily create the
+    // real proxy so tests can inject a fake before connect.
     if (this.updatesAvailable_) {
+      if (!this.proxy_) {
+        this.proxy_ = BrowserProxyImpl.getInstance();
+      }
       this.proxy_.callbackRouter.onStateChanged.addListener(
           (snapshot: UpdateSnapshot) => {
             this.snapshot_ = snapshot;
@@ -64,16 +70,16 @@ export class RoamexAboutAppElement extends CrLitElement {
   }
 
   protected onCheckNowClick_() {
-    this.proxy_.handler.checkForUpdates();
+    this.proxy_?.handler.checkForUpdates();
   }
   protected onDownloadClick_() {
-    this.proxy_.handler.download();
+    this.proxy_?.handler.download();
   }
   protected onRestartClick_() {
-    this.proxy_.handler.installAndRelaunch();
+    this.proxy_?.handler.installAndRelaunch();
   }
   protected onSkipClick_() {
-    this.proxy_.handler.skip(this.snapshot_.version);
+    this.proxy_?.handler.skip(this.snapshot_.version);
   }
 
   // Template helpers as methods (getters are disallowed in Lit templates).
@@ -114,6 +120,12 @@ export class RoamexAboutAppElement extends CrLitElement {
   }
   protected isReady_(): boolean {
     return this.snapshot_.status === UpdateStatus.kReadyToInstall;
+  }
+  protected isChecking_(): boolean {
+    return this.snapshot_.status === UpdateStatus.kChecking;
+  }
+  protected isError_(): boolean {
+    return this.snapshot_.status === UpdateStatus.kError;
   }
 }
 

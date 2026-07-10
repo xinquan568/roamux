@@ -24,9 +24,17 @@ RoamexAboutUI::RoamexAboutUI(content::WebUI *web_ui)
 
   source->AddString("productName", "Roamex");
   source->AddString("version", std::string(version_info::GetVersionNumber()));
+
   // The live update card is available only when the Sparkle-backed service is
-  // compiled in; flag-off the TS renders the "unavailable" state.
-  source->AddBoolean("updatesAvailable", BUILDFLAG(ROAMEX_ENABLE_SPARKLE) != 0);
+  // both compiled in AND present for this profile (regular profiles only —
+  // OTR/system get no service). Otherwise the TS renders the static
+  // "updates unavailable" state and never issues Mojo calls.
+  bool updates_available = false;
+#if BUILDFLAG(ROAMEX_ENABLE_SPARKLE)
+  updates_available = updates::RoamexUpdateServiceFactory::GetForProfile(
+                          Profile::FromWebUI(web_ui)) != nullptr;
+#endif
+  source->AddBoolean("updatesAvailable", updates_available);
 
   webui::SetupWebUIDataSource(source, base::span(kRoamexAboutResources),
                               IDR_ROAMEX_ABOUT_ABOUT_HTML);
