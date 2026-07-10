@@ -18,6 +18,7 @@ import ed25519_ref as ed  # noqa: E402  (pure Ed25519 sign+verify, test only)
 import generate_appcast  # noqa: E402
 import release_flow  # noqa: E402
 import sign_update_wrapper  # noqa: E402
+import verify_appcast  # noqa: E402
 
 TEST_SEED = bytes.fromhex(
     "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
@@ -66,6 +67,16 @@ class AppcastGenerationTest(unittest.TestCase):
             pub_date="x")
         self.assertEqual(
             int(ET.fromstring(xml).find(".//enclosure").get("length")), 3)
+
+
+class VerifyAppcastCouplingTest(unittest.TestCase):
+    def test_matching_key_passes(self):
+        verify_appcast.assert_public_key_matches("ABC=", "ABC=")
+
+    def test_mismatched_key_raises(self):
+        # The signing key's public half must equal the committed SUPublicEDKey.
+        with self.assertRaises(ValueError):
+            verify_appcast.assert_public_key_matches("ABC=", "XYZ=")
 
 
 class SignUpdateParserTest(unittest.TestCase):

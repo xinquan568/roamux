@@ -124,6 +124,7 @@ jobs:
         run: |
           set -euo pipefail
           keyfile="${RUNNER_TEMP}/sparkle_ed_priv"
+          trap 'rm -f "$keyfile"' EXIT   # remove the key on any exit path
           printf '%s' "${SPARKLE_ED_PRIVATE_KEY:?Sparkle EdDSA key required for every release (K3)}" > "$keyfile"
           chmod 600 "$keyfile"
           bin="roamex/third_party/sparkle/bin/sign_update"

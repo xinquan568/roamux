@@ -1,18 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Staging validation (roam-34, K2): verify an appcast's sparkle:edSignature
-over the artifact bytes against the committed SUPublicEDKey, BEFORE publish.
-Uses Sparkle's own sign_update --verify when available, else the pure verifier.
-This gates the publish step — a bad signature fails the release job."""
+"""Staging validation (roam-34, K2): before publishing, prove the DRAFT
+release's appcast verifies against the committed SUPublicEDKey using Sparkle's
+OWN verifier (bin/sign_update --verify), not a test reference impl.
+
+Two checks: (1) the keychain signing account's public key EQUALS the plist
+SUPublicEDKey — so we are validating against the key the app actually trusts;
+(2) `sign_update --verify <artifact> <edSignature> --account <acct>` passes on
+the downloaded artifact bytes. A failure fails the release job before publish.
+"""
 
 import argparse
-import base64
 import pathlib
 import plistlib
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
-
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import ed25519_ref  # noqa: E402
 
 SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 
@@ -24,8 +26,16 @@ def public_key_from_plist(plist_path):
 
 def edsignature_from_appcast(appcast_path):
     root = ET.fromstring(pathlib.Path(appcast_path).read_text())
-    enc = root.find(".//enclosure")
-    return enc.get(f"{{{SPARKLE_NS}}}edSignature")
+    return root.find(".//enclosure").get(f"{{{SPARKLE_NS}}}edSignature")
+
+
+def assert_public_key_matches(plist_pub, account_pub):
+    """The signing key's public half must equal the committed SUPublicEDKey —
+    else the app (which trusts SUPublicEDKey) would reject the update."""
+    if plist_pub.strip() != account_pub.strip():
+        raise ValueError(
+            "signing key public half does not match SUPublicEDKey: "
+            f"plist={plist_pub!r} account={account_pub!r}")
 
 
 def main():
@@ -33,19 +43,30 @@ def main():
     parser.add_argument("--appcast", required=True)
     parser.add_argument("--artifact", required=True, type=pathlib.Path)
     parser.add_argument("--public-key-plist", required=True)
+    parser.add_argument("--sparkle-bin-dir", required=True, type=pathlib.Path)
+    parser.add_argument("--account", required=True,
+                        help="keychain account holding the signing key")
     args = parser.parse_args()
 
-    sig_b64 = edsignature_from_appcast(args.appcast)
-    pub_b64 = public_key_from_plist(args.public_key_plist)
-    ok = ed25519_ref.verify(args.artifact.read_bytes(),
-                            base64.b64decode(sig_b64),
-                            base64.b64decode(pub_b64))
-    if not ok:
+    plist_pub = public_key_from_plist(args.public_key_plist)
+    account_pub = subprocess.run(
+        [str(args.sparkle_bin_dir / "generate_keys"), "--account",
+         args.account, "-p"], capture_output=True, text=True,
+        check=True).stdout.strip()
+    assert_public_key_matches(plist_pub, account_pub)
+
+    sig = edsignature_from_appcast(args.appcast)
+    result = subprocess.run(
+        [str(args.sparkle_bin_dir / "sign_update"), "--verify",
+         str(args.artifact), sig, "--account", args.account],
+        capture_output=True, text=True)
+    if result.returncode != 0:
         print("::error::staging validation FAILED — appcast edSignature does "
-              "not verify against SUPublicEDKey; refusing to publish",
+              f"not verify against SUPublicEDKey.\n{result.stderr}",
               file=sys.stderr)
         return 1
-    print("[ok] staging validation passed — appcast signature verifies")
+    print("[ok] staging validation passed — appcast verifies against "
+          "SUPublicEDKey via Sparkle's verifier")
     return 0
 
 
