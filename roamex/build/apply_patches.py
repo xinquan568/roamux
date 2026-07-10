@@ -103,7 +103,9 @@ def main():
                         help="verify only; do not mutate the tree")
     args = parser.parse_args()
 
-    patches = sorted(args.patches.glob("*.patch"))
+    # Resolve now: the scratch simulation runs git apply with a different cwd,
+    # so relative --patches paths must be absolute before that (roam-77 review).
+    patches = sorted(args.patches.resolve().glob("*.patch"))
     if not patches:
         print(f"no patches found under {args.patches}", file=sys.stderr)
         return 0

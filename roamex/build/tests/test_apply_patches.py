@@ -171,6 +171,18 @@ class AdjacentInsertStackTest(unittest.TestCase):
         self.assertIn("[appliable]", result.stdout)
         self.assertEqual(self.afile(), before)
 
+    def test_relative_patches_dir_works(self):
+        # The scratch simulation changes cwd for git apply; a relative
+        # --patches path must still resolve (roam-77 Step-8 regression).
+        import os
+        rel = os.path.relpath(self.patches, os.getcwd())
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--chromium-src", str(self.src),
+             "--patches", rel, "--check"],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("[appliable]"), 2, result.stdout)
+
     def test_diverged_tree_fails_loud_both_modes(self):
         self.assertEqual(self.run_hook().returncode, 0)
         with (self.src / "afile.txt").open("a") as f:
