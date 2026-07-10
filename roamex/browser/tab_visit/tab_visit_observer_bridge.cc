@@ -51,7 +51,8 @@ TabActivationChange ToActivationChange(TabStripModelChange::Type type) {
 // are excluded. uid + URL are read synchronously here, while the removed
 // contents are still valid in the observer callback.
 void PersistClosedTabsToSidecar(const TabStripModelChange& change,
-                                SettledVisitJournalService* journal) {
+                                SettledVisitJournalService* journal,
+                                TabVisitTraversalCoordinator* coordinator) {
   const TabStripModelChange::Remove* remove = change.GetRemove();
   if (!remove) {
     return;
@@ -75,6 +76,11 @@ void PersistClosedTabsToSidecar(const TabStripModelChange& change,
     row.window_id =
         sessions::SessionTabHelper::IdForWindowContainingTab(contents).id();
     row.last_known_url = contents->GetLastCommittedURL().spec();
+    // roam-27: register the closed tab as reopenable SYNCHRONOUSLY (before the
+    // async persist) so a gesture right after this close can reopen it.
+    if (coordinator) {
+      coordinator->AddReopenable(row);
+    }
     journal->SetTabState(std::move(row));
   }
 }
@@ -109,7 +115,7 @@ void TabVisitObserverBridge::OnTabStripModelChanged(
   // close during an active gesture must still persist. Tear-off / side-panel
   // MOVE reasons keep the tab live, so they are excluded.
   if (journal && change.type() == TabStripModelChange::kRemoved) {
-    PersistClosedTabsToSidecar(change, journal);
+    PersistClosedTabsToSidecar(change, journal, coordinator);
   }
 
   // roam-26: a tab insert/removal changes the reachable-live-uid set, so
