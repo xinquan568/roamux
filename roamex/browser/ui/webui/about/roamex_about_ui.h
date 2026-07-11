@@ -5,12 +5,15 @@
 #include "content/public/browser/internal_webui_config.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "roamex/app/app_buildflags.h"
+#include "roamex/common/roamex_url_constants.h"
 #include "roamex/mojom/update_page.mojom.h"
 #include "ui/webui/mojo_web_ui_controller.h"
 
 namespace roamex {
 
-inline constexpr char kChromeUIRoamexAboutHost[] = "roamex-about";
+// kChromeUIRoamexAboutHost moved to roamex/common/roamex_url_constants.h
+// (roam-91) so the scheme-alias map can reference it without depping this
+// WebUI target.
 
 class RoamexAboutUI;
 

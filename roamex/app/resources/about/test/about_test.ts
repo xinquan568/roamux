@@ -8,7 +8,8 @@ import 'chrome://roamex-about/app.js';
 import {RoamexAboutAppElement} from 'chrome://roamex-about/app.js';
 import {BrowserProxyImpl} from 'chrome://roamex-about/browser_proxy.js';
 import type {BrowserProxy} from 'chrome://roamex-about/browser_proxy.js';
-import {UpdateStatus, type UpdateSnapshot} from 'chrome://roamex-about/update_page.mojom-webui.js';
+import {UpdateStatus} from 'chrome://roamex-about/update_page.mojom-webui.js';
+import type {UpdateSnapshot} from 'chrome://roamex-about/update_page.mojom-webui.js';
 import {assertEquals, assertTrue, assertFalse} from 'chrome://webui-test/chai_assert.js';
 
 // A TS-side fake UpdatePageHandler + a snapshot pump (no C++/Mojo needed).
@@ -74,7 +75,7 @@ suite('RoamexAbout', function() {
   });
 
   function q(id: string): HTMLElement|null {
-    return element.shadowRoot!.querySelector(`#${id}`);
+    return element.shadowRoot.querySelector(`#${id}`);
   }
 
   test('identity and links render', function() {
@@ -86,7 +87,7 @@ suite('RoamexAbout', function() {
 
   test('no configuration or reset groups present', function() {
     // Termixion parity MINUS config: none of these exist.
-    assertFalse(!!element.shadowRoot!.querySelector('settings-section'));
+    assertFalse(!!element.shadowRoot.querySelector('settings-section'));
     assertFalse(!!q('resetGroup'));
     assertFalse(!!q('configGroup'));
   });
@@ -204,7 +205,7 @@ suite('RoamexAbout', function() {
       });
       await element.updateComplete;
 
-      assertEquals(row.pill, q('statusPill')!.textContent!.trim());
+      assertEquals(row.pill, q('statusPill')!.textContent.trim());
       for (const id of row.present) {
         assertTrue(!!q(id), `expected #${id} present for status ${row.status}`);
       }
@@ -213,16 +214,16 @@ suite('RoamexAbout', function() {
       }
 
       if (row.version) {
-        assertTrue(q('updateCard')!.textContent!.includes(row.version));
+        assertTrue(q('updateCard')!.textContent.includes(row.version));
       }
       if (row.date) {
-        assertTrue(q('updateCard')!.textContent!.includes(row.date));
+        assertTrue(q('updateCard')!.textContent.includes(row.date));
       }
       if (row.notes) {
-        assertTrue(q('updateCard')!.textContent!.includes(row.notes));
+        assertTrue(q('updateCard')!.textContent.includes(row.notes));
       }
       if (row.error) {
-        assertEquals(row.error, q('errorText')!.textContent!.trim());
+        assertEquals(row.error, q('errorText')!.textContent.trim());
       }
     });
   }
