@@ -42,6 +42,8 @@ class AppcastGenerationTest(unittest.TestCase):
             artifact_bytes=self.artifact, ed_signature=self.sig_b64,
             pub_date="Thu, 01 Jan 2026 00:00:00 +0000")
         root = ET.fromstring(xml)
+        # roam-93: the Sparkle channel title carries the product brand.
+        self.assertEqual(root.find(".//channel/title").text, "Roamux")
         enc = root.find(".//enclosure")
         self.assertEqual(enc.get("url"), self.url)
         self.assertEqual(int(enc.get("length")), len(self.artifact))

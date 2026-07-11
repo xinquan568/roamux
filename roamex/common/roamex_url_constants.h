@@ -4,10 +4,10 @@
 
 namespace roamex {
 
-// The product URL scheme ("roamux://…"), roam-91 (value rebranded by roam-93). Registered as a standard
-// scheme and marked browser-handled by patch 0028 (which uses the annotated
-// string literal at both hook sites — a unit test pins literal↔constant
-// agreement).
+// The product URL scheme ("roamux://…"), roam-91 (value rebranded by
+// roam-93). Registered as a standard scheme and marked browser-handled by
+// patch 0028 (which uses the annotated string literal at both hook sites — a
+// unit test pins literal↔constant agreement).
 inline constexpr char kRoamexScheme[] = "roamux";
 
 // chrome:// host of the About WebUI (roam-37; moved here from

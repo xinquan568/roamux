@@ -87,7 +87,10 @@ IN_PROC_BROWSER_TEST_F(RoamexSchemeAliasBrowserTest,
 }
 
 // AC3: the alias target keeps working directly — committed URL asserted (not
-// just the virtual URL, which would mask an interstitial diversion).
+// just the virtual URL, which would mask an interstitial diversion). Also the
+// browser-level check that about.html's <title> carries the Roamux brand
+// (roam-93: the mocha harness cannot see about.html's title, so it is pinned
+// here at the real page load).
 IN_PROC_BROWSER_TEST_F(RoamexSchemeAliasBrowserTest,
                        DirectChromeHostUnaffected) {
   EXPECT_TRUE(
@@ -96,6 +99,7 @@ IN_PROC_BROWSER_TEST_F(RoamexSchemeAliasBrowserTest,
   ASSERT_TRUE(entry);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
   EXPECT_EQ(GURL("chrome://roamux-about/"), entry->GetURL());
+  EXPECT_EQ(u"About Roamux", web_contents()->GetTitle());
 }
 
 // AC3: unmapped roamex:// hosts never alias into the chrome:// namespace —
