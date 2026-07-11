@@ -24,7 +24,7 @@ namespace {
 // roam-91: end-to-end roamex:// alias behavior (patch 0028 + the flag-gated
 // rewrite in //roamex/browser/scheme), including the two security proofs from
 // the Phase-1 analysis: renderer-initiated navigations stay blocked, and
-// unrewritten roamex:// URLs land on an error page (never the OS
+// unrewritten roamex:// URLs are dropped without commit (never the OS
 // external-protocol path, never a shadowed chrome:// host).
 //
 // Assertion vocabulary (deliberate): WebContents::GetLastCommittedURL() and
@@ -130,13 +130,30 @@ IN_PROC_BROWSER_TEST_F(RoamexSchemeAliasBrowserTest,
 
 // AC4 (D7 proof): redirects never alias — forward rewriting happens at
 // navigation-entry creation only, so a server redirect targeting roamex://
-// lands on the handled-scheme error path, not the About WebUI.
+// lands on the handled-scheme dead-end, not the About WebUI.
 IN_PROC_BROWSER_TEST_F(RoamexSchemeAliasBrowserTest,
                        ServerRedirectDoesNotAlias) {
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL redirect =
       embedded_test_server()->GetURL("/server-redirect?roamex://about");
   EXPECT_FALSE(content::NavigateToURL(web_contents(), redirect));
+  content::NavigationEntry *entry = last_entry();
+  ASSERT_TRUE(entry);
+  EXPECT_NE(GURL("chrome://roamex-about/"), entry->GetURL());
+}
+
+// AC4 (D7 proof, renderer-initiated): web content driving the same server
+// redirect exercises the distinct renderer redirect path (CanRedirectToURL,
+// then the later CanRequestURL screening) — it must not reach the WebUI
+// either.
+IN_PROC_BROWSER_TEST_F(RoamexSchemeAliasBrowserTest,
+                       ServerRedirectFromRendererDoesNotAlias) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  ASSERT_TRUE(content::NavigateToURL(
+      web_contents(), embedded_test_server()->GetURL("/title1.html")));
+  const GURL redirect =
+      embedded_test_server()->GetURL("/server-redirect?roamex://about");
+  EXPECT_FALSE(content::NavigateToURLFromRenderer(web_contents(), redirect));
   content::NavigationEntry *entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_NE(GURL("chrome://roamex-about/"), entry->GetURL());

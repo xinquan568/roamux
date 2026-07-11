@@ -18,8 +18,8 @@
        url::kFileSystemScheme,
        chrome::kChromeSearchScheme,
 +      // ROAMEX(roam-91): browser-handled → renderers can't request roamex://
-+      // (CanRequestURL tail) and unrewritten roamex:// URLs error-page instead
-+      // of reaching the OS external-protocol path.
++      // (CanRequestURL tail) and unrewritten roamex:// URLs are dropped
++      // instead of reaching the OS external-protocol path.
 +      "roamex",
  #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
      BUILDFLAG(IS_CHROMEOS)

@@ -15,8 +15,9 @@ namespace {
 
 // The curated alias map (roam-91). Adding a branding alias is a row here plus
 // its unit/browser test rows — never new patch surface. Unlisted hosts keep
-// the handled-scheme error-page dead-end (patch 0028 lists "roamex" in
-// ProfileIOData::IsHandledProtocol), and a generic roamex://X → chrome://X
+// the handled-scheme no-commit dead-end (patch 0028 lists "roamex" in
+// ProfileIOData::IsHandledProtocol, so they are dropped rather than handed to
+// the OS external-protocol path), and a generic roamex://X → chrome://X
 // rewrite is deliberately NOT offered (no shadowing of real chrome:// hosts).
 struct AliasRow {
   std::string_view roamex_host;
