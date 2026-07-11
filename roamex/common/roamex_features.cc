@@ -3,10 +3,17 @@
 
 namespace roamex::features {
 
-BASE_FEATURE(kTabStripPosition, "RoamexTabStripPosition", base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kInitialUrl, "RoamexInitialUrl", base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kEdgeImport, "RoamexEdgeImport", base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kTabVisitNav, "RoamexTabVisitNav", base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kBraveStyleProfiles, "RoamexBraveStyleProfiles", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kTabStripPosition, "RoamexTabStripPosition",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kInitialUrl, "RoamexInitialUrl",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kEdgeImport, "RoamexEdgeImport",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kTabVisitNav, "RoamexTabVisitNav",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kBraveStyleProfiles, "RoamexBraveStyleProfiles",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kRoamexSchemeAlias, "RoamexSchemeAlias",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
-}  // namespace roamex::features
+} // namespace roamex::features

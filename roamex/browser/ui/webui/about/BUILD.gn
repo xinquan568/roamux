@@ -12,6 +12,7 @@ source_set("about") {
     "//components/version_info",
     "//content/public/browser",
     "//roamex/app:app_buildflags",
+    "//roamex/common",
     "//roamex/mojom",
     "//ui/webui",
   ]
