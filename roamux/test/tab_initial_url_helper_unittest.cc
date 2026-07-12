@@ -111,6 +111,18 @@ TEST_F(TabInitialUrlHelperTest, NtpStartIsIgnorable) {
   EXPECT_EQ(GURL("https://after-ntp.test/"), helper()->initial_url());
 }
 
+// roam-98: on unbranded builds (the Roamux reference config) chrome://newtab/
+// commits as the third-party NTP; that spec must be ignorable in its own right,
+// independent of the rewrite.
+TEST_F(TabInitialUrlHelperTest, NtpThirdPartyStartIsIgnorable) {
+  content::NavigationSimulator::NavigateAndCommitFromBrowser(
+      web_contents(), GURL("chrome://new-tab-page-third-party/"));
+  EXPECT_FALSE(helper()->has_initial_url());
+  content::NavigationSimulator::NavigateAndCommitFromBrowser(
+      web_contents(), GURL("https://after-ntp.test/"));
+  EXPECT_EQ(GURL("https://after-ntp.test/"), helper()->initial_url());
+}
+
 TEST_F(TabInitialUrlHelperTest, SameDocumentIgnored) {
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(), GURL("about:blank"));
