@@ -6,17 +6,17 @@
 # by the EXIT trap), (2) the idempotent fail-loud patch runhook. No sudo; no secrets on this tier.
 set -euo pipefail
 
-SRC="${ROAMEX_CHROMIUM_SRC:-${HOME}/chromium/src}"
-OUT="${ROAMEX_CI_OUT:-out/CI}"
-DEPOT="${ROAMEX_DEPOT_TOOLS:-${HOME}/depot_tools}"
-ROAMEX_CANONICAL_OVERLAY="${ROAMEX_CANONICAL_OVERLAY:?set in the runner .env — the operator overlay the base symlink is restored to}"
+SRC="${ROAMUX_CHROMIUM_SRC:-${HOME}/chromium/src}"
+OUT="${ROAMUX_CI_OUT:-out/CI}"
+DEPOT="${ROAMUX_DEPOT_TOOLS:-${HOME}/depot_tools}"
+ROAMUX_CANONICAL_OVERLAY="${ROAMUX_CANONICAL_OVERLAY:?set in the runner .env — the operator overlay the base symlink is restored to}"
 
 export PATH="${DEPOT}:${PATH}"
 SECONDS=0
 
 restore_overlay() {
-  ln -sfn "${ROAMEX_CANONICAL_OVERLAY}" "${SRC}/roamux"
-  echo "overlay symlink restored to ${ROAMEX_CANONICAL_OVERLAY}"
+  ln -sfn "${ROAMUX_CANONICAL_OVERLAY}" "${SRC}/roamux"
+  echo "overlay symlink restored to ${ROAMUX_CANONICAL_OVERLAY}"
 }
 trap restore_overlay EXIT
 

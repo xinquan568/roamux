@@ -17,7 +17,7 @@ import unittest
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[3] / ".github" / "workflows"
 
-CAPABILITY_VAR = "ROAMEX_CI_CHROMIUM_RUNNER"
+CAPABILITY_VAR = "ROAMUX_CI_CHROMIUM_RUNNER"
 MARKER = "ROAMUX_CHROMIUM_DEPENDENT"
 FORK_CONDITION = "head.repo.fork"
 

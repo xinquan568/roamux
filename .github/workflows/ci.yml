@@ -81,7 +81,7 @@ jobs:
     steps:
       - name: Tier-2 status (visible, never a silent green)
         env:
-          CAP: ${{ vars.ROAMEX_CI_CHROMIUM_RUNNER }}
+          CAP: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER }}
           IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
         run: |
           if [ "$IS_FORK" = "true" ]; then
@@ -97,7 +97,7 @@ jobs:
     # Trust predicate enumerated exactly (no non-PR catch-all): protected-main pushes OR same-repo
     # (non-fork) PRs — code someone with push rights already chose to push. Tighten to
     # protected-refs/merge-queue if this repo ever gains outside collaborators.
-    if: ${{ vars.ROAMEX_CI_CHROMIUM_RUNNER != '' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) }}
+    if: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) }}
     runs-on: [self-hosted, macos, chromium-builder]
     steps:
       - uses: actions/checkout@v4

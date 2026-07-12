@@ -22,11 +22,11 @@ import roamux_signing_config  # noqa: E402
 import signing_plan  # noqa: E402
 
 SECRETS = [
-    "ROAMEX_DEVELOPER_ID_CERT_P12",
-    "ROAMEX_DEVELOPER_ID_CERT_PASSWORD",
-    "ROAMEX_NOTARY_KEY_ID",
-    "ROAMEX_NOTARY_ISSUER_ID",
-    "ROAMEX_NOTARY_PRIVATE_KEY",
+    "ROAMUX_DEVELOPER_ID_CERT_P12",
+    "ROAMUX_DEVELOPER_ID_CERT_PASSWORD",
+    "ROAMUX_NOTARY_KEY_ID",
+    "ROAMUX_NOTARY_ISSUER_ID",
+    "ROAMUX_NOTARY_PRIVATE_KEY",
 ]
 
 
@@ -43,8 +43,8 @@ class SigningModeTest(unittest.TestCase):
         with self.assertRaises(signing_mode.PartialSigningSecretsError) as ctx:
             signing_mode.resolve_signing_mode(env)
         msg = str(ctx.exception)
-        self.assertIn("ROAMEX_NOTARY_KEY_ID", msg)
-        self.assertNotIn("ROAMEX_DEVELOPER_ID_CERT_P12", msg)
+        self.assertIn("ROAMUX_NOTARY_KEY_ID", msg)
+        self.assertNotIn("ROAMUX_DEVELOPER_ID_CERT_P12", msg)
 
     def test_blank_values_count_as_absent(self):
         env = {k: "" for k in SECRETS}

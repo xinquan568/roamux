@@ -91,7 +91,7 @@ def main():
               "signature (roam-32) still applies.")
         return 0
 
-    identity = args.identity or os.environ.get("ROAMEX_SIGN_IDENTITY", "")
+    identity = args.identity or os.environ.get("ROAMUX_SIGN_IDENTITY", "")
     if not identity:
         print("::error::signed mode but no signing identity resolved",
               file=sys.stderr)
