@@ -1,21 +1,35 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Regenerates the fixed pre-signed Sparkle test-feed fixture (roam-32).
+"""Regenerates the fixed pre-signed Sparkle test-feed fixture (roam-32; re-signed by roam-101).
 
 TEST-ONLY key material: the Ed25519 seed below is a committed, clearly-marked
 test fixture (plan §13.6/K3 — local/CI validation uses a dev/test pair; the
 production key is minted by I-6.3 in the protected release environment and
-never appears in this repo). Deterministic: same seed ⇒ same fixture bytes.
+never appears in this repo). Deterministic: same seed ⇒ same fixture bytes —
+Ed25519 (RFC 8032) is deterministic, and the zip is assembled with fixed
+timestamps/modes.
 
-Uses the public-domain Ed25519 reference implementation (slow, fine for
-fixtures) so regeneration needs no third-party Python packages.
+Signatures are produced by Sparkle's own `sign_update` (roam-101): the vendored
+tool at roamux/third_party/sparkle/bin/sign_update (pinned + hash-verified by
+roamux/build/fetch_sparkle.py — run that first). Public-key derivation and a
+post-sign parity self-check use the in-repo pure-python reference
+(roamux/app/appcast/ed25519_ref) — the two implementations are byte-equivalent
+for the same key + bytes, and the self-check keeps that fact enforced.
 """
 
 import base64
-import hashlib
+import io
 import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+import zipfile
 
 HERE = pathlib.Path(__file__).resolve().parent
+ROAMUX_ROOT = HERE.parents[2]  # roamux/
+sys.path.insert(0, str(ROAMUX_ROOT / "app" / "appcast"))
+import ed25519_ref as ed  # noqa: E402  (pure Ed25519 reference, test-only)
 
 # *** TEST KEY — NOT A SECRET. Do not use outside fixtures. ***
 TEST_SEED = bytes.fromhex(
@@ -25,97 +39,42 @@ ARTIFACT_NAME = "Roamux-99.0.0.zip"
 APPCAST_NAME = "appcast.xml"
 APPCAST_TAMPERED_NAME = "appcast-tampered.xml"
 APPCAST_UNSIGNED_NAME = "appcast-unsigned.xml"
+TESTHOST_ID = "com.roamux.sparkle.testhost"
+
+SIGN_UPDATE = ROAMUX_ROOT / "third_party" / "sparkle" / "bin" / "sign_update"
+SIGN_UPDATE_RE = re.compile(r'sparkle:edSignature="([A-Za-z0-9+/=]+)" length="(\d+)"')
 
 
-# ---- Ed25519 reference implementation (public domain, ed25519.cr.yp.to) ----
-b = 256
-q = 2**255 - 19
-l = 2**252 + 27742317777372353535851937790883648493
+def sign_with_sparkle(data, pub):
+    """Sign `data` with the vendored Sparkle sign_update; return the base64 signature.
 
-
-def H(m):
-    return hashlib.sha512(m).digest()
-
-
-def expmod(bb, e, m):
-    return pow(bb, e, m)
-
-
-def inv(x):
-    return expmod(x, q - 2, q)
-
-
-d = -121665 * inv(121666)
-I = expmod(2, (q - 1) // 4, q)
-
-
-def xrecover(y):
-    xx = (y * y - 1) * inv(d * y * y + 1)
-    x = expmod(xx, (q + 3) // 8, q)
-    if (x * x - xx) % q != 0:
-        x = (x * I) % q
-    if x % 2 != 0:
-        x = q - x
-    return x
-
-
-By = 4 * inv(5)
-Bx = xrecover(By)
-B = [Bx % q, By % q]
-
-
-def edwards(P, Q):
-    x1, y1 = P
-    x2, y2 = Q
-    x3 = (x1 * y2 + x2 * y1) * inv(1 + d * x1 * x2 * y1 * y2)
-    y3 = (y1 * y2 + x1 * x2) * inv(1 - d * x1 * x2 * y1 * y2)
-    return [x3 % q, y3 % q]
-
-
-def scalarmult(P, e):
-    if e == 0:
-        return [0, 1]
-    Q = scalarmult(P, e // 2)
-    Q = edwards(Q, Q)
-    if e & 1:
-        Q = edwards(Q, P)
-    return Q
-
-
-def encodeint(y):
-    return y.to_bytes(b // 8, "little")
-
-
-def encodepoint(P):
-    x, y = P
-    bits = y | ((x & 1) << (b - 1))
-    return bits.to_bytes(b // 8, "little")
-
-
-def bit(h, i):
-    return (h[i // 8] >> (i % 8)) & 1
-
-
-def publickey(sk):
-    h = H(sk)
-    a = 2**(b - 2) + sum(2**i * bit(h, i) for i in range(3, b - 2))
-    A = scalarmult(B, a)
-    return encodepoint(A)
-
-
-def Hint(m):
-    h = H(m)
-    return sum(2**i * bit(h, i) for i in range(2 * b))
-
-
-def signature(m, sk, pk):
-    h = H(sk)
-    a = 2**(b - 2) + sum(2**i * bit(h, i) for i in range(3, b - 2))
-    r = Hint(h[b // 8:b // 4] + m)
-    R = scalarmult(B, r)
-    S = (r + Hint(encodepoint(R) + pk + m) * a) % l
-    return encodepoint(R) + encodeint(S)
-# ---------------------------------------------------------------------------
+    Fails loudly if the vendored tool is absent (mirrors the flag-on GN convention), if its
+    output shape changes, or if the signature does not pass the reference verifier (parity
+    self-check: Sparkle's signer and the in-repo reference math must never drift).
+    """
+    if not SIGN_UPDATE.is_file():
+        sys.exit(f"sign_update not found at {SIGN_UPDATE} — run "
+                 f"`python3 roamux/build/fetch_sparkle.py` first (pinned + hash-verified).")
+    with tempfile.TemporaryDirectory(prefix="roamux-fixture-sign-") as tmp:
+        tmpdir = pathlib.Path(tmp)
+        key_file = tmpdir / "test_ed_key.b64"
+        key_file.touch(mode=0o600)
+        key_file.write_text(base64.b64encode(TEST_SEED).decode())
+        artifact_file = tmpdir / "artifact.bin"
+        artifact_file.write_bytes(data)
+        out = subprocess.run(
+            [str(SIGN_UPDATE), "-f", str(key_file), str(artifact_file)],
+            capture_output=True, text=True, check=True).stdout
+    match = SIGN_UPDATE_RE.search(out)
+    if not match:
+        sys.exit(f"sign_update output did not match the expected shape: {out!r}")
+    sig_b64, length = match.group(1), int(match.group(2))
+    if length != len(data):
+        sys.exit(f"sign_update length {length} != artifact length {len(data)}")
+    if not ed.verify(data, base64.b64decode(sig_b64), pub):
+        sys.exit("parity self-check failed: sign_update signature does not pass the "
+                 "reference verifier — investigate before committing anything.")
+    return sig_b64
 
 
 def appcast(signature_b64, length, include_signature=True):
@@ -140,27 +99,19 @@ def appcast(signature_b64, length, include_signature=True):
 
 
 def main():
-    pk = publickey(TEST_SEED)
+    pk = ed.publickey(TEST_SEED)
     (HERE / "test_public_ed_key.b64").write_text(
         base64.b64encode(pk).decode() + "\n")
 
     # A REAL minimal .app zip: Sparkle validates the EdDSA signature after
     # extraction (before install), so extraction must succeed for the
     # signature gate to be reached. Deterministic (fixed timestamps).
-    import io
-    import zipfile
     plist = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
         '<plist version="1.0"><dict>\n'
-        # roam-94: the throwaway Sparkle test-host bundle id stays com.roamex —
-        # it is baked into the committed EdDSA-signed fixture (Roamux-99.0.0.zip)
-        # and this python reference signer cannot reproduce a Sparkle-C++-valid
-        # signature for a changed id. Functionally irrelevant test data (the
-        # suites validate the signature, not the id). A proper com.roamux
-        # re-sign with Sparkle's sign_update is deferred — see the tracking issue.
-        '  <key>CFBundleIdentifier</key><string>com.roamex.sparkle.testhost</string>\n'
+        f'  <key>CFBundleIdentifier</key><string>{TESTHOST_ID}</string>\n'
         '  <key>CFBundleName</key><string>TestHost</string>\n'
         '  <key>CFBundleExecutable</key><string>TestHost</string>\n'
         '  <key>CFBundleVersion</key><string>99.0.0</string>\n'
@@ -181,21 +132,20 @@ def main():
     artifact = buf.getvalue()
     (HERE / ARTIFACT_NAME).write_bytes(artifact)
 
-    sig = signature(artifact, TEST_SEED, pk)
-    sig_b64 = base64.b64encode(sig).decode()
+    sig_b64 = sign_with_sparkle(artifact, pk)
     (HERE / "artifact_signature.b64").write_text(sig_b64 + "\n")
 
     (HERE / APPCAST_NAME).write_text(appcast(sig_b64, len(artifact)))
-    # Tampered: the signature is over DIFFERENT bytes than the artifact.
+    # Tampered: a REAL signature over DIFFERENT bytes than the artifact
+    # (valid-key/wrong-bytes — the negative fixture's meaning).
     tampered = bytearray(artifact)
     tampered[0] ^= 0xFF
-    tam_sig = base64.b64encode(
-        signature(bytes(tampered), TEST_SEED, pk)).decode()
+    tam_sig = sign_with_sparkle(bytes(tampered), pk)
     (HERE / APPCAST_TAMPERED_NAME).write_text(
         appcast(tam_sig, len(artifact)))
     (HERE / APPCAST_UNSIGNED_NAME).write_text(
         appcast("", len(artifact), include_signature=False))
-    print("fixture regenerated (test key, deterministic)")
+    print("fixture regenerated (test key, sign_update-signed, deterministic)")
 
 
 if __name__ == "__main__":

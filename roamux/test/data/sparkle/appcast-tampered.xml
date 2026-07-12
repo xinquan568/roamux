@@ -9,7 +9,7 @@
       <pubDate>Thu, 01 Jan 2026 00:00:00 +0000</pubDate>
       <enclosure url="https://example.invalid/Roamux-99.0.0.zip"
                  length="900"
-                 type="application/octet-stream" sparkle:edSignature="OF0b5rFtPNSlf1mBfG9ffiaz1q0qPzI7vBDROxLAplsUkCcIfIyKDxfWZ52aSaf3dtDvjoKGHSuWXhi6yApaBw=="/>
+                 type="application/octet-stream" sparkle:edSignature="yhCA0ANK6Ad9aAnoXsedn4GCTniVvwbTMuqtMNZK7QZvdHs2m5rzLylr5KlRMsgHHUwcSzLdlqJlLOvwsTx9AQ=="/>
     </item>
   </channel>
 </rss>
