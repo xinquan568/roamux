@@ -14,9 +14,13 @@ These encode the tier-1 + release posture structurally, so every future workflow
      (~/roamux-runner/.env: ROAMUX_CHROMIUM_SRC / ROAMUX_DEPOT_TOOLS) — the file is required and
      sourced unconditionally, every value is validated fail-loud, and no workspace-relative
      Chromium path may appear (roam-108).
+  7. release.yml declares an explicit, generous job timeout — without one, GitHub's default 6h cap
+     applies (self-hosted runners included) and a cold universal2 build is service-cancelled
+     mid-compile (roam-110; run 29195822447 died at exactly 6h00m).
 """
 
 import pathlib
+import re
 import unittest
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[3] / ".github" / "workflows"
@@ -201,6 +205,18 @@ class WorkflowInvariantsTest(unittest.TestCase):
                         "missing/invalid ROAMUX_DEPOT_TOOLS must fail loudly")
         self.assertTrue(any("ROAMUX_DEPOT_TOOLS" in l and "GITHUB_PATH" in l for l in lines),
                         "depot_tools must reach later steps via GITHUB_PATH")
+
+    def test_release_job_declares_generous_timeout(self):
+        # roam-110: with no explicit timeout-minutes, GitHub's default 6h job cap applies on
+        # self-hosted runners too, and a cold universal2 build is service-cancelled mid-compile
+        # (run 29195822447 died at exactly 6h00m). Pin an explicit, generous bound.
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        m = re.search(r"^\s*timeout-minutes:\s*(\d+)\s*$", text, re.M)
+        self.assertIsNotNone(m, "build-sign-package must declare timeout-minutes explicitly "
+                                "(GitHub's silent default is 6h — too short for a cold build)")
+        self.assertGreaterEqual(int(m.group(1)), 720,
+                                "release timeout must comfortably exceed the 6h default")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):
