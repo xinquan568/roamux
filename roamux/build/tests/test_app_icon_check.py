@@ -92,10 +92,11 @@ class AppIconCheckTest(unittest.TestCase):
             capture_output=True, text=True)
 
     def _summary(self, proc):
+        # --json contract: stdout is EXACTLY one JSON document — nothing else.
         try:
-            return json.loads(proc.stdout.strip().splitlines()[-1])
-        except (json.JSONDecodeError, IndexError):
-            self.fail(f"checker emitted no JSON summary; stdout={proc.stdout!r} "
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            self.fail(f"checker stdout is not pure JSON under --json; stdout={proc.stdout!r} "
                       f"stderr={proc.stderr!r}")
 
     # ---- outer-bundle invariant --------------------------------------------
@@ -174,6 +175,18 @@ class AppIconCheckTest(unittest.TestCase):
     def test_helper_wrong_icon_name_key_fails(self):
         app = self._bundle()
         self._add_helper(app, icon_name="OtherIcon")
+        proc = self._run(app)
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_helper_wrong_icon_file_key_alone_fails(self):
+        app = self._bundle()
+        self._add_helper(app, icon_file="other.icns")  # IconName stays correct
+        proc = self._run(app)
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_helper_missing_icon_file_key_alone_fails(self):
+        app = self._bundle()
+        self._add_helper(app, drop_keys=("CFBundleIconFile",))  # IconName stays correct
         proc = self._run(app)
         self.assertNotEqual(proc.returncode, 0)
 

@@ -82,12 +82,16 @@ def main():
         print(f"[fail] vendored payload missing: {e.filename}", file=sys.stderr)
         return 2
 
+    # --json contract: stdout carries ONLY the JSON summary; human lines go to stderr.
+    human_out = sys.stderr if args.json else sys.stdout
+
     bundles = [pathlib.Path(args.app)]
     helpers = find_alerts_helpers(args.app)
     if helpers:
         bundles.extend(helpers)
     else:
-        print("[note] no Alerts helper found under Contents/Frameworks — checking the outer bundle only")
+        print("[note] no Alerts helper found under Contents/Frameworks — checking the outer "
+              "bundle only", file=human_out)
 
     failures = []
     for bundle in bundles:
@@ -96,7 +100,8 @@ def main():
     for failure in failures:
         print(f"[fail] {failure}", file=sys.stderr)
     if not failures:
-        print(f"[ok] {len(bundles)} bundle(s) carry the Roamux icon payloads + plist keys")
+        print(f"[ok] {len(bundles)} bundle(s) carry the Roamux icon payloads + plist keys",
+              file=human_out)
     if args.json:
         import json
         print(json.dumps({"ok": not failures, "bundles_checked": len(bundles),
