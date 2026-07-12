@@ -2,7 +2,7 @@
 # Self-hosted builder — tier-2 warm-cache (roam-36, plan §12.6, personal-machine v1)
 
 The tier-2 fast path: trusted jobs build Chromium **incrementally from a warm base in minutes** on a
-self-hosted Apple-silicon runner. When absent (runner gone AND `vars.ROAMEX_CI_CHROMIUM_RUNNER`
+self-hosted Apple-silicon runner. When absent (runner gone AND `vars.ROAMUX_CI_CHROMIUM_RUNNER`
 unset), CI degrades to roam-5's visible skips — never red.
 
 ## v1 posture vs full §12.6 — read this first
@@ -38,19 +38,19 @@ snapshots (`tart`/Anka). Adopt these the moment this stops being a single-operat
 bash roamux/build/ci/provision_runner.sh
 # Machine-specific env for jobs (written once):
 cat > ~/roamux-runner/.env <<ENV
-ROAMEX_CHROMIUM_SRC=<abs path to the pinned checkout, e.g. /Users/you/chromium/src>
-ROAMEX_DEPOT_TOOLS=<abs path to depot_tools>
-ROAMEX_CANONICAL_OVERLAY=<abs path to codes/roamux/roamux — the symlink restore target>
+ROAMUX_CHROMIUM_SRC=<abs path to the pinned checkout, e.g. /Users/you/chromium/src>
+ROAMUX_DEPOT_TOOLS=<abs path to depot_tools>
+ROAMUX_CANONICAL_OVERLAY=<abs path to codes/roamux/roamux — the symlink restore target>
 ENV
 # Start (session-lifetime; dies on reboot):
 cd ~/roamux-runner && nohup ./run.sh >runner.log 2>&1 &
 # Persist across reboots (deeper machine mutation — operator choice):
 cd ~/roamux-runner && ./svc.sh install && ./svc.sh start
 # Enable tier-2 jobs:
-gh variable set ROAMEX_CI_CHROMIUM_RUNNER --body roamux-builder-1 --repo <owner>/<repo>
+gh variable set ROAMUX_CI_CHROMIUM_RUNNER --body roamux-builder-1 --repo <owner>/<repo>
 # Decommission (do BOTH — a set variable with a dead runner queues jobs until timeout):
 cd ~/roamux-runner && ./config.sh remove --token "$(gh api -X POST repos/<o>/<r>/actions/runners/remove-token --jq .token)"
-gh variable delete ROAMEX_CI_CHROMIUM_RUNNER --repo <owner>/<repo>
+gh variable delete ROAMUX_CI_CHROMIUM_RUNNER --repo <owner>/<repo>
 ```
 
 ## Cache model

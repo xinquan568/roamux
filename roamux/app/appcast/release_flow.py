@@ -10,7 +10,7 @@
   /latest/ feed, per-tag artifact download).
 """
 
-REPO = "https://github.com/xinquan568/roamex"
+REPO = "https://github.com/xinquan568/roamux"
 
 
 class MissingSparkleKeyError(RuntimeError):

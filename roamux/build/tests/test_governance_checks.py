@@ -128,13 +128,13 @@ class PrePushDecisionTest(unittest.TestCase):
         self.assertEqual(self._decision({})[0], "skip")
 
     def test_skips_when_no_out_dir(self):
-        self.assertEqual(self._decision({"ROAMEX_CHROMIUM_SRC": "/nonexistent"})[0], "skip")
+        self.assertEqual(self._decision({"ROAMUX_CHROMIUM_SRC": "/nonexistent"})[0], "skip")
 
     def test_runs_when_out_default_present(self):
         d = pathlib.Path(tempfile.mkdtemp(prefix="roamux-fakesrc-"))
         self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
         (d / "out" / "Default").mkdir(parents=True)
-        action, src = self._decision({"ROAMEX_CHROMIUM_SRC": str(d)})
+        action, src = self._decision({"ROAMUX_CHROMIUM_SRC": str(d)})
         self.assertEqual(action, "run")
         self.assertEqual(src, str(d))
 

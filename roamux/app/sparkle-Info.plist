@@ -9,7 +9,7 @@
 <plist version="1.0">
 <dict>
   <key>SUFeedURL</key>
-  <string>https://github.com/xinquan568/roamex/releases/latest/download/appcast.xml</string>
+  <string>https://github.com/xinquan568/roamux/releases/latest/download/appcast.xml</string>
   <key>SUPublicEDKey</key>
   <string>VhHW37r/RYqzm5WITbR9sUN9a8PJjqs3p4Gx0bQ8zz4=</string>
   <key>SUEnableAutomaticChecks</key>

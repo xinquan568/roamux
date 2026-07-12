@@ -7,15 +7,15 @@
 #
 # Start (session):  cd "$RUNNER_DIR" && nohup ./run.sh >runner.log 2>&1 &
 # Persist (operator choice, deeper mutation):  cd "$RUNNER_DIR" && ./svc.sh install && ./svc.sh start
-# Decommission:  ./config.sh remove --token <removal-token>  AND unset vars.ROAMEX_CI_CHROMIUM_RUNNER
+# Decommission:  ./config.sh remove --token <removal-token>  AND unset vars.ROAMUX_CI_CHROMIUM_RUNNER
 # Security posture + upgrade path: docs/ci/self-hosted-runner.md. Needs no elevated privileges.
 set -euo pipefail
 
-REPO="${ROAMEX_REPO:-xinquan568/roamex}"
-RUNNER_DIR="${ROAMEX_RUNNER_DIR:-${HOME}/roamux-runner}"
-RUNNER_NAME="${ROAMEX_RUNNER_NAME:-roamux-builder-1}"
+REPO="${ROAMUX_REPO:-xinquan568/roamux}"
+RUNNER_DIR="${ROAMUX_RUNNER_DIR:-${HOME}/roamux-runner}"
+RUNNER_NAME="${ROAMUX_RUNNER_NAME:-roamux-builder-1}"
 LABELS="self-hosted,macos,chromium-builder"
-RUNNER_VERSION="${ROAMEX_RUNNER_VERSION:-2.321.0}"
+RUNNER_VERSION="${ROAMUX_RUNNER_VERSION:-2.321.0}"
 TARBALL="actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz"
 URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${TARBALL}"
 
@@ -50,5 +50,5 @@ TOKEN="$(gh api -X POST "repos/${REPO}/actions/runners/registration-token" --jq 
   --name "${RUNNER_NAME}" --labels "${LABELS}" --unattended --replace
 
 echo "configured. Start it with:  cd ${RUNNER_DIR} && nohup ./run.sh >runner.log 2>&1 &"
-echo "Remember: set the repo variable ROAMEX_CI_CHROMIUM_RUNNER=${RUNNER_NAME} to enable tier-2 jobs,"
-echo "and write ${RUNNER_DIR}/.env with ROAMEX_CHROMIUM_SRC / ROAMEX_DEPOT_TOOLS / ROAMEX_CANONICAL_OVERLAY."
+echo "Remember: set the repo variable ROAMUX_CI_CHROMIUM_RUNNER=${RUNNER_NAME} to enable tier-2 jobs,"
+echo "and write ${RUNNER_DIR}/.env with ROAMUX_CHROMIUM_SRC / ROAMUX_DEPOT_TOOLS / ROAMUX_CANONICAL_OVERLAY."

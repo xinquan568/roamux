@@ -14,7 +14,7 @@ export function getHtml(this: RoamuxAboutAppElement) {
 
     <div class="links">
       <a id="websiteLink" href="https://roamux.app" target="_blank">Website</a>
-      <a id="githubLink" href="https://github.com/xinquan568/roamex"
+      <a id="githubLink" href="https://github.com/xinquan568/roamux"
           target="_blank">GitHub</a>
     </div>
 

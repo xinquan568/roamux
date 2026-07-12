@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """pre-push test gate (roam-38, §7.9 / P6). Honest degradation: always runs the hermetic suite; when a
-Chromium checkout is configured (ROAMEX_CHROMIUM_SRC with an out/Default) it also builds+runs the touched
+Chromium checkout is configured (ROAMUX_CHROMIUM_SRC with an out/Default) it also builds+runs the touched
 Roamux gtest target. Never a silent pass; never a full-tree build.
 """
 
@@ -24,11 +24,11 @@ def _clean_git_env():
 
 def gtest_decision(environ):
     """Return ('run', src) when a usable checkout is configured, else ('skip', reason). Pure — testable."""
-    src = environ.get("ROAMEX_CHROMIUM_SRC", "")
+    src = environ.get("ROAMUX_CHROMIUM_SRC", "")
     if not src:
-        return ("skip", "no Chromium checkout configured (ROAMEX_CHROMIUM_SRC unset)")
+        return ("skip", "no Chromium checkout configured (ROAMUX_CHROMIUM_SRC unset)")
     if not (pathlib.Path(src) / "out" / "Default").is_dir():
-        return ("skip", f"ROAMEX_CHROMIUM_SRC={src} has no out/Default build dir")
+        return ("skip", f"ROAMUX_CHROMIUM_SRC={src} has no out/Default build dir")
     return ("run", src)
 
 

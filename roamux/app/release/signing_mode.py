@@ -14,11 +14,11 @@ import sys
 # The enumerated Apple secret set (App Store Connect API-key notary form —
 # rotatable, no 2FA). Present in the protected `release` GitHub Environment.
 REQUIRED_SECRETS = (
-    "ROAMEX_DEVELOPER_ID_CERT_P12",
-    "ROAMEX_DEVELOPER_ID_CERT_PASSWORD",
-    "ROAMEX_NOTARY_KEY_ID",
-    "ROAMEX_NOTARY_ISSUER_ID",
-    "ROAMEX_NOTARY_PRIVATE_KEY",
+    "ROAMUX_DEVELOPER_ID_CERT_P12",
+    "ROAMUX_DEVELOPER_ID_CERT_PASSWORD",
+    "ROAMUX_NOTARY_KEY_ID",
+    "ROAMUX_NOTARY_ISSUER_ID",
+    "ROAMUX_NOTARY_PRIVATE_KEY",
 )
 
 

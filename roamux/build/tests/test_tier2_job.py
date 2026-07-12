@@ -27,7 +27,7 @@ class Tier2JobScriptTest(unittest.TestCase):
         trap_line = next(l for l in self.code.splitlines() if l.strip().startswith("trap"))
         self.assertIn("EXIT", trap_line)
         self.assertIn("restore_overlay", trap_line)
-        self.assertIn('ln -sfn "${ROAMEX_CANONICAL_OVERLAY}"', self.code)
+        self.assertIn('ln -sfn "${ROAMUX_CANONICAL_OVERLAY}"', self.code)
 
     def test_declared_channels_present(self):
         self.assertIn('ln -sfn "${GITHUB_WORKSPACE}/roamux"', self.code)  # channel 1: symlink flip

@@ -39,11 +39,11 @@ jobs:
       - name: Resolve signing mode
         id: mode
         env:
-          ROAMEX_DEVELOPER_ID_CERT_P12: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_P12 }}
-          ROAMEX_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_PASSWORD }}
-          ROAMEX_NOTARY_KEY_ID: ${{ secrets.ROAMEX_NOTARY_KEY_ID }}
-          ROAMEX_NOTARY_ISSUER_ID: ${{ secrets.ROAMEX_NOTARY_ISSUER_ID }}
-          ROAMEX_NOTARY_PRIVATE_KEY: ${{ secrets.ROAMEX_NOTARY_PRIVATE_KEY }}
+          ROAMUX_DEVELOPER_ID_CERT_P12: ${{ secrets.ROAMUX_DEVELOPER_ID_CERT_P12 }}
+          ROAMUX_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.ROAMUX_DEVELOPER_ID_CERT_PASSWORD }}
+          ROAMUX_NOTARY_KEY_ID: ${{ secrets.ROAMUX_NOTARY_KEY_ID }}
+          ROAMUX_NOTARY_ISSUER_ID: ${{ secrets.ROAMUX_NOTARY_ISSUER_ID }}
+          ROAMUX_NOTARY_PRIVATE_KEY: ${{ secrets.ROAMUX_NOTARY_PRIVATE_KEY }}
         run: |
           # Preserve the gate's non-zero exit (partial secrets -> fail-fast);
           # a bare $() in an echo would mask it.
@@ -79,11 +79,11 @@ jobs:
       - name: Set up keychain + sign + notarize + staple (signed mode)
         if: steps.mode.outputs.mode == 'signed'
         env:
-          ROAMEX_DEVELOPER_ID_CERT_P12: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_P12 }}
-          ROAMEX_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.ROAMEX_DEVELOPER_ID_CERT_PASSWORD }}
-          ROAMEX_NOTARY_KEY_ID: ${{ secrets.ROAMEX_NOTARY_KEY_ID }}
-          ROAMEX_NOTARY_ISSUER_ID: ${{ secrets.ROAMEX_NOTARY_ISSUER_ID }}
-          ROAMEX_NOTARY_PRIVATE_KEY: ${{ secrets.ROAMEX_NOTARY_PRIVATE_KEY }}
+          ROAMUX_DEVELOPER_ID_CERT_P12: ${{ secrets.ROAMUX_DEVELOPER_ID_CERT_P12 }}
+          ROAMUX_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.ROAMUX_DEVELOPER_ID_CERT_PASSWORD }}
+          ROAMUX_NOTARY_KEY_ID: ${{ secrets.ROAMUX_NOTARY_KEY_ID }}
+          ROAMUX_NOTARY_ISSUER_ID: ${{ secrets.ROAMUX_NOTARY_ISSUER_ID }}
+          ROAMUX_NOTARY_PRIVATE_KEY: ${{ secrets.ROAMUX_NOTARY_PRIVATE_KEY }}
         run: |
           bash roamux/app/release/keychain_setup.sh
           # Same-step: $GITHUB_ENV is not yet visible here, so source the file.
@@ -91,10 +91,10 @@ jobs:
           python3 roamux/app/release/sign_roamux.py \
             --mode signed \
             --app "${ROAMUX_APP}" \
-            --identity "${ROAMEX_SIGN_IDENTITY}" \
-            --notary-key "${ROAMEX_NOTARY_KEY_PATH}" \
-            --notary-key-id "${ROAMEX_NOTARY_KEY_ID}" \
-            --notary-issuer "${ROAMEX_NOTARY_ISSUER_ID}"
+            --identity "${ROAMUX_SIGN_IDENTITY}" \
+            --notary-key "${ROAMUX_NOTARY_KEY_PATH}" \
+            --notary-key-id "${ROAMUX_NOTARY_KEY_ID}" \
+            --notary-issuer "${ROAMUX_NOTARY_ISSUER_ID}"
 
       - name: Verify signed artifact (signed mode)
         if: steps.mode.outputs.mode == 'signed'
@@ -135,7 +135,7 @@ jobs:
             sig="$(python3 roamux/app/appcast/sign_update_wrapper.py               --sign-update-bin "$bin" --artifact "$rel/$art" --key-file "$keyfile")"
             [ "$art" = "Roamux.zip" ] && ZIP_SIG="$sig"
           done
-          url="https://github.com/xinquan568/roamex/releases/download/${TAG}/Roamux.zip"
+          url="https://github.com/xinquan568/roamux/releases/download/${TAG}/Roamux.zip"
           python3 roamux/app/appcast/generate_appcast.py             --version "${TAG#v}" --enclosure-url "$url"             --artifact "$rel/Roamux.zip" --ed-signature "$ZIP_SIG"             --pub-date "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"             --out "$rel/appcast.xml"
           rm -f "$keyfile"
 

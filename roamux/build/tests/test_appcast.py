@@ -33,7 +33,7 @@ class AppcastGenerationTest(unittest.TestCase):
         self.artifact = b"ROAMUX-UPDATE-99.0.0-universal2-" + b"z" * 200
         self.sig_b64 = base64.b64encode(
             ed.signature(self.artifact, TEST_SEED, self.pub)).decode()
-        self.url = ("https://github.com/xinquan568/roamex/releases/download/"
+        self.url = ("https://github.com/xinquan568/roamux/releases/download/"
                     "v99.0.0/Roamux.zip")
 
     def test_appcast_is_well_formed_and_signature_verifies(self):
