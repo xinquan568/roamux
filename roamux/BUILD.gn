@@ -183,6 +183,7 @@ test("roamux_browsertests") {
     "test/roamux_tab_visit_reopen_browsertest.cc",
     "test/roamux_tab_visit_restart_browsertest.cc",
     "test/roamux_tab_visit_uid_flag_matrix_browsertest.cc",
+    "test/roamux_test_env_browsertest.cc",
     "test/roamux_three_carrier_survival_browsertest.cc",
     "test/roamux_vertical_strip_placement_browsertest.cc",
     "test/support/sso_test_server.cc",
