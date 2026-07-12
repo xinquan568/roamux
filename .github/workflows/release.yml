@@ -22,6 +22,9 @@ jobs:
   build-sign-package:
     runs-on: [self-hosted, macos, chromium-builder]
     environment: release
+    # roam-110: GitHub's silent default job timeout is 6h even on self-hosted runners; a cold
+    # universal2 build exceeds it (run 29195822447 was service-cancelled at exactly 6h00m).
+    timeout-minutes: 1440
     steps:
       - name: Assert protected ref
         run: |
