@@ -15,12 +15,13 @@
 #include "content/public/test/browser_test.h"
 #include "roamux/browser/tabs/tab_uid_tab_helper.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "url/gurl.h"
 
 namespace roamux {
 namespace {
 
-class RoamuxTabVisitUidFlagMatrixTest : public InProcessBrowserTest {
+class RoamuxTabVisitUidFlagMatrixTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitUidFlagMatrixTest() {
     // The E4 flag is ON, but the E2 initial-url flag is OFF — the durable uid

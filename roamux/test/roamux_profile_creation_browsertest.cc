@@ -27,6 +27,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "url/gurl.h"
 
 namespace roamux {
@@ -54,6 +55,11 @@ constexpr char kClickAddProfileAndReadState[] = R"(
 
 class RoamuxProfileCreationBrowserTestBase : public ProfilePickerTestBase {
  public:
+  RoamuxProfileCreationBrowserTestBase() {
+    // roam-99: foreign hierarchy — cannot re-base onto RoamuxBrowserTest.
+    roamux::test::DisableWebUIToolbarFeatures(webui_toolbar_disables_);
+  }
+
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ProfilePickerTestBase::SetUpCommandLine(command_line);
     // Keep the signed-out post-identity flow deterministic in the harness —
@@ -80,6 +86,9 @@ class RoamuxProfileCreationBrowserTestBase : public ProfilePickerTestBase {
     return {*dict->FindString("step"),
             dict->FindBool("typeChoiceActive").value_or(true)};
   }
+
+ private:
+  base::test::ScopedFeatureList webui_toolbar_disables_;
 };
 
 class RoamuxProfileCreationFlagOnBrowserTest

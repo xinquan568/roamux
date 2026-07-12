@@ -31,6 +31,7 @@
 #include "roamux/browser/tab_visit/tab_visit_traversal_coordinator_factory.h"
 #include "roamux/browser/tab_visit/visits_store.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 
 namespace roamux {
 namespace {
@@ -48,7 +49,7 @@ size_t DistinctNonEmptyUids(const std::vector<tab_visit::VisitRow>& visits) {
   return uids.size();
 }
 
-class RoamuxTabVisitRestartTest : public InProcessBrowserTest {
+class RoamuxTabVisitRestartTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitRestartTest() {
     features_.InitAndEnableFeature(features::kTabVisitNav);
@@ -165,7 +166,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabVisitRestartTest, RestartReloadsUidJournal) {
 // Failure mode (no matching live tabs): a persisted journal whose uids are not
 // live after a fresh (non-restoring) launch yields a disabled Back — the
 // reachable-live-uid filter skips every non-restored uid, no special-casing.
-class RoamuxTabVisitNoRestoreTest : public InProcessBrowserTest {
+class RoamuxTabVisitNoRestoreTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitNoRestoreTest() {
     features_.InitAndEnableFeature(features::kTabVisitNav);

@@ -32,6 +32,7 @@
 #include "roamux/browser/importer/edge_import_report.h"
 #include "roamux/browser/importer/edge_import_types.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -49,7 +50,7 @@ constexpr char kReadIdbJs[] = R"(
   })
 )";
 
-class RoamuxEdgeImportDriverTestBase : public InProcessBrowserTest {
+class RoamuxEdgeImportDriverTestBase : public roamux::test::RoamuxBrowserTest {
  public:
   void SetUpOnMainThread() override {
     host_resolver()->AddRule("*", "127.0.0.1");

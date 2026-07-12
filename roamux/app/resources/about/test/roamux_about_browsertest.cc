@@ -9,19 +9,29 @@
 #include "components/prefs/pref_service.h"
 #include "components/webui/chrome_urls/pref_names.h"
 #include "content/public/test/browser_test.h"
+#include "roamux/test/support/roamux_browser_test.h"
 
 class RoamuxAboutBrowserTest : public WebUIMochaBrowserTest {
-public:
-  RoamuxAboutBrowserTest() { set_test_loader_host("roamux-about"); }
+ public:
+  RoamuxAboutBrowserTest() {
+    set_test_loader_host("roamux-about");
+    // roam-99: foreign hierarchy (WebUIMochaBrowserTest, hosted in upstream
+    // browser_tests) — fixture-owned ScopedFeatureList via the header-only
+    // helper instead of re-basing.
+    roamux::test::DisableWebUIToolbarFeatures(webui_toolbar_disables_);
+  }
 
-protected:
-  void RunTestCase(const std::string &test_case) {
+ protected:
+  void RunTestCase(const std::string& test_case) {
     g_browser_process->local_state()->SetBoolean(
         chrome_urls::kInternalOnlyUisEnabled, true);
     RunTest("roamux_about/about_test.js",
             base::StringPrintf("runMochaTest('RoamuxAbout', '%s');",
                                test_case.c_str()));
   }
+
+ private:
+  base::test::ScopedFeatureList webui_toolbar_disables_;
 };
 
 IN_PROC_BROWSER_TEST_F(RoamuxAboutBrowserTest, IdentityAndLinks) {

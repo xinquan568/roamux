@@ -39,6 +39,7 @@
 #include "roamux/browser/tabs/tab_uid_tab_helper.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -51,7 +52,7 @@ using tab_visit::TabVisitTraversalCoordinator;
 using tab_visit::TabVisitTraversalCoordinatorFactory;
 using tab_visit::VisitRow;
 
-class RoamuxTabVisitReopenTest : public InProcessBrowserTest {
+class RoamuxTabVisitReopenTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitReopenTest() {
     features_.InitAndEnableFeature(features::kTabVisitNav);

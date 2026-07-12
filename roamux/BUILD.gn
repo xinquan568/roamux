@@ -186,6 +186,8 @@ test("roamux_browsertests") {
     "test/roamux_test_env_browsertest.cc",
     "test/roamux_three_carrier_survival_browsertest.cc",
     "test/roamux_vertical_strip_placement_browsertest.cc",
+    "test/support/roamux_browser_test.cc",
+    "test/support/roamux_browser_test.h",
     "test/support/sso_test_server.cc",
     "test/support/sso_test_server.h",
   ]

@@ -20,12 +20,13 @@
 #include "net/dns/mock_host_resolver.h"
 #include "roamux/browser/tabs/tab_initial_url_helper.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "roamux/test/support/sso_test_server.h"
 
 namespace roamux {
 namespace {
 
-class RoamuxInitialUrlTest : public InProcessBrowserTest {
+class RoamuxInitialUrlTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxInitialUrlTest() {
     features_.InitAndEnableFeature(features::kInitialUrl);
@@ -201,7 +202,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlPrerenderTest,
   // twin (above) covers the reachable activation-capture hazard.
 }
 
-class RoamuxInitialUrlFlagOffTest : public InProcessBrowserTest {
+class RoamuxInitialUrlFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxInitialUrlFlagOffTest() {
     features_.InitAndDisableFeature(features::kInitialUrl);

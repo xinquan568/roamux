@@ -25,6 +25,7 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/dns/mock_host_resolver.h"
 #include "roamux/browser/importer/roamux_indexed_db_import_stage.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -70,7 +71,7 @@ constexpr char kReadJs[] = R"(
   })
 )";
 
-class RoamuxIndexedDbImportTest : public InProcessBrowserTest {
+class RoamuxIndexedDbImportTest : public roamux::test::RoamuxBrowserTest {
  public:
   void SetUpOnMainThread() override {
     host_resolver()->AddRule("*", "127.0.0.1");

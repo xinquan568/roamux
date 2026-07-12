@@ -16,6 +16,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
+#include "roamux/test/support/roamux_browser_test.h"
 
 namespace roamux {
 namespace {
@@ -72,7 +73,8 @@ std::string WithRowScript(const std::string& body) {
                             body.c_str());
 }
 
-class RoamuxTabStripPositionSettingsTest : public InProcessBrowserTest {
+class RoamuxTabStripPositionSettingsTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabStripPositionSettingsTest() {
     features_.InitAndEnableFeature(features::kTabStripPosition);
@@ -131,7 +133,8 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripPositionSettingsTest,
   )")));
 }
 
-class RoamuxTabStripPositionSettingsFlagOffTest : public InProcessBrowserTest {
+class RoamuxTabStripPositionSettingsFlagOffTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabStripPositionSettingsFlagOffTest() {
     features_.InitAndDisableFeature(features::kTabStripPosition);

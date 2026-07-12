@@ -22,12 +22,13 @@
 #include "roamux/browser/ui/tabs/edit_initial_url_dialog.h"
 #include "roamux/browser/ui/tabs/initial_url_menu.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "ui/menus/simple_menu_model.h"
 
 namespace roamux {
 namespace {
 
-class RoamuxInitialUrlEditTest : public InProcessBrowserTest {
+class RoamuxInitialUrlEditTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxInitialUrlEditTest() {
     features_.InitAndEnableFeature(features::kInitialUrl);
@@ -184,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
   EXPECT_TRUE(helper()->is_user_locked());
 }
 
-class RoamuxInitialUrlEditFlagOffTest : public InProcessBrowserTest {
+class RoamuxInitialUrlEditFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxInitialUrlEditFlagOffTest() {
     features_.InitAndDisableFeature(features::kInitialUrl);

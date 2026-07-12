@@ -33,6 +33,7 @@
 #include "roamux/browser/tab_visit/visits_store.h"
 #include "roamux/browser/tabs/tab_uid_tab_helper.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -58,7 +59,7 @@ std::vector<std::string> ReadVisitUrls(Profile* profile) {
   return urls;
 }
 
-class RoamuxTabVisitGestureTest : public InProcessBrowserTest {
+class RoamuxTabVisitGestureTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitGestureTest() {
     features_.InitAndEnableFeature(features::kTabVisitNav);
@@ -230,7 +231,8 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabVisitGestureTest,
 }
 
 // Flag-off: the commands are disabled and traversal is inert.
-class RoamuxTabVisitGestureFlagOffTest : public InProcessBrowserTest {
+class RoamuxTabVisitGestureFlagOffTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitGestureFlagOffTest() {
     features_.InitAndDisableFeature(features::kTabVisitNav);

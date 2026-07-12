@@ -15,6 +15,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_url_constants.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -32,8 +33,8 @@ namespace {
 // typed roamux:// form, preserved by the entry-creation rewrite), while
 // NavigationEntry::GetURL() observes the real committed URL — the tests below
 // assert BOTH sides explicitly.
-class RoamuxSchemeAliasBrowserTest : public InProcessBrowserTest {
-public:
+class RoamuxSchemeAliasBrowserTest : public roamux::test::RoamuxBrowserTest {
+ public:
   RoamuxSchemeAliasBrowserTest() {
     features_.InitAndEnableFeature(features::kRoamuxSchemeAlias);
   }
@@ -48,12 +49,12 @@ public:
         chrome_urls::kInternalOnlyUisEnabled, true);
   }
 
-protected:
-  content::WebContents *web_contents() {
+ protected:
+  content::WebContents* web_contents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
   }
 
-  content::NavigationEntry *last_entry() {
+  content::NavigationEntry* last_entry() {
     return web_contents()->GetController().GetLastCommittedEntry();
   }
 
@@ -68,7 +69,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   // (virtual) URL equals the requested URL — i.e. the alias loads AND keeps
   // displaying as roamux://about.
   EXPECT_TRUE(content::NavigateToURL(web_contents(), GURL("roamux://about")));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
   EXPECT_EQ(GURL("chrome://roamux-about/"), entry->GetURL());
@@ -79,7 +80,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
                        FlagsAliasLoadsChromeFlags) {
   EXPECT_TRUE(content::NavigateToURL(web_contents(), GURL("roamux://flags")));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
   EXPECT_EQ(GURL("chrome://flags/"), entry->GetURL());
@@ -95,7 +96,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
                        DirectChromeHostUnaffected) {
   EXPECT_TRUE(
       content::NavigateToURL(web_contents(), GURL("chrome://roamux-about/")));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
   EXPECT_EQ(GURL("chrome://roamux-about/"), entry->GetURL());
@@ -110,7 +111,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest, UnmappedHostDoesNotAlias) {
   EXPECT_FALSE(
       content::NavigateToURL(web_contents(), GURL("roamux://settings")));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(GURL("about:blank"), entry->GetURL());
   EXPECT_NE(GURL("chrome://settings/"), entry->GetURL());
@@ -127,7 +128,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
       web_contents(), embedded_test_server()->GetURL("/title1.html")));
   EXPECT_FALSE(content::NavigateToURLFromRenderer(web_contents(),
                                                   GURL("roamux://about")));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
 }
@@ -141,7 +142,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   const GURL redirect =
       embedded_test_server()->GetURL("/server-redirect?roamux://about");
   EXPECT_FALSE(content::NavigateToURL(web_contents(), redirect));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
 }
@@ -158,7 +159,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   const GURL redirect =
       embedded_test_server()->GetURL("/server-redirect?roamux://about");
   EXPECT_FALSE(content::NavigateToURLFromRenderer(web_contents(), redirect));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
 }
@@ -168,8 +169,9 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
 // reaching the OS external-protocol path (P3: the feature ships disabled).
 // Internal UIs are enabled here too, so a rewrite bug (rather than the
 // internal-UI gate) would be what a chrome://roamux-about commit indicates.
-class RoamuxSchemeAliasFlagOffBrowserTest : public InProcessBrowserTest {
-public:
+class RoamuxSchemeAliasFlagOffBrowserTest
+    : public roamux::test::RoamuxBrowserTest {
+ public:
   RoamuxSchemeAliasFlagOffBrowserTest() {
     features_.InitAndDisableFeature(features::kRoamuxSchemeAlias);
   }
@@ -180,15 +182,15 @@ public:
         chrome_urls::kInternalOnlyUisEnabled, true);
   }
 
-protected:
+ protected:
   base::test::ScopedFeatureList features_;
 };
 
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasFlagOffBrowserTest, FlagOffIsInert) {
-  content::WebContents *wc =
+  content::WebContents* wc =
       browser()->tab_strip_model()->GetActiveWebContents();
   EXPECT_FALSE(content::NavigateToURL(wc, GURL("roamux://about")));
-  content::NavigationEntry *entry = wc->GetController().GetLastCommittedEntry();
+  content::NavigationEntry* entry = wc->GetController().GetLastCommittedEntry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(GURL("about:blank"), entry->GetURL());
   EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
@@ -200,10 +202,10 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasFlagOffBrowserTest, FlagOffIsInert) {
 // (roam-94).
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest, OldRoamexSchemeIsDead) {
   EXPECT_FALSE(content::NavigateToURL(web_contents(), GURL("roamex://about")));
-  content::NavigationEntry *entry = last_entry();
+  content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
 }
 
-} // namespace
-} // namespace roamux
+}  // namespace
+}  // namespace roamux

@@ -25,12 +25,13 @@
 #include "roamux/browser/tabs/tab_uid_service_factory.h"
 #include "roamux/browser/tabs/tab_uid_tab_helper.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "url/gurl.h"
 
 namespace roamux {
 namespace {
 
-class RoamuxTabUidTest : public InProcessBrowserTest {
+class RoamuxTabUidTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabUidTest() { features_.InitAndEnableFeature(features::kInitialUrl); }
 
@@ -156,7 +157,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabUidTest, DiscardKeepsTheSameUid) {
   EXPECT_TRUE(service()->IsLive(uid));
 }
 
-class RoamuxTabUidFlagOffTest : public InProcessBrowserTest {
+class RoamuxTabUidFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabUidFlagOffTest() {
     features_.InitAndDisableFeature(features::kInitialUrl);

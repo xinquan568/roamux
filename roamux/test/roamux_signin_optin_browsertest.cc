@@ -29,6 +29,7 @@
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
 #include "roamux/common/roamux_switches.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "ui/views/widget/any_widget_observer.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
@@ -65,14 +66,14 @@ std::string DeepQueryScript(const std::string& id, int attempts, bool click) {
                             click ? "true" : "false");
 }
 
-class RoamuxSigninOptInTest : public InProcessBrowserTest {
+class RoamuxSigninOptInTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSigninOptInTest() {
     features_.InitAndEnableFeature(roamux::features::kBraveStyleProfiles);
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
+    roamux::test::RoamuxBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(roamux::switches::kSigninOptIn);
   }
 
@@ -88,7 +89,7 @@ class RoamuxSigninOptInTest : public InProcessBrowserTest {
 
 // Flag on, NO opt-in switch — the toggle row must be reachable while
 // suppression is active.
-class RoamuxSigninOptInSuppressedTest : public InProcessBrowserTest {
+class RoamuxSigninOptInSuppressedTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSigninOptInSuppressedTest() {
     features_.InitAndEnableFeature(roamux::features::kBraveStyleProfiles);
@@ -98,7 +99,7 @@ class RoamuxSigninOptInSuppressedTest : public InProcessBrowserTest {
   base::test::ScopedFeatureList features_;
 };
 
-class RoamuxSigninOptInFlagOffTest : public InProcessBrowserTest {
+class RoamuxSigninOptInFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSigninOptInFlagOffTest() {
     features_.InitAndDisableFeature(roamux::features::kBraveStyleProfiles);

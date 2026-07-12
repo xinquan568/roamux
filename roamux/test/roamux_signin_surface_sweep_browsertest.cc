@@ -32,6 +32,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "url/gurl.h"
 
 namespace roamux {
@@ -61,7 +62,7 @@ std::string WaitForTagScript(const std::string& tag, int attempts) {
   return base::StringPrintf(kWaitForTagScript, attempts, tag.c_str());
 }
 
-class RoamuxSigninSurfaceSweepTest : public InProcessBrowserTest {
+class RoamuxSigninSurfaceSweepTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSigninSurfaceSweepTest() {
     features_.InitAndEnableFeature(roamux::features::kBraveStyleProfiles);
@@ -71,7 +72,8 @@ class RoamuxSigninSurfaceSweepTest : public InProcessBrowserTest {
   base::test::ScopedFeatureList features_;
 };
 
-class RoamuxSigninSurfaceSweepFlagOffTest : public InProcessBrowserTest {
+class RoamuxSigninSurfaceSweepFlagOffTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSigninSurfaceSweepFlagOffTest() {
     features_.InitAndDisableFeature(roamux::features::kBraveStyleProfiles);
