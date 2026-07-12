@@ -26,6 +26,7 @@
 #include "roamux/browser/tab_visit/settled_visit_journal_service.h"
 #include "roamux/browser/tab_visit/visits_store.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -56,7 +57,7 @@ bool Contains(const std::vector<std::string>& urls, const GURL& url) {
   return std::find(urls.begin(), urls.end(), url.spec()) != urls.end();
 }
 
-class RoamuxTabVisitObserverTest : public InProcessBrowserTest {
+class RoamuxTabVisitObserverTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitObserverTest() {
     features_.InitAndEnableFeature(features::kTabVisitNav);
@@ -145,7 +146,8 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabVisitObserverTest, EmptyAndNtpNotRecorded) {
 }
 
 // Flag-off build: the bridge is inert and nothing is committed.
-class RoamuxTabVisitObserverFlagOffTest : public InProcessBrowserTest {
+class RoamuxTabVisitObserverFlagOffTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabVisitObserverFlagOffTest() {
     features_.InitAndDisableFeature(features::kTabVisitNav);

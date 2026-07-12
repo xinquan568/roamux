@@ -20,6 +20,7 @@
 #include "net/dns/mock_host_resolver.h"
 #include "roamux/browser/tabs/tab_initial_url_helper.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "roamux/test/support/sso_test_server.h"
 
 #if BUILDFLAG(IS_MAC)
@@ -30,7 +31,7 @@
 namespace roamux {
 namespace {
 
-class RoamuxReloadInitialUrlTest : public InProcessBrowserTest {
+class RoamuxReloadInitialUrlTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxReloadInitialUrlTest() {
     features_.InitAndEnableFeature(features::kInitialUrl);
@@ -101,7 +102,8 @@ IN_PROC_BROWSER_TEST_F(RoamuxReloadInitialUrlTest, AcceleratorMappingExists) {
 }
 #endif
 
-class RoamuxReloadInitialUrlFlagOffTest : public InProcessBrowserTest {
+class RoamuxReloadInitialUrlFlagOffTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxReloadInitialUrlFlagOffTest() {
     features_.InitAndDisableFeature(features::kInitialUrl);

@@ -31,6 +31,7 @@
 #include "roamux/browser/importer/edge_local_storage_reader.h"
 #include "roamux/browser/importer/roamux_indexed_db_import_stage.h"
 #include "roamux/browser/importer/roamux_origin_storage_import_stage.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -62,7 +63,7 @@ constexpr char kReadIdbJs[] = R"(
   })
 )";
 
-class ThreeCarrierTest : public InProcessBrowserTest {
+class ThreeCarrierTest : public roamux::test::RoamuxBrowserTest {
  public:
   void SetUpOnMainThread() override {
     host_resolver()->AddRule("*", "127.0.0.1");

@@ -20,6 +20,7 @@
 #include "roamux/browser/ui/webui/roamux_shortcuts_handler.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
 
 namespace roamux {
@@ -48,7 +49,7 @@ class ExposedHandler : public RoamuxShortcutsHandler {
   using RoamuxShortcutsHandler::set_web_ui;
 };
 
-class RoamuxShortcutsTest : public InProcessBrowserTest {
+class RoamuxShortcutsTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxShortcutsTest() {
     features_.InitAndEnableFeature(features::kInitialUrl);
@@ -123,7 +124,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxShortcutsTest, ConflictingChordsRejected) {
                          .FindDict("reload_initial_url"));
 }
 
-class RoamuxShortcutsFlagOffTest : public InProcessBrowserTest {
+class RoamuxShortcutsFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxShortcutsFlagOffTest() {
     features_.InitAndDisableFeature(features::kInitialUrl);

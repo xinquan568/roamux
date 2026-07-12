@@ -20,6 +20,7 @@
 #include "content/public/test/browser_test.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "ui/views/view.h"
 
 namespace roamux {
@@ -43,7 +44,8 @@ gfx::Rect BoundsInBrowserView(views::View* view, BrowserView* bv) {
   return gfx::ToEnclosingRect(rect);
 }
 
-class RoamuxVerticalStripPlacementTest : public InProcessBrowserTest {
+class RoamuxVerticalStripPlacementTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxVerticalStripPlacementTest() {
     // Deliberately does NOT enable the upstream vertical-tabs feature flags:
@@ -166,7 +168,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
   EXPECT_FALSE(vertical_region()->GetVisible());
 }
 
-class RoamuxVerticalStripFlagOffTest : public InProcessBrowserTest {
+class RoamuxVerticalStripFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxVerticalStripFlagOffTest() {
     features_.InitAndDisableFeature(features::kTabStripPosition);
@@ -195,7 +197,8 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripFlagOffTest,
   EXPECT_TRUE(horizontal->GetVisible());
 }
 
-class RoamuxVerticalStripUpstreamPrecedenceTest : public InProcessBrowserTest {
+class RoamuxVerticalStripUpstreamPrecedenceTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxVerticalStripUpstreamPrecedenceTest() {
     features_.InitWithFeatures(

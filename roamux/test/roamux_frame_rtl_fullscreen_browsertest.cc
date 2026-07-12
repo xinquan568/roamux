@@ -20,6 +20,7 @@
 #include "content/public/test/browser_test.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "ui/views/view.h"
 
 namespace roamux {
@@ -43,7 +44,7 @@ gfx::Rect BoundsIn(views::View* view, views::View* ancestor) {
   return gfx::ToEnclosingRect(rect);
 }
 
-class RoamuxFrameMatrixTest : public InProcessBrowserTest {
+class RoamuxFrameMatrixTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxFrameMatrixTest() {
     features_.InitAndEnableFeature(features::kTabStripPosition);

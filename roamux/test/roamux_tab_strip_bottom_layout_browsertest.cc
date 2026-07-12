@@ -19,6 +19,7 @@
 #include "content/public/test/browser_test.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "ui/views/view.h"
 #include "ui/views/view_utils.h"
 
@@ -37,7 +38,7 @@ views::View* FindViewByClassName(views::View* root, std::string_view name) {
   return nullptr;
 }
 
-class RoamuxTabStripBottomLayoutTest : public InProcessBrowserTest {
+class RoamuxTabStripBottomLayoutTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabStripBottomLayoutTest() {
     features_.InitAndEnableFeature(features::kTabStripPosition);
@@ -101,7 +102,8 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripBottomLayoutTest,
   EXPECT_LT(back_bounds.y(), browser_view()->GetLocalBounds().height() / 2);
 }
 
-class RoamuxTabStripBottomLayoutFlagOffTest : public InProcessBrowserTest {
+class RoamuxTabStripBottomLayoutFlagOffTest
+    : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabStripBottomLayoutFlagOffTest() {
     features_.InitAndDisableFeature(features::kTabStripPosition);
@@ -128,7 +130,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripBottomLayoutFlagOffTest,
 // Coexistence rule D1: while upstream vertical tabs are displayed, the roamux
 // placement is structurally inert — the vertical strip owns the layout and the
 // horizontal strip stays hidden regardless of roamux.tabs.strip_position.
-class RoamuxTabStripCoexistenceTest : public InProcessBrowserTest {
+class RoamuxTabStripCoexistenceTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabStripCoexistenceTest() {
     features_.InitWithFeatures(

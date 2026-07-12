@@ -15,12 +15,13 @@
 #include "roamux/browser/tabs/tab_initial_url_helper.h"
 #include "roamux/browser/ui/tabs/edit_initial_url_dialog.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 
 namespace roamux {
 namespace {
 
 // SessionRestore requires a persistent profile; PRE_ seeds it, the twin reads.
-class RoamuxInitialUrlRestoreTest : public InProcessBrowserTest {
+class RoamuxInitialUrlRestoreTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxInitialUrlRestoreTest() {
     features_.InitAndEnableFeature(features::kInitialUrl);
