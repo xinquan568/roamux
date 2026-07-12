@@ -10,6 +10,10 @@ These encode the tier-1 + release posture structurally, so every future workflow
      after a capable runner exists); in nightly.yml on the capability variable.
   4. release.yml binds `environment: release` and triggers only on v* tags / manual dispatch.
   5. nightly.yml is scheduled.
+  6. release.yml resolves machine-specific paths from the runner machine-env file contract
+     (~/roamux-runner/.env: ROAMUX_CHROMIUM_SRC / ROAMUX_DEPOT_TOOLS) — the file is required and
+     sourced unconditionally, every value is validated fail-loud, and no workspace-relative
+     Chromium path may appear (roam-108).
 """
 
 import pathlib
@@ -161,6 +165,42 @@ class WorkflowInvariantsTest(unittest.TestCase):
         self.assertNotIn("branches", on_text, "release must not trigger on branch pushes")
         tag_patterns = [l.strip().lstrip("- ").strip('"') for l in on_block if l.strip().startswith("- ")]
         self.assertEqual(tag_patterns, ["v*"], f"release tags must be exactly v*, got {tag_patterns}")
+
+    def test_release_resolves_chromium_src_from_machine_env(self):
+        # roam-108: machine paths come from the runner machine-env file contract
+        # (~/roamux-runner/.env), required + sourced unconditionally, fail-loud — never a
+        # workspace-relative Chromium path (actions/checkout git-cleans the workspace, so a
+        # checkout inside it cannot durably exist on the v1 personal-machine builder).
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        self.assertNotIn("${{ github.workspace }}/chromium", text,
+                         "CHROMIUM_SRC must not be workspace-relative (roam-108)")
+        self.assertIn('env_file="${HOME}/roamux-runner/.env"', text,
+                      "the machine-env file contract must be pinned to the runbook path")
+        lines = text.splitlines()
+        self.assertTrue(any("-f" in l and "env_file" in l for l in lines),
+                        "the .env existence check must be explicit")
+        self.assertTrue(any("::error::" in l and "env_file" in l for l in lines),
+                        "the missing-file case must fail loudly")
+        self.assertIn('. "${env_file}"', text,
+                      "the machine env must be sourced explicitly")
+        self.assertFalse(any("ROAMUX_CHROMIUM_SRC:-" in l and "env_file" in l for l in lines),
+                         "sourcing must be unconditional, not guarded on an injected variable")
+        self.assertTrue(any("::error::" in l and "ROAMUX_CHROMIUM_SRC" in l for l in lines),
+                        "missing/invalid ROAMUX_CHROMIUM_SRC must fail loudly")
+        self.assertTrue(any("CHROMIUM_SRC=" in l and "GITHUB_ENV" in l for l in lines),
+                        "the resolved CHROMIUM_SRC must be exported via GITHUB_ENV")
+
+    def test_release_puts_depot_tools_on_path(self):
+        # roam-108: gn/autoninja need depot_tools; the workflow must put ROAMUX_DEPOT_TOOLS on
+        # PATH mechanically (tier2_job.sh:14 is the sibling consumer) and fail loudly without it.
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        lines = text.splitlines()
+        self.assertTrue(any("::error::" in l and "ROAMUX_DEPOT_TOOLS" in l for l in lines),
+                        "missing/invalid ROAMUX_DEPOT_TOOLS must fail loudly")
+        self.assertTrue(any("ROAMUX_DEPOT_TOOLS" in l and "GITHUB_PATH" in l for l in lines),
+                        "depot_tools must reach later steps via GITHUB_PATH")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):
