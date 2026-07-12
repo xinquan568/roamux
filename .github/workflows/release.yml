@@ -7,7 +7,9 @@
 # notarizes + staples, and packages .dmg/.zip. Appcast/sign_update/publish is
 # roam-34 (I-6.3). The universal2 build runs only on the provisioned
 # self-hosted release builder; without it the job fails LOUDLY (no silent
-# skip into a broken sign step).
+# skip into a broken sign step). Machine paths (the Chromium checkout,
+# depot_tools) resolve from the runner machine-env file contract
+# (~/roamux-runner/.env, roam-108) — never from the workspace.
 name: release
 on:
   push:
@@ -20,8 +22,6 @@ jobs:
   build-sign-package:
     runs-on: [self-hosted, macos, chromium-builder]
     environment: release
-    env:
-      CHROMIUM_SRC: ${{ github.workspace }}/chromium/src
     steps:
       - name: Assert protected ref
         run: |
@@ -29,6 +29,33 @@ jobs:
             refs/tags/v*) echo "ref OK: ${GITHUB_REF}" ;;
             *) echo "::error::release ran on a non-release ref: ${GITHUB_REF}"; exit 1 ;;
           esac
+
+      - name: Resolve machine env (v1 builder contract, roam-108)
+        run: |
+          set -euo pipefail
+          # The machine-env file contract (docs/ci/self-hosted-runner.md): required, sourced
+          # unconditionally, every value validated. The actions-runner also injects it into
+          # job envs, but injection is background behavior — the checks below are the contract.
+          env_file="${HOME}/roamux-runner/.env"
+          if [ ! -f "${env_file}" ]; then
+            echo "::error::machine-env contract unsatisfied: ${env_file} not found (docs/ci/self-hosted-runner.md)"; exit 1
+          fi
+          set -a; . "${env_file}"; set +a
+          if [ -z "${ROAMUX_CHROMIUM_SRC:-}" ]; then
+            echo "::error::ROAMUX_CHROMIUM_SRC missing/empty in ${env_file} — write it per docs/ci/self-hosted-runner.md"; exit 1
+          fi
+          if [ ! -d "${ROAMUX_CHROMIUM_SRC}" ]; then
+            echo "::error::ROAMUX_CHROMIUM_SRC=${ROAMUX_CHROMIUM_SRC} is not a directory on this builder"; exit 1
+          fi
+          if [ -z "${ROAMUX_DEPOT_TOOLS:-}" ]; then
+            echo "::error::ROAMUX_DEPOT_TOOLS missing/empty in ${env_file} — write it per docs/ci/self-hosted-runner.md"; exit 1
+          fi
+          if [ ! -d "${ROAMUX_DEPOT_TOOLS}" ]; then
+            echo "::error::ROAMUX_DEPOT_TOOLS=${ROAMUX_DEPOT_TOOLS} is not a directory on this builder"; exit 1
+          fi
+          echo "CHROMIUM_SRC=${ROAMUX_CHROMIUM_SRC}" >> "$GITHUB_ENV"
+          echo "${ROAMUX_DEPOT_TOOLS}" >> "$GITHUB_PATH"
+          echo "resolved: CHROMIUM_SRC=${ROAMUX_CHROMIUM_SRC}; depot_tools on PATH from ${ROAMUX_DEPOT_TOOLS}"
 
       - name: Checkout overlay
         uses: actions/checkout@v4
