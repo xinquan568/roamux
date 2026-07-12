@@ -22,7 +22,11 @@ namespace {
 bool IsIgnorableStart(const GURL& url) {
   return url.is_empty() || url.IsAboutBlank() ||
          url.spec() == "chrome://newtab/" ||
-         url.spec() == "chrome://new-tab-page/";
+         url.spec() == "chrome://new-tab-page/" ||
+         // roam-98: unbranded builds (the reference config) have no Google NTP,
+         // so chrome://newtab/ commits as the third-party NTP — same ignorable
+         // start.
+         url.spec() == "chrome://new-tab-page-third-party/";
 }
 
 }  // namespace
