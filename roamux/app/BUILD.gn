@@ -23,14 +23,16 @@ source_set("appcast_verifier") {
   ]
 }
 
+# Link-clean by design (roam-118): patch 0025 deps this group from the chrome app-bundle
+# target — the main-executable STUB — and chrome's verify_dynamic_libraries forbids the stub
+# linking anything beyond its allowlist. Only link-inert targets belong here (bundle_data,
+# generated headers). Link-bearing surfaces attach to their linking targets directly:
+# :sparkle_updater via //chrome/browser (patch 0025), :appcast_verifier via its
+# test/pipeline consumers (//roamux:roamux_unittests).
 group("app") {
   public_deps = [ ":app_buildflags" ]
-  deps = [ ":appcast_verifier" ]
   if (roamux_enable_sparkle) {
-    deps += [
-      ":sparkle_framework",
-      ":sparkle_updater",
-    ]
+    deps = [ ":sparkle_framework" ]
   }
 }
 
