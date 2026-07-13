@@ -216,7 +216,16 @@ jobs:
           # SECOND draft while an edit-by-tag would publish the OLD release. Delete the
           # predecessor (the re-pointed tag orphaned it anyway) so the tag is unambiguous
           # for the staging download, and track OUR draft by id for the publish step.
-          prior=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id // empty' 2>/dev/null || true)
+          # gh api prints the 404 error BODY to stdout (--jq unapplied) while exiting
+          # nonzero (roam-126) — gate the capture on the exit code, never the output,
+          # and refuse a non-numeric id outright.
+          prior=""
+          if out=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id 2>/dev/null); then
+            prior="${out}"
+          fi
+          case "${prior}" in
+            *[!0-9]*) echo "::error::unexpected prior-release id '${prior}'"; exit 1 ;;
+          esac
           if [ -n "${prior}" ]; then
             echo "re-cut: deleting prior release ${prior} for ${TAG}"
             gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${prior}"

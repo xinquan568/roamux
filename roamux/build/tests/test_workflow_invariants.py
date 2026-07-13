@@ -310,6 +310,11 @@ class WorkflowInvariantsTest(unittest.TestCase):
                         "the draft id must be captured for the publish step")
         self.assertTrue(any("make_latest=true" in l for l in lines),
                         "publish must mark latest (K2 feed contract)")
+        # roam-126: gh api prints the 404 error BODY to stdout (--jq unapplied) while
+        # exiting nonzero — the prior-release capture must be exit-code-gated and the
+        # id numerically guarded, or fresh tags DELETE a garbage URL and fail.
+        self.assertTrue(any("*[!0-9]*" in l for l in lines),
+                        "the prior-release id must be numerically guarded")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):
