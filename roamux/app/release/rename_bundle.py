@@ -21,7 +21,7 @@ NEW = "Roamux"
 NEW_BUNDLE_ID = "com.roamux.Roamux"
 
 
-def _rewrite_plist(info_plist):
+def _rewrite_plist(info_plist, bundle_version=None):
     with open(info_plist, "rb") as f:
         plist = plistlib.load(f)
     if plist.get("CFBundleExecutable") == OLD:
@@ -32,11 +32,17 @@ def _rewrite_plist(info_plist):
     if bid.startswith("org.chromium.Chromium"):
         plist["CFBundleIdentifier"] = bid.replace("org.chromium.Chromium",
                                                    NEW_BUNDLE_ID)
+    if bundle_version:
+        # roam-120: Sparkle compares the appcast's sparkle:version against the host's
+        # CFBundleVersion. Chromium's BUILD.PATCH (e.g. 7827.201) outranks every tag
+        # version, so the bundle must carry the SAME tag-derived scheme the appcast
+        # advertises. CFBundleShortVersionString keeps the Chromium provenance.
+        plist["CFBundleVersion"] = bundle_version
     with open(info_plist, "wb") as f:
         plistlib.dump(plist, f)
 
 
-def rename_bundle(app_path):
+def rename_bundle(app_path, bundle_version=None):
     """Rename Chromium.app -> Roamux.app in place; returns the new path."""
     app_path = pathlib.Path(app_path)
     contents = app_path / "Contents"
@@ -46,7 +52,7 @@ def rename_bundle(app_path):
         old_exe.rename(macos / NEW)
     info = contents / "Info.plist"
     if info.exists():
-        _rewrite_plist(info)
+        _rewrite_plist(info, bundle_version)
     new_app = app_path.with_name(app_path.name.replace(OLD, NEW))
     if new_app != app_path:
         if new_app.exists():
@@ -58,9 +64,14 @@ def rename_bundle(app_path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True)
+    parser.add_argument("--bundle-version",
+                        help="tag-derived version stamped into CFBundleVersion so the "
+                             "installed bundle and the appcast share one Sparkle-"
+                             "comparable scheme (roam-120)")
     args = parser.parse_args()
-    new = rename_bundle(args.app)
-    print(f"[ok] renamed -> {new}")
+    new = rename_bundle(args.app, args.bundle_version)
+    print(f"[ok] renamed -> {new}"
+          + (f" (CFBundleVersion={args.bundle_version})" if args.bundle_version else ""))
     return 0
 
 

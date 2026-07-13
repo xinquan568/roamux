@@ -169,6 +169,45 @@ class RenameBundleTest(unittest.TestCase):
         self.assertEqual(plist["CFBundleName"], "Roamux")
         self.assertEqual(plist["CFBundleIdentifier"], "com.roamux.Roamux")
 
+    def _make_chromium_app(self, tmp):
+        import plistlib
+        contents = tmp / "Chromium.app" / "Contents"
+        (contents / "MacOS").mkdir(parents=True)
+        _exe(contents / "MacOS" / "Chromium")
+        with open(contents / "Info.plist", "wb") as f:
+            plistlib.dump({"CFBundleExecutable": "Chromium",
+                           "CFBundleName": "Chromium",
+                           "CFBundleIdentifier": "org.chromium.Chromium",
+                           "CFBundleVersion": "7827.201",
+                           "CFBundleShortVersionString": "149.0.7827.201"}, f)
+        return tmp / "Chromium.app"
+
+    def test_bundle_version_stamped_from_tag(self):
+        # roam-120: the appcast advertises the tag version; the installed bundle must
+        # carry the SAME scheme in CFBundleVersion, or Sparkle's standard comparator
+        # ranks Chromium's 7827.x above every tag version and never offers an update.
+        import plistlib
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-rn-"))
+        self.addCleanup(_rmtree, tmp)
+        new = rename_bundle.rename_bundle(self._make_chromium_app(tmp),
+                                          bundle_version="0.0.1-alpha.2")
+        with open(new / "Contents" / "Info.plist", "rb") as f:
+            plist = plistlib.load(f)
+        self.assertEqual(plist["CFBundleVersion"], "0.0.1-alpha.2",
+                         "CFBundleVersion must carry the tag-derived version")
+        self.assertEqual(plist["CFBundleShortVersionString"], "149.0.7827.201",
+                         "Chromium provenance stays in the short version string")
+
+    def test_without_bundle_version_plist_version_is_untouched(self):
+        import plistlib
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-rn-"))
+        self.addCleanup(_rmtree, tmp)
+        new = rename_bundle.rename_bundle(self._make_chromium_app(tmp))
+        with open(new / "Contents" / "Info.plist", "rb") as f:
+            plist = plistlib.load(f)
+        self.assertEqual(plist["CFBundleVersion"], "7827.201",
+                         "no stamp requested -> no version rewrite")
+
 
 class PackagingTest(unittest.TestCase):
     def setUp(self):

@@ -27,6 +27,10 @@ These encode the tier-1 + release posture structurally, so every future workflow
   10. release.yml gates the assembled bundle's dyld resolution — every @rpath dependency of the
       framework must resolve via its own LC_RPATHs to a file inside the bundle (roam-121; the
       v0.0.1-alpha.1 install aborted at first launch on an unresolvable Sparkle rpath).
+  11. release.yml stamps the tag-derived version into the renamed bundle (rename_bundle
+      --bundle-version from GITHUB_REF_NAME) so the installed CFBundleVersion and the appcast
+      sparkle:version share one comparable scheme (roam-120; Chromium's 7827.x otherwise outranks
+      every tag version and Sparkle never offers an update).
 """
 
 import pathlib
@@ -273,6 +277,20 @@ class WorkflowInvariantsTest(unittest.TestCase):
         self.assertIsNotNone(text, "release.yml missing")
         self.assertIn("check_framework_rpath.py", text,
                       "the framework rpath gate must run in the release pipeline")
+
+    def test_release_stamps_tag_version_into_bundle(self):
+        # roam-120: Sparkle compares appcast sparkle:version against the installed
+        # CFBundleVersion; without the tag stamp, Chromium's 7827.x outranks every
+        # tag version and no update is ever offered.
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        lines = text.splitlines()
+        self.assertTrue(any("rename_bundle.py" in l and "--bundle-version" in l
+                            for l in lines),
+                        "rename_bundle must stamp the tag-derived CFBundleVersion")
+        self.assertTrue(any("--bundle-version" in l and "GITHUB_REF_NAME" in l
+                            for l in lines),
+                        "the stamped version must derive from the pushed tag")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):
