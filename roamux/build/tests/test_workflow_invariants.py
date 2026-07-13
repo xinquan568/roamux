@@ -30,7 +30,10 @@ These encode the tier-1 + release posture structurally, so every future workflow
   11. release.yml stamps the tag-derived version into the renamed bundle (rename_bundle
       --bundle-version from GITHUB_REF_NAME) so the installed CFBundleVersion and the appcast
       sparkle:version share one comparable scheme (roam-120; Chromium's 7827.x otherwise outranks
-      every tag version and Sparkle never offers an update).
+      every tag version and Sparkle never offers an update).  12. release.yml's publish leg is re-cut-safe — any prior release for the tag is deleted before
+      drafting, the fresh draft is tracked by id, and publish PATCHes that id (never edit-by-tag,
+      which republished the stale release while the fixed draft stayed invisible; roam-124,
+      run 29261520357).
 """
 
 import pathlib
@@ -291,6 +294,22 @@ class WorkflowInvariantsTest(unittest.TestCase):
         self.assertTrue(any("--bundle-version" in l and "GITHUB_REF_NAME" in l
                             for l in lines),
                         "the stamped version must derive from the pushed tag")
+
+    def test_release_publish_is_recut_safe(self):
+        # roam-124: on a re-cut, gh release create spawns a SECOND draft while
+        # edit-by-tag publishes the OLD release — the run goes green and ships
+        # stale artifacts. The publish leg must be id-addressed end to end.
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        self.assertNotIn("gh release edit", text,
+                         "publish must address the release by id, never by tag")
+        lines = text.splitlines()
+        self.assertTrue(any("-X DELETE" in l and "releases/" in l for l in lines),
+                        "a prior release for the tag must be deleted before drafting")
+        self.assertTrue(any("RELEASE_ID" in l and "GITHUB_ENV" in l for l in lines),
+                        "the draft id must be captured for the publish step")
+        self.assertTrue(any("make_latest=true" in l for l in lines),
+                        "publish must mark latest (K2 feed contract)")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):

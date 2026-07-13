@@ -29,14 +29,16 @@ class ReleaseUpdateLegTest(unittest.TestCase):
     def test_draft_before_validate_before_publish_ordering(self):
         i_draft = self.text.index("--draft --prerelease=false")
         i_validate = self.text.index("verify_appcast.py")
-        i_publish = self.text.index("--draft=false --prerelease=false --latest")
+        i_publish = self.text.index("make_latest=true")
         self.assertLess(i_draft, i_validate,
                         "draft must be created before staging validation")
         self.assertLess(i_validate, i_publish,
                         "staging validation must precede publish")
 
     def test_publish_marks_latest(self):
-        self.assertIn("--latest", self.text)
+        # roam-124: publish is id-addressed (gh api PATCH), so the K2 latest-feed
+        # contract is expressed as make_latest=true, never edit-by-tag --latest.
+        self.assertIn("make_latest=true", self.text)
 
 
 if __name__ == "__main__":
