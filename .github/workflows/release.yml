@@ -212,10 +212,25 @@ jobs:
           printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$keyfile"
           chmod 600 "$keyfile"
           "$bindir/generate_keys" --account "$acct" -f "$keyfile"
+          # Re-cut safety (roam-124): a prior release on this tag makes create() spawn a
+          # SECOND draft while an edit-by-tag would publish the OLD release. Delete the
+          # predecessor (the re-pointed tag orphaned it anyway) so the tag is unambiguous
+          # for the staging download, and track OUR draft by id for the publish step.
+          prior=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id // empty' 2>/dev/null || true)
+          if [ -n "${prior}" ]; then
+            echo "re-cut: deleting prior release ${prior} for ${TAG}"
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${prior}"
+          fi
           # Draft, non-prerelease; assets get per-tag download URLs.
           gh release create "$TAG" --draft --prerelease=false \
             --title "Roamux ${TAG}" --notes "Roamux ${TAG}" \
             "$rel/Roamux.dmg" "$rel/Roamux.zip" "$rel/appcast.xml"
+          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq "[.[] | select(.tag_name == \"${TAG}\" and .draft)][0].id // empty")
+          if [ -z "${release_id}" ]; then
+            echo "::error::draft release id not found for ${TAG}"; exit 1
+          fi
+          echo "RELEASE_ID=${release_id}" >> "$GITHUB_ENV"
           # K2: validate the ACTUAL DRAFT ASSETS, not the local files — download
           # the appcast + artifact from the draft and verify those bytes against
           # the committed SUPublicEDKey via Sparkle's verifier, before publish.
@@ -233,9 +248,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          # --latest so the production /releases/latest/download/appcast.xml
-          # feed (SUFeedURL) resolves to this release (K2, roam-32).
-          gh release edit "$TAG" --draft=false --prerelease=false --latest
+          # make_latest so the production /releases/latest/download/appcast.xml
+          # feed (SUFeedURL) resolves to this release (K2, roam-32). PATCH by id —
+          # edit-by-tag can hit a different release on a re-cut (roam-124).
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F draft=false -F prerelease=false -f make_latest=true --jq .html_url
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
