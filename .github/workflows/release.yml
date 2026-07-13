@@ -87,10 +87,19 @@ jobs:
           symlink="${CHROMIUM_SRC}/roamux"
           ln -sfn "$(pwd)/roamux" "$symlink"
           python3 "${CHROMIUM_SRC}/roamux/build/apply_patches.py" --chromium-src "${CHROMIUM_SRC}"
-          args="$(tr '\n' ' ' < roamux/build/args/release.gn)"
+          # roam-114: pass args via import() — NEVER newline-flatten the args file (its first
+          # '#' would comment out every arg on the single flattened line). The overlay symlink
+          # above makes //roamux/... resolve inside the checkout.
           for cpu in arm64 x64; do
-            ( cd "${CHROMIUM_SRC}" && gn gen "out/Release-${cpu}" --args="${args} target_cpu=\"${cpu}\"" )
+            ( cd "${CHROMIUM_SRC}" && gn gen "out/Release-${cpu}" --args="import(\"//roamux/build/args/release.gn\") target_cpu=\"${cpu}\"" )
+            # Canary BEFORE the hours-long compile: the imported args must have taken effect.
+            ( cd "${CHROMIUM_SRC}" && gn args "out/Release-${cpu}" --list=is_official_build --short ) | grep -qx 'is_official_build = true' \
+              || { echo "::error::GN args not applied in slice ${cpu} (is_official_build != true)"; exit 1; }
             autoninja -C "${CHROMIUM_SRC}/out/Release-${cpu}" chrome
+            want="${cpu}"; [ "${want}" = "x64" ] && want="x86_64"
+            slice_archs="$(lipo -archs "${CHROMIUM_SRC}/out/Release-${cpu}/Chromium.app/Contents/MacOS/Chromium")"
+            [ "${slice_archs}" = "${want}" ] \
+              || { echo "::error::slice ${cpu} built archs '${slice_archs}', expected '${want}' — args/toolchain rot"; exit 1; }
           done
           # roam-112: the universalizer os.mkdir()s its output bundle and needs the PARENT to
           # exist (a fresh builder has no out/Release); a stale Chromium.app from an interrupted

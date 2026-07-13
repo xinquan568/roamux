@@ -2,7 +2,8 @@
 # Roamux RELEASE build args (roam-33 / E6, plan §11.10, §13.6). Per-arch slices
 # are built with target_cpu=arm64 and target_cpu=x64, then merged into a
 # universal2 Roamux.app by chrome/installer/mac/universalizer.py.
-# Use: gn gen out/Release-<cpu> --args="$(tr '\n' ' ' < roamux/build/args/release.gn) target_cpu=\"<cpu>\""
+# Use (roam-114 — never newline-flatten this file; a '#' would swallow the whole line):
+#   gn gen out/Release-<cpu> --args="import(\"//roamux/build/args/release.gn\") target_cpu=\"<cpu>\""
 
 is_chrome_branded = false        # unbranded (no Google keys; §7.3)
 is_official_build = true         # release optimization + the packaged .app shape

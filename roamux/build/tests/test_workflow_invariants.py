@@ -20,6 +20,10 @@ These encode the tier-1 + release posture structurally, so every future workflow
   8. release.yml creates the universal out dir (out/Release) before invoking Chromium's
      universalizer — the upstream script os.mkdir()s its output bundle and requires the parent to
      exist; a fresh builder has neither (roam-112; run 29214000668 died post-compile).
+  9. release.yml passes GN args by import(), never newline-flattened — a tr-flattened commented
+     args file is ONE line whose first '#' comments out every arg, so slices silently build pure
+     GN defaults (wrong arch, debug, component, no Sparkle); and it canary-checks the args took
+     effect after gn gen plus asserts each slice's arch after compile (roam-114; run 29218872385).
 """
 
 import pathlib
@@ -237,6 +241,26 @@ class WorkflowInvariantsTest(unittest.TestCase):
         uni = next((i for i, l in enumerate(lines) if "universalizer.py" in l), None)
         self.assertIsNotNone(uni, "universalizer invocation missing from release.yml")
         self.assertLess(mk, uni, "out/Release must be created BEFORE the universalizer runs")
+
+    def test_release_gn_args_are_imported_not_flattened(self):
+        # roam-114: tr-flattening a commented GN args file yields ONE line whose first '#'
+        # comments out every argument INCLUDING the appended target_cpu — run 29218872385 built
+        # both slices as arm64 debug component builds with Sparkle off, undetected until lipo
+        # refused to merge two same-arch binaries hours later. The args must be import()ed
+        # (newlines survive), canary-checked right after gn gen (fail in seconds, not hours),
+        # and each slice's arch asserted after compile.
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        self.assertNotIn("tr '\\n' ' '", text,
+                         "GN args must never be newline-flattened — a leading comment swallows "
+                         "the whole flattened line")
+        lines = text.splitlines()
+        self.assertTrue(any("import(" in l and "release.gn" in l for l in lines),
+                        "gn gen must import() the release args file from the source tree")
+        self.assertTrue(any("is_official_build" in l for l in lines),
+                        "args canary missing: is_official_build must be verified after gn gen")
+        self.assertTrue(any("lipo -archs" in l and "Release-${cpu}" in l for l in lines),
+                        "per-slice arch assert missing: each slice must prove its target_cpu")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):
