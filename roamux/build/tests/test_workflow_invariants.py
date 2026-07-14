@@ -33,7 +33,9 @@ These encode the tier-1 + release posture structurally, so every future workflow
       every tag version and Sparkle never offers an update).  12. release.yml's publish leg is re-cut-safe — any prior release for the tag is deleted before
       drafting, the fresh draft is tracked by id, and publish PATCHes that id (never edit-by-tag,
       which republished the stale release while the fixed draft stayed invisible; roam-124,
-      run 29261520357).
+      run 29261520357).  13. ci.yml's Conventional-Commits check enumerates PR commits with --no-merges — GitHub's
+      "Update branch" button injects a merge commit whose subject is not Conventional, and the
+      check's contract is each AUTHORED commit, never platform merges (roam-134).
 """
 
 import pathlib
@@ -315,6 +317,18 @@ class WorkflowInvariantsTest(unittest.TestCase):
         # id numerically guarded, or fresh tags DELETE a garbage URL and fail.
         self.assertTrue(any("*[!0-9]*" in l for l in lines),
                         "the prior-release id must be numerically guarded")
+
+    def test_ci_commit_check_skips_merge_commits(self):
+        # roam-134: GitHub's Update-branch button injects "Merge branch 'main' into ..."
+        # commits; the Conventional-Commits check must enumerate authored commits only.
+        text = _read("ci.yml")
+        self.assertIsNotNone(text, "ci.yml missing")
+        lines = text.splitlines()
+        rev_list_lines = [l for l in lines if "rev-list" in l]
+        self.assertTrue(rev_list_lines, "the commit check must enumerate via rev-list")
+        for l in rev_list_lines:
+            self.assertIn("--no-merges", l,
+                          "rev-list must skip merge commits (Update-branch friction)")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):
