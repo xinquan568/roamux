@@ -35,7 +35,9 @@ These encode the tier-1 + release posture structurally, so every future workflow
       which republished the stale release while the fixed draft stayed invisible; roam-124,
       run 29261520357).  13. ci.yml's Conventional-Commits check enumerates PR commits with --no-merges — GitHub's
       "Update branch" button injects a merge commit whose subject is not Conventional, and the
-      check's contract is each AUTHORED commit, never platform merges (roam-134).
+      check's contract is each AUTHORED commit, never platform merges (roam-134).  14. release.yml derives the stamped CFBundleVersion and the appcast sparkle:version from the tag
+      via release_version.py (numeric, Sparkle-orderable) — never the raw tag string, which
+      Sparkle's comparator cannot order across pre-releases (roam-141).
 """
 
 import pathlib
@@ -286,14 +288,15 @@ class WorkflowInvariantsTest(unittest.TestCase):
     def test_release_stamps_tag_version_into_bundle(self):
         # roam-120: Sparkle compares appcast sparkle:version against the installed
         # CFBundleVersion; without the tag stamp, Chromium's 7827.x outranks every
-        # tag version and no update is ever offered.
+        # tag version and no update is ever offered. (roam-141: the stamped value is
+        # now the numeric encoding release_version.py derives from GITHUB_REF_NAME.)
         text = _read("release.yml")
         self.assertIsNotNone(text, "release.yml missing")
         lines = text.splitlines()
         self.assertTrue(any("rename_bundle.py" in l and "--bundle-version" in l
                             for l in lines),
-                        "rename_bundle must stamp the tag-derived CFBundleVersion")
-        self.assertTrue(any("--bundle-version" in l and "GITHUB_REF_NAME" in l
+                        "rename_bundle must stamp a tag-derived CFBundleVersion")
+        self.assertTrue(any("release_version.py" in l and "GITHUB_REF_NAME" in l
                             for l in lines),
                         "the stamped version must derive from the pushed tag")
 
@@ -329,6 +332,19 @@ class WorkflowInvariantsTest(unittest.TestCase):
         for l in rev_list_lines:
             self.assertIn("--no-merges", l,
                           "rev-list must skip merge commits (Update-branch friction)")
+
+    def test_release_versions_are_numeric_via_release_version(self):
+        # roam-141: Sparkle only orders numeric versions; the stamped CFBundleVersion and the
+        # appcast sparkle:version must come from release_version.py, not the raw tag string.
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        lines = text.splitlines()
+        self.assertTrue(any("release_version.py" in l and "--field bundle" in l for l in lines),
+                        "the stamped bundle version must be derived numerically")
+        self.assertFalse(any("--bundle-version" in l and "GITHUB_REF_NAME#v" in l for l in lines),
+                         "rename_bundle must not stamp the raw tag string (roam-141)")
+        self.assertFalse(any("generate_appcast.py" in l and "TAG#v" in l for l in lines),
+                         "the appcast must not advertise the raw tag string (roam-141)")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):

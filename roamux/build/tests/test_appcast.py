@@ -38,7 +38,7 @@ class AppcastGenerationTest(unittest.TestCase):
 
     def test_appcast_is_well_formed_and_signature_verifies(self):
         xml = generate_appcast.generate_appcast(
-            version="99.0.0", enclosure_url=self.url,
+            version="99.0.0", short_version="99.0-rc.1", enclosure_url=self.url,
             artifact_bytes=self.artifact, ed_signature=self.sig_b64,
             pub_date="Thu, 01 Jan 2026 00:00:00 +0000")
         root = ET.fromstring(xml)
@@ -50,12 +50,17 @@ class AppcastGenerationTest(unittest.TestCase):
         self.assertEqual(enc.get(f"{{{SPARKLE_NS}}}edSignature"), self.sig_b64)
         self.assertEqual(
             root.find(f".//{{{SPARKLE_NS}}}version").text, "99.0.0")
+        # roam-141: the numeric version is what Sparkle compares; the human
+        # short version rides shortVersionString + the item title (dialog text).
+        self.assertEqual(
+            root.find(f".//{{{SPARKLE_NS}}}shortVersionString").text, "99.0-rc.1")
+        self.assertEqual(root.find(".//item/title").text, "99.0-rc.1")
         # The committed signature verifies against the dev public key.
         self.assertTrue(_verify(self.artifact, self.sig_b64, self.pub_b64))
 
     def test_enclosure_url_is_artifact_not_feed(self):
         xml = generate_appcast.generate_appcast(
-            version="99.0.0", enclosure_url=self.url,
+            version="99.0.0", short_version="99.0-rc.1", enclosure_url=self.url,
             artifact_bytes=self.artifact, ed_signature=self.sig_b64,
             pub_date="Thu, 01 Jan 2026 00:00:00 +0000")
         url = ET.fromstring(xml).find(".//enclosure").get("url")
@@ -64,7 +69,7 @@ class AppcastGenerationTest(unittest.TestCase):
 
     def test_length_is_byte_exact(self):
         xml = generate_appcast.generate_appcast(
-            version="1.0", enclosure_url=self.url,
+            version="1.0", short_version="1.0", enclosure_url=self.url,
             artifact_bytes=b"abc", ed_signature=self.sig_b64,
             pub_date="x")
         self.assertEqual(

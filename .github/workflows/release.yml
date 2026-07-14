@@ -111,7 +111,11 @@ jobs:
             "${CHROMIUM_SRC}/out/Release-arm64/Chromium.app" \
             "${CHROMIUM_SRC}/out/Release-x64/Chromium.app" \
             "${CHROMIUM_SRC}/out/Release/Chromium.app"
-          python3 roamux/app/release/rename_bundle.py --app "${CHROMIUM_SRC}/out/Release/Chromium.app" --bundle-version "${GITHUB_REF_NAME#v}"
+          # roam-141: Sparkle only orders NUMERIC versions, so stamp the numeric
+          # encoding as CFBundleVersion (the value Sparkle compares); the human
+          # string rides the appcast's shortVersionString.
+          bundle_ver="$(python3 roamux/build/release_version.py --tag "${GITHUB_REF_NAME}" --field bundle)"
+          python3 roamux/app/release/rename_bundle.py --app "${CHROMIUM_SRC}/out/Release/Chromium.app" --bundle-version "${bundle_ver}"
           app="${CHROMIUM_SRC}/out/Release/Roamux.app"
           archs="$(lipo -archs "${app}/Contents/MacOS/Roamux")"
           echo "universal2 archs: ${archs}"
@@ -192,7 +196,11 @@ jobs:
             [ "$art" = "Roamux.zip" ] && ZIP_SIG="$sig"
           done
           url="https://github.com/xinquan568/roamux/releases/download/${TAG}/Roamux.zip"
-          python3 roamux/app/appcast/generate_appcast.py             --version "${TAG#v}" --enclosure-url "$url"             --artifact "$rel/Roamux.zip" --ed-signature "$ZIP_SIG"             --pub-date "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"             --out "$rel/appcast.xml"
+          # roam-141: sparkle:version = the numeric (Sparkle-orderable) encoding, matching the
+          # stamped CFBundleVersion; shortVersionString = the human tag string for the dialog.
+          appcast_ver="$(python3 roamux/build/release_version.py --tag "${TAG}" --field bundle)"
+          appcast_short="$(python3 roamux/build/release_version.py --tag "${TAG}" --field short)"
+          python3 roamux/app/appcast/generate_appcast.py             --version "${appcast_ver}" --short-version "${appcast_short}" --enclosure-url "$url"             --artifact "$rel/Roamux.zip" --ed-signature "$ZIP_SIG"             --pub-date "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"             --out "$rel/appcast.xml"
           rm -f "$keyfile"
 
       - name: Create DRAFT release + staging-validate the DOWNLOADED assets
