@@ -2,7 +2,8 @@
 #ifndef ROAMUX_BROWSER_UI_WEBUI_ABOUT_ROAMUX_ABOUT_UI_H_
 #define ROAMUX_BROWSER_UI_WEBUI_ABOUT_ROAMUX_ABOUT_UI_H_
 
-#include "content/public/browser/internal_webui_config.h"
+#include "content/public/browser/webui_config.h"
+#include "content/public/common/url_constants.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "roamux/app/app_buildflags.h"
 #include "roamux/common/roamux_url_constants.h"
@@ -21,11 +22,15 @@ class RoamuxAboutUI;
 // roam-85's RoamuxUpdateService via the UpdatePageHandlerFactory. The service
 // only compiles under roamux_enable_sparkle; flag-off the page still serves
 // (identity + links) with the update card degraded.
+// A regular DefaultWebUIConfig, never the internal-gated variant (roam-128):
+// that one hides the page behind chrome://chrome-urls' debug toggle, and this
+// is the user-facing update surface (test_webui_registration.py pins it).
 class RoamuxAboutUIConfig
-    : public content::DefaultInternalWebUIConfig<RoamuxAboutUI> {
+    : public content::DefaultWebUIConfig<RoamuxAboutUI> {
 public:
   RoamuxAboutUIConfig()
-      : DefaultInternalWebUIConfig(kChromeUIRoamuxAboutHost) {}
+      : DefaultWebUIConfig(content::kChromeUIScheme,
+                           kChromeUIRoamuxAboutHost) {}
 };
 
 class RoamuxAboutUI : public ui::MojoWebUIController {
