@@ -19,8 +19,9 @@ TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
   <channel>
     <title>Roamux</title>
     <item>
-      <title>{version}</title>
+      <title>{short_version}</title>
       <sparkle:version>{version}</sparkle:version>
+      <sparkle:shortVersionString>{short_version}</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
       <pubDate>{pub_date}</pubDate>
       <enclosure url={url}
@@ -34,18 +35,24 @@ TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
 
 
 def generate_appcast(version, enclosure_url, artifact_bytes, ed_signature,
-                     pub_date):
+                     pub_date, short_version):
+    # roam-141: `version` is the numeric, Sparkle-orderable CFBundleVersion the
+    # comparator uses; `short_version` is the human string the update dialog shows.
     if enclosure_url.rstrip("/").endswith("appcast.xml"):
         raise ValueError("enclosure url must be the artifact, not the feed")
+    from xml.sax.saxutils import escape
     return TEMPLATE.format(
-        version=version, pub_date=pub_date,
+        version=version, short_version=escape(short_version), pub_date=pub_date,
         url=quoteattr(enclosure_url), length=len(artifact_bytes),
         sig=quoteattr(ed_signature))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", required=True)
+    parser.add_argument("--version", required=True,
+                        help="numeric CFBundleVersion Sparkle compares (roam-141)")
+    parser.add_argument("--short-version", required=True,
+                        help="human display string for the update dialog")
     parser.add_argument("--enclosure-url", required=True)
     parser.add_argument("--artifact", required=True, type=pathlib.Path)
     parser.add_argument("--ed-signature", required=True)
@@ -54,7 +61,7 @@ def main():
     args = parser.parse_args()
     xml = generate_appcast(args.version, args.enclosure_url,
                            args.artifact.read_bytes(), args.ed_signature,
-                           args.pub_date)
+                           args.pub_date, args.short_version)
     args.out.write_text(xml)
     print(f"[ok] appcast: {args.out}")
     return 0
