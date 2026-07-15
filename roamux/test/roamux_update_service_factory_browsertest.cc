@@ -10,7 +10,10 @@
 //     updatesAvailable=true for a regular profile.
 // This file only compiles under roamux_enable_sparkle (the service target).
 
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -35,6 +38,24 @@ IN_PROC_BROWSER_TEST_F(RoamuxUpdateServiceFactoryBrowserTest,
 
   Profile* otr = regular->GetPrimaryOTRProfile(/*create_if_needed=*/true);
   EXPECT_EQ(nullptr, RoamuxUpdateServiceFactory::GetForProfile(otr));
+}
+
+// Finding 3 (multi-sink): two regular profiles get DISTINCT services, each of
+// which independently subscribes its own sink to the one process-wide
+// SparkleOwner (base::RepeatingCallbackList broadcast) — so neither facade is
+// starved by the other (the old single re-pointed sink was last-writer-wins).
+IN_PROC_BROWSER_TEST_F(RoamuxUpdateServiceFactoryBrowserTest,
+                       TwoRegularProfilesGetDistinctServices) {
+  ProfileManager* pm = g_browser_process->profile_manager();
+  Profile& p2 = profiles::testing::CreateProfileSync(
+      pm, pm->user_data_dir().AppendASCII("roamux-updater-p2"));
+
+  RoamuxUpdateService* s1 =
+      RoamuxUpdateServiceFactory::GetForProfile(browser()->profile());
+  RoamuxUpdateService* s2 = RoamuxUpdateServiceFactory::GetForProfile(&p2);
+  EXPECT_NE(nullptr, s1);
+  EXPECT_NE(nullptr, s2);
+  EXPECT_NE(s1, s2);
 }
 
 // Finding 4: the real chrome://settings/help commits (no bad-message renderer
