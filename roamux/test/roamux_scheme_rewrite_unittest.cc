@@ -45,8 +45,10 @@ TEST_F(RoamuxSchemeRewriteTest, RewritesAboutHostWhenEnabled) {
   features_.InitAndEnableFeature(features::kRoamuxSchemeAlias);
   GURL url("roamux://about");
   // Chaining idiom: the handler mutates in place but ALWAYS returns false.
+  // roam-140: the About surface moved to chrome://settings/help, so the alias
+  // now repoints there (host AND path — the AliasRow carries an optional path).
   EXPECT_FALSE(MaybeRewriteRoamuxAliasURL(&url, nullptr));
-  EXPECT_EQ("chrome://roamux-about/", url.spec());
+  EXPECT_EQ("chrome://settings/help", url.spec());
 }
 
 TEST_F(RoamuxSchemeRewriteTest, RewritesFlagsPreservingPathAndRef) {
@@ -68,7 +70,7 @@ TEST_F(RoamuxSchemeRewriteTest, LeavesUnmappedRoamuxHostUntouched) {
 // TARGET — are never touched.
 TEST_F(RoamuxSchemeRewriteTest, NeverTouchesChromeUrls) {
   features_.InitAndEnableFeature(features::kRoamuxSchemeAlias);
-  for (const char *spec : {"chrome://roamux-about/", "chrome://settings/",
+  for (const char *spec : {"chrome://settings/help", "chrome://settings/",
                            "chrome://about/", "chrome://flags/"}) {
     GURL url(spec);
     const GURL original = url;

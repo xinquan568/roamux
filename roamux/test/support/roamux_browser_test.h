@@ -14,9 +14,9 @@
 // fixture constructor). ScopedFeatureList overrides win over the field-trial
 // testing config.
 //
-// HEADER-ONLY helper on purpose: the RoamuxAbout mocha fixture is compiled
-// into upstream browser_tests, where adding a roamux link dependency is not an
-// option. Fixtures on foreign hierarchies (ProfilePickerTestBase,
+// HEADER-ONLY helper on purpose: the overlay's WebUI mocha fixtures are
+// compiled into upstream browser_tests, where adding a roamux link dependency
+// is not an option. Fixtures on foreign hierarchies (ProfilePickerTestBase,
 // WebUIMochaBrowserTest, ...) hold their own ScopedFeatureList member and call
 // DisableWebUIToolbarFeatures on it from their constructor;
 // InProcessBrowserTest fixtures simply derive RoamuxBrowserTest.

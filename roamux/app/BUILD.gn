@@ -83,6 +83,10 @@ if (roamux_enable_sparkle) {
       ":app_buildflags",
       ":check_sparkle_vendored",
       "//base",
+      # roam-140: InitSparkleUpdater() now defers to the single process-wide
+      # SparkleOwner via roamux::updates::GetOrCreateSharedSparkleOwner()
+      # (one-directional — update_service does NOT dep back, avoiding a cycle).
+      "//roamux/browser/updates:update_service",
     ]
     frameworks = [ "AppKit.framework" ]
   }

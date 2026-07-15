@@ -5,9 +5,9 @@
 
 #include <utility>
 
+#include "base/callback_list.h"
 #include "base/functional/callback.h"
 #include "base/strings/sys_string_conversions.h"
-#include "roamux/app/roamux_sparkle_updater.h"
 
 namespace roamux::updates {
 
@@ -151,19 +151,31 @@ using EventCallback = base::RepeatingCallback<void(const UpdateEvent&)>;
 
 namespace roamux::updates {
 
-// The process-wide Sparkle owner: exactly one SPUUpdater + conformer for the
-// whole app (updates are app-wide), shared by every per-profile service.
-// One process-wide Sparkle owner shared by every per-profile facade (updates
-// are app-wide). Ref-counted by the facades; the single SPUUpdater is created
-// on first Acquire and torn down when the last facade Releases. The event
-// callback is re-pointed at whichever facade currently holds the reference via
-// a shared sink, so a facade going away never leaves a dangling callback.
+// The ONE process-wide Sparkle owner: exactly one SPUUpdater + conformer for
+// the whole app (updates are app-wide), shared by every per-profile facade AND
+// by the app-launch roamux::app::InitSparkleUpdater(). Created — and started,
+// with scheduled background checks enabled — on first
+// GetOrCreateSharedSparkleOwner(), then process-lived (never torn down) so the
+// app-wide scheduled checks keep running across profile teardown. Because
+// updates are app-wide, every live per-profile facade subscribes its own event
+// sink via AddEventSink(): a Sparkle callback is broadcast to ALL current
+// subscribers, so two settings/help pages (e.g. two regular profiles) both
+// reflect the same update state (roam-140 fix — the old single re-pointed sink
+// was last-writer-wins and silently starved the earlier facade). Each sink is a
+// WeakPtr-bound callback held alive by the subscribing facade's
+// CallbackListSubscription, so a facade going away auto-unregisters and leaves
+// no dangling callback. (roam-140: retiring the second
+// SPUStandardUpdaterController owner — two owners on one bundle were the
+// second-click hang — leaves exactly one owner here.)
 class SparkleOwner {
  public:
-  static SparkleOwner* AcquireShared(EventCallback cb);
-  void Release();
+  static SparkleOwner* GetOrCreate();
 
-  void SetEventSink(EventCallback cb) { *sink_ = std::move(cb); }
+  // Subscribe a facade's event sink; the returned subscription auto-unregisters
+  // when the caller (the per-profile facade) is destroyed.
+  base::CallbackListSubscription AddEventSink(EventCallback cb) {
+    return sinks_.Add(std::move(cb));
+  }
 
   void CheckForUpdates() { [updater_ checkForUpdates]; }
   void Download() { [driver_ commandDownload]; }
@@ -174,79 +186,64 @@ class SparkleOwner {
 
  private:
   SparkleOwner() {
-    sink_ = std::make_shared<EventCallback>();
-    auto sink = sink_;
+    // base::Unretained is safe: SparkleOwner is a process-lived singleton that
+    // is never destroyed, so the driver's callback always has a live owner.
     driver_ = [[RoamuxUpdateUserDriver alloc]
-        initWithCallback:base::BindRepeating(
-                             [](std::shared_ptr<EventCallback> s,
-                                const UpdateEvent& e) {
-                               if (*s) {
-                                 s->Run(e);
-                               }
-                             },
-                             sink)];
+        initWithCallback:base::BindRepeating(&SparkleOwner::NotifySinks,
+                                             base::Unretained(this))];
     updater_ = [[SPUUpdater alloc] initWithHostBundle:[NSBundle mainBundle]
                                     applicationBundle:[NSBundle mainBundle]
                                            userDriver:driver_
                                              delegate:nil];
     NSError* error = nil;
     [updater_ startUpdater:&error];
+    // roam-140: this single owner now also runs the scheduled background checks
+    // the retired SPUStandardUpdaterController used to (Info.plist
+    // SUEnableAutomaticChecks / SUScheduledCheckInterval).
+    updater_.automaticallyChecksForUpdates = YES;
   }
   ~SparkleOwner() = default;
 
-  int refcount_ = 0;
-  std::shared_ptr<EventCallback> sink_;
+  void NotifySinks(const UpdateEvent& e) { sinks_.Notify(e); }
+
+  base::RepeatingCallbackList<void(const UpdateEvent&)> sinks_;
   RoamuxUpdateUserDriver* driver_ = nil;
   SPUUpdater* updater_ = nil;
 };
 
+// Process-lived singleton, intentionally never deleted (base::NoDestructor
+// semantics): the one owner drives app-wide scheduled checks for the whole
+// process lifetime.
 SparkleOwner* g_process_owner = nullptr;
 
 // static
-SparkleOwner* SparkleOwner::AcquireShared(EventCallback cb) {
+SparkleOwner* SparkleOwner::GetOrCreate() {
   if (!g_process_owner) {
     g_process_owner = new SparkleOwner();
   }
-  ++g_process_owner->refcount_;
-  g_process_owner->SetEventSink(std::move(cb));
   return g_process_owner;
 }
 
-void SparkleOwner::Release() {
-  if (--refcount_ <= 0) {
-    if (g_process_owner == this) {
-      g_process_owner = nullptr;
-    }
-    delete this;
-  }
+SparkleOwner* GetOrCreateSharedSparkleOwner() {
+  return SparkleOwner::GetOrCreate();
 }
-
-namespace {
-// The menu "Check for Updates…" seam routes here (roam-85: one owner).
-void RouteMenuCheckToOwner() {
-  if (g_process_owner) {
-    g_process_owner->CheckForUpdates();
-  }
-}
-}  // namespace
 
 RoamuxUpdateService::RoamuxUpdateService() {
-  shared_owner_ = SparkleOwner::AcquireShared(base::BindRepeating(
+  // Bind this per-profile facade to the ONE process-wide owner (also created at
+  // launch by InitSparkleUpdater) and SUBSCRIBE its own event sink. Multiple
+  // facades can be subscribed at once (app-wide broadcast); the subscription is
+  // WeakPtr-bound and held by this facade, so it auto-unregisters on teardown
+  // without clobbering a sibling facade.
+  shared_owner_ = GetOrCreateSharedSparkleOwner();
+  sink_subscription_ = shared_owner_->AddEventSink(base::BindRepeating(
       &RoamuxUpdateService::OnUpdateEvent, weak_factory_.GetWeakPtr()));
-  // Route the menu "Check for Updates…" to the single owner (roam-32 retires
-  // its standard-controller path while a service exists).
-  roamux::app::SetCheckForUpdatesHandler(&RouteMenuCheckToOwner);
 }
 
 RoamuxUpdateService::~RoamuxUpdateService() {
-  if (shared_owner_) {
-    shared_owner_->Release();
-    shared_owner_ = nullptr;
-  }
-  // F2: no owner left -> the menu falls back to the standard controller.
-  if (!g_process_owner) {
-    roamux::app::SetCheckForUpdatesHandler(nullptr);
-  }
+  // The owner is process-lived and persists across facade teardown. Dropping
+  // sink_subscription_ (member destruction) auto-unregisters this facade's sink
+  // from the owner's broadcast list — no sibling facade is affected.
+  shared_owner_ = nullptr;
 }
 
 void RoamuxUpdateService::BindFactory(

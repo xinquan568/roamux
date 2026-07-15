@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-// roam-37: the chrome://roamux-about page — identity + links + update card +
-// check row, bound to roam-85's update state machine via the browser proxy.
-// Termixion's AboutSettings.tsx minus the configuration groups.
+// roam-140: <roamux-update-card> — the reusable Sparkle update card, relocated
+// out of the retired chrome://roamux-about page (roam-37) and embedded into the
+// native chrome://settings/help About page. Bound to roam-85's update state
+// machine via the browser proxy. Identity (logo/title) and the Website/GitHub
+// links now live in about_page.html; this element is only the update surface
+// (status pill + Check Now + download/skip/restart).
 
-// roam-136: pull the loadTimeData payload (productName/version/updatesAvailable)
-// the C++ UseStringsJs() source serves, BEFORE any loadTimeData access below —
-// without it the element constructor asserts "No data" and the page renders blank.
+// roam-136: pull the loadTimeData payload (updatesAvailable) the settings data
+// source serves, BEFORE any loadTimeData access below — without it the element
+// constructor asserts "No data" and the card renders blank. Under chrome://
+// settings this resolves to chrome://settings/strings.m.js (SetupWebUIDataSource
+// → UseStringsJs()).
 import '/strings.m.js';
 
 import './update_page.mojom-webui.js';
@@ -13,16 +18,16 @@ import './update_page.mojom-webui.js';
 import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 import {loadTimeData} from '//resources/js/load_time_data.js';
 
-import {getCss} from './app.css.js';
-import {getHtml} from './app.html.js';
+import {getCss} from './roamux_update_card.css.js';
+import {getHtml} from './roamux_update_card.html.js';
 import {BrowserProxyImpl} from './browser_proxy.js';
 import type {BrowserProxy} from './browser_proxy.js';
 import {UpdateStatus} from './update_page.mojom-webui.js';
 import type {UpdateSnapshot} from './update_page.mojom-webui.js';
 
-export class RoamuxAboutAppElement extends CrLitElement {
+export class RoamuxUpdateCardElement extends CrLitElement {
   static get is() {
-    return 'roamux-about-app';
+    return 'roamux-update-card';
   }
 
   static override get styles() {
@@ -57,7 +62,9 @@ export class RoamuxAboutAppElement extends CrLitElement {
     super.connectedCallback();
     // Only reach out to Mojo when the update service is available; hidden /
     // unavailable controls must never issue handler calls. Lazily create the
-    // real proxy so tests can inject a fake before connect.
+    // real proxy so tests can inject a fake before connect. In a flag-off
+    // (non-Sparkle) build updatesAvailable is false, so no factory bind ever
+    // fires and the SettingsUI binder (also Sparkle-gated) is never reached.
     if (this.updatesAvailable_) {
       if (!this.proxy_) {
         this.proxy_ = BrowserProxyImpl.getInstance();
@@ -88,12 +95,6 @@ export class RoamuxAboutAppElement extends CrLitElement {
   }
 
   // Template helpers as methods (getters are disallowed in Lit templates).
-  protected getProductName_(): string {
-    return loadTimeData.getString('productName');
-  }
-  protected getVersion_(): string {
-    return loadTimeData.getString('version');
-  }
   protected getStatusLabel_(): string {
     switch (this.snapshot_.status) {
       case UpdateStatus.kChecking:
@@ -136,8 +137,8 @@ export class RoamuxAboutAppElement extends CrLitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'roamux-about-app': RoamuxAboutAppElement;
+    'roamux-update-card': RoamuxUpdateCardElement;
   }
 }
 
-customElements.define(RoamuxAboutAppElement.is, RoamuxAboutAppElement);
+customElements.define(RoamuxUpdateCardElement.is, RoamuxUpdateCardElement);

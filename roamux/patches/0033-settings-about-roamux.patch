@@ -1,0 +1,282 @@
+diff --git a/chrome/browser/resources/settings/about_page/about_page.html b/chrome/browser/resources/settings/about_page/about_page.html
+--- a/chrome/browser/resources/settings/about_page/about_page.html
++++ b/chrome/browser/resources/settings/about_page/about_page.html
+@@ -47,13 +47,40 @@
+     </style>
+     <settings-section page-title="$i18n{aboutPageTitle}">
+       <div class="cr-row two-line first">
+-        <img id="product-logo" on-click="onProductLogoClick_"
+-            srcset="chrome://theme/current-channel-logo@1x 1x,
+-                    chrome://theme/current-channel-logo@2x 2x"
+-            alt="$i18n{aboutProductLogoAlt}"
+-            role="presentation">
++        <!-- roam-140: the branded Roamux logo (settings-served asset) or the
++          native channel logo, gated by roamuxBrandedAbout. -->
++        <template is="dom-if" if="[[roamuxBrandedAbout_]]">
++          <img id="product-logo" class="roamux-logo"
++              src="chrome://settings/roamux_about/roamux_logo.png"
++              alt="$i18n{aboutProductLogoAlt}" role="presentation">
++        </template>
++        <template is="dom-if" if="[[!roamuxBrandedAbout_]]">
++          <img id="product-logo" on-click="onProductLogoClick_"
++              srcset="chrome://theme/current-channel-logo@1x 1x,
++                      chrome://theme/current-channel-logo@2x 2x"
++              alt="$i18n{aboutProductLogoAlt}"
++              role="presentation">
++        </template>
+         <div class="product-title">$i18n{aboutProductTitle}</div>
+       </div>
++      <!-- roam-140: the branded update card (embeds <roamux-update-card>) and
++        the Website/GitHub links card, both gated by roamuxBrandedAbout. Both
++        links resolve to the GitHub repo. -->
++      <template is="dom-if" if="[[roamuxBrandedAbout_]]">
++        <div class="cr-row two-line" id="roamuxUpdateRow">
++          <roamux-update-card class="flex"></roamux-update-card>
++        </div>
++        <div class="cr-row" id="roamuxLinks">
++          <a id="websiteLink" class="flex"
++              href="https://github.com/xinquan568/roamux" target="_blank">
++            Website
++          </a>
++          <a id="githubLink"
++              href="https://github.com/xinquan568/roamux" target="_blank">
++            GitHub
++          </a>
++        </div>
++      </template>
+       <div class="cr-row two-line">
+         <!-- Set the icon from the iconset (when it's obsolete/EOL and
+           when update is done) or set the src (when it's updating). -->
+diff --git a/chrome/browser/resources/settings/about_page/about_page.ts b/chrome/browser/resources/settings/about_page/about_page.ts
+--- a/chrome/browser/resources/settings/about_page/about_page.ts
++++ b/chrome/browser/resources/settings/about_page/about_page.ts
+@@ -19,6 +19,10 @@
+ import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
+ import 'chrome://resources/cr_elements/icons.html.js';
+ import 'chrome://resources/cr_elements/cr_shared_style.css.js';
++// roam-140: register <roamux-update-card> so the branded about_page (gated by
++// roamuxBrandedAbout) can embed it. Always imported (the settings_about bundle
++// is served in every build); the element self-gates its Mojo on updatesAvailable.
++import 'chrome://settings/roamux_about/roamux_update_card.js';
+ 
+ import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+ import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+@@ -62,6 +66,16 @@
+ 
+   static get properties() {
+     return {
++      // roam-140: gates the Roamux branding / links / embedded update card on
++      // the settings/help About page. Buildflag-driven (ROAMUX_ENABLE_SPARKLE),
++      // independent of whether an update service exists (updatesAvailable).
++      roamuxBrandedAbout_: {
++        type: Boolean,
++        value() {
++          return loadTimeData.getBoolean('roamuxBrandedAbout');
++        },
++      },
++
+       currentUpdateStatusEvent_: {
+         type: Object,
+         value: {
+@@ -135,6 +149,7 @@
+   }
+   // </if>
+ 
++  declare private roamuxBrandedAbout_: boolean;
+   declare private currentUpdateStatusEvent_: UpdateStatusChangedEvent|null;
+   declare private isManaged_: boolean;
+   declare private managedByIcon_: string;
+diff --git a/chrome/browser/ui/webui/settings/settings_ui.h b/chrome/browser/ui/webui/settings/settings_ui.h
+--- a/chrome/browser/ui/webui/settings/settings_ui.h
++++ b/chrome/browser/ui/webui/settings/settings_ui.h
+@@ -18,6 +18,12 @@
+ #include "mojo/public/cpp/bindings/pending_remote.h"
+ #include "mojo/public/cpp/bindings/receiver.h"
+ #include "ui/webui/mojo_web_ui_controller.h"
++// roam-140: the branded chrome://settings/help About page binds the Roamux
++// update-page Mojo factory through SettingsUI (Sparkle-gated).
++#include "roamux/app/app_buildflags.h"
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++#include "roamux/mojom/update_page.mojom.h"
++#endif
+ #include "ui/webui/resources/cr_components/customize_color_scheme_mode/customize_color_scheme_mode.mojom.h"
+ #include "ui/webui/resources/cr_components/help_bubble/help_bubble.mojom.h"
+ 
+@@ -117,6 +123,14 @@
+                                 CustomizeColorSchemeModeHandlerFactory>
+           pending_receiver);
+ 
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++  // roam-140: binds the update-page factory for <roamux-update-card> on the
++  // branded chrome://settings/help About page. Delegates to the per-profile
++  // RoamuxUpdateService (null-safe when the service is absent).
++  void BindInterface(
++      mojo::PendingReceiver<roamux::mojom::UpdatePageHandlerFactory> receiver);
++#endif  // BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++
+  private:
+   void AddSettingsPageUIHandler(
+       std::unique_ptr<content::WebUIMessageHandler> handler);
+diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
+--- a/chrome/browser/ui/webui/settings/settings_ui.cc
++++ b/chrome/browser/ui/webui/settings/settings_ui.cc
+@@ -60,6 +60,15 @@
+ #include "chrome/browser/ui/webui/plural_string_handler.h"
+ #include "chrome/browser/ui/webui/sanitized_image/sanitized_image_source.h"
+ #include "chrome/browser/ui/webui/settings/about_handler.h"
++// roam-140: the branded chrome://settings/help About page — Roamux strings +
++// the update-page Mojo binder (Sparkle-gated).
++#include "components/version_info/version_info.h"
++#include "roamux/app/app_buildflags.h"
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++#include "roamux/browser/updates/roamux_update_service.h"
++#include "roamux/browser/updates/roamux_update_service_factory.h"
++#include "roamux/mojom/update_page.mojom.h"
++#endif
+ #include "chrome/browser/ui/webui/settings/accessibility_main_handler.h"
+ #include "chrome/browser/ui/webui/settings/appearance_handler.h"
+ #if BUILDFLAG(IS_MAC)
+@@ -499,6 +508,36 @@
+   AddLocalizedStrings(html_source, profile, web_ui->GetWebContents());
+   AddSecurityData(html_source);
+ 
++  // roam-140: the branded chrome://settings/help About page. TWO independent
++  // gates (kept separate on purpose): `roamuxBrandedAbout` (buildflag only)
++  // drives the Roamux branding / links / left-nav chip; `updatesAvailable`
++  // (update service present for this profile) drives the live update card +
++  // Check Now. So OTR / system profiles still show branding with a degraded
++  // update card. The overrides land AFTER AddLocalizedStrings() so the
++  // page-scoped Roamux About strings win over upstream Chromium branding
++  // (a subset #132's global GRIT rebrand will generalize).
++  html_source->AddBoolean("roamuxBrandedAbout",
++                          BUILDFLAG(ROAMUX_ENABLE_SPARKLE));
++  bool roamux_updates_available = false;
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++  roamux_updates_available =
++      roamux::updates::RoamuxUpdateServiceFactory::GetForProfile(profile) !=
++      nullptr;
++#endif
++  html_source->AddBoolean("updatesAvailable", roamux_updates_available);
++  html_source->AddString("productName", "Roamux");
++  html_source->AddString("version",
++                         std::string(version_info::GetVersionNumber()));
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++  html_source->AddString("aboutProductTitle", "Roamux");
++  html_source->AddString("aboutProductCopyright",
++                         "Copyright 2026 The Roamux Authors. All rights "
++                         "reserved.");
++  html_source->AddString("aboutProductLicense",
++                         "Roamux is made possible by the Chromium open source "
++                         "project and other open source software.");
++#endif
++
+   ManagedUIHandler::Initialize(web_ui, html_source);
+ 
+   content::URLDataSource::Add(
+@@ -881,6 +920,22 @@
+       std::move(pending_receiver));
+ }
+ 
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++// roam-140: binds the update-page factory that <roamux-update-card> (embedded
++// in the branded settings/help About page) requests from the frame broker.
++// Delegates to the per-profile RoamuxUpdateService; null-safe when the service
++// is absent (OTR / system profiles), matching the retired
++// RoamuxAboutUI::BindInterface.
++void SettingsUI::BindInterface(
++    mojo::PendingReceiver<roamux::mojom::UpdatePageHandlerFactory> receiver) {
++  auto* service = roamux::updates::RoamuxUpdateServiceFactory::GetForProfile(
++      Profile::FromWebUI(web_ui()));
++  if (service) {
++    service->BindFactory(std::move(receiver));
++  }
++}
++#endif  // BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++
+ void SettingsUI::UpdateShowGlicState() {
+   // The visibility of the Glic page can change based on the user accepting the
+   // FRE. Propagate this state to the WebUI value used to display the settings
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -482,6 +482,19 @@
+             "$root_gen_dir/chrome/browser/resources/settings_shared/tsc/*",
+             target_gen_dir) ]
+ 
++  # roam-140: embed the relocated <roamux-update-card> element into the branded
++  # chrome://settings/help About page. Its grdp is merged into the settings grd
++  # (served under chrome://settings/roamux_about/*); its build_ts is a
++  # ts_library dep so about_page.ts can import the element; the path mapping
++  # resolves that import to the element's tsc output.
++  ts_deps += [ "//roamux/app/resources/settings_about:build_ts" ]
++  ts_path_mappings += [ "chrome://settings/roamux_about/*|" + rebase_path(
++                            "$root_gen_dir/roamux/app/resources/settings_about/tsc/*",
++                            target_gen_dir) ]
++  extra_grdp_deps = [ "//roamux/app/resources/settings_about:build_grdp" ]
++  extra_grdp_files =
++      [ "$root_gen_dir/roamux/app/resources/settings_about/resources.grdp" ]
++
+   if (is_chromeos) {
+     # TODO(crbug.com/1013466): Browser Settings should not depend on ash/webui/
+     # code. The codepath needing this (in people_page.ts) should be removed when
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -8,6 +8,7 @@
+ import("//build/config/ozone.gni")
+ import("//build/config/ui.gni")
+ import("//chrome/browser/buildflags.gni")
++import("//roamux/build/buildflags.gni")  # roam-140: roamux_enable_sparkle
+ import("//chrome/common/features.gni")
+ import("//components/captive_portal/core/features.gni")
+ import("//components/compose/features.gni")
+@@ -5715,6 +5716,22 @@
+     "//roamux/browser/tab_visit/tab_visit_command.cc",
+     "//roamux/browser/tab_visit/tab_visit_command.h",
+   ]
++
++  # Roamux (roam-140): settings_ui.{h,cc} include the generated
++  # roamux/app/app_buildflags.h UNCONDITIONALLY (to test
++  # BUILDFLAG(ROAMUX_ENABLE_SPARKLE)), so its generator is an unconditional dep
++  # — a clean build must not compile settings_ui before the header exists.
++  deps += [ "//roamux/app:app_buildflags" ]
++
++  # SettingsUI::BindInterface delegates the settings/help update-page factory to
++  # the per-profile RoamuxUpdateService. Sparkle-gated to match settings_ui.cc;
++  # the update_service target only exists when compiled in.
++  if (roamux_enable_sparkle) {
++    deps += [
++      "//roamux/browser/updates:update_service",
++      "//roamux/mojom",
++    ]
++  }
+ }
+ 
+ # These are the dependencies for the "ui" target that are outside of
+diff --git a/chrome/test/data/webui/BUILD.gn b/chrome/test/data/webui/BUILD.gn
+--- a/chrome/test/data/webui/BUILD.gn
++++ b/chrome/test/data/webui/BUILD.gn
+@@ -82,6 +82,7 @@
+       "new_tab_shared/new_tab_shared_browsertest.cc",
+       "omnibox_popup/omnibox_popup_browsertest.cc",
+       "optimization_guide_internals/optimization_guide_internals_browsertest.cc",
++      "//roamux/app/resources/settings_about/test/roamux_settings_about_browsertest.cc",
+       "password_manager/password_manager_browsertest.cc",
+       "password_manager_internals/password_manager_internals_browsertest.cc",
+       "privacy_sandbox/internals/privacy_sandbox_internals_browsertest.cc",
+@@ -602,6 +603,7 @@
+       "new_tab_shared:build_grdp",
+       "omnibox_popup:build_grdp",
+       "optimization_guide_internals:build_grdp",
++      "//roamux/app/resources/settings_about/test:build_grdp",
+       "password_manager:build_grdp",
+       "password_manager_internals:build_grdp",
+       "privacy_sandbox/internals:build_grdp",
+@@ -665,6 +667,7 @@
+       "$target_gen_dir/new_tab_page/resources.grdp",
+       "$target_gen_dir/omnibox_popup/resources.grdp",
+       "$target_gen_dir/optimization_guide_internals/resources.grdp",
++      "$root_gen_dir/roamux/app/resources/settings_about/test/resources.grdp",
+       "$target_gen_dir/password_manager/resources.grdp",
+       "$target_gen_dir/password_manager_internals/resources.grdp",
+       "$target_gen_dir/privacy_sandbox/internals/resources.grdp",

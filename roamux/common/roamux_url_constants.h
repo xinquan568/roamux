@@ -10,13 +10,9 @@ namespace roamux {
 // unit test pins literal↔constant agreement).
 inline constexpr char kRoamuxScheme[] = "roamux";
 
-// chrome:// host of the About WebUI (roam-37; moved here from
-// roamux_about_ui.h by roam-91 so generic scheme code never deps the About
-// WebUI target).
-inline constexpr char kChromeUIRoamuxAboutHost[] = "roamux-about";
-
 // roamux:// alias hosts (roam-91): the curated alias map rewrites
-// roamux://about → chrome://roamux-about and roamux://flags → chrome://flags.
+// roamux://about → chrome://settings/help (roam-140) and roamux://flags →
+// chrome://flags.
 inline constexpr char kRoamuxAliasAboutHost[] = "about";
 inline constexpr char kRoamuxAliasFlagsHost[] = "flags";
 

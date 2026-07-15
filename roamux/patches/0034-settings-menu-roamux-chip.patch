@@ -1,0 +1,48 @@
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -167,8 +167,20 @@
+         </a>
+         <a role="menuitem" id="about-menu" href="/help"
+             class="cr-nav-menu-item">
+-          <cr-icon icon="cr:chrome-product"></cr-icon>
++          <!-- roam-140: the Roamux logo + version chip, gated by
++            roamuxBrandedAbout; the native product icon otherwise. -->
++          <template is="dom-if" if="[[roamuxBrandedAbout_]]">
++            <img id="roamuxMenuLogo"
++                src="chrome://settings/roamux_about/roamux_logo.png"
++                width="20" height="20" alt="" aria-hidden="true">
++          </template>
++          <template is="dom-if" if="[[!roamuxBrandedAbout_]]">
++            <cr-icon icon="cr:chrome-product"></cr-icon>
++          </template>
+           $i18n{aboutPageTitle}
++          <template is="dom-if" if="[[roamuxBrandedAbout_]]">
++            <span id="roamuxMenuVersion">$i18n{version}</span>
++          </template>
+           <cr-ripple></cr-ripple>
+         </a>
+       </cr-menu-selector>
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.ts b/chrome/browser/resources/settings/settings_menu/settings_menu.ts
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.ts
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.ts
+@@ -76,12 +76,19 @@
+           return loadTimeData.getBoolean('enableYourSavedInfoSettingsPage');
+         },
+       },
++
++      // roam-140: gates the Roamux logo + version chip on the About nav entry.
++      roamuxBrandedAbout_: {
++        type: Boolean,
++        value: () => loadTimeData.getBoolean('roamuxBrandedAbout'),
++      },
+     };
+   }
+ 
+   declare private pageVisibility_?: PageVisibility;
+   declare private showAiPage_: boolean;
+   declare private enableYourSavedInfoSettingsPage_: boolean;
++  declare private roamuxBrandedAbout_: boolean;
+   private metricsBrowserProxy_: MetricsBrowserProxy =
+       MetricsBrowserProxyImpl.getInstance();
+ 

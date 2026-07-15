@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -28,6 +29,15 @@ namespace roamux::updates {
 // SPUUpdater + conformer). Exposed as a forward decl so the header stays
 // Objective-C-free for C++ includers.
 class SparkleOwner;
+
+// Returns the ONE process-wide Sparkle owner (exactly one SPUUpdater on
+// [NSBundle mainBundle]), creating and starting it — including its scheduled
+// background checks — on first call. Shared by every per-profile
+// RoamuxUpdateService AND by the app-launch roamux::app::InitSparkleUpdater();
+// this single-owner rule is the roam-140 fix for the two-owner second-click
+// hang. The returned owner is process-lived (never torn down). Flag-on only
+// (roamux_enable_sparkle).
+SparkleOwner* GetOrCreateSharedSparkleOwner();
 
 class RoamuxUpdateService : public KeyedService,
                             public mojom::UpdatePageHandlerFactory,
@@ -61,8 +71,11 @@ class RoamuxUpdateService : public KeyedService,
   void PushSnapshot(const UpdateSnapshot& snapshot);
 
   UpdateStateMachine state_machine_;
-  // Ref-counted process-wide Sparkle owner (not owned uniquely).
+  // The single process-wide Sparkle owner (not owned uniquely; process-lived).
   raw_ptr<SparkleOwner> shared_owner_ = nullptr;
+  // This facade's subscription to the owner's app-wide event broadcast; dropping
+  // it (on destruction) auto-unregisters the sink (roam-140).
+  base::CallbackListSubscription sink_subscription_;
   mojo::Receiver<mojom::UpdatePageHandlerFactory> factory_receiver_{this};
   mojo::Receiver<mojom::UpdatePageHandler> handler_receiver_{this};
   mojo::Remote<mojom::UpdatePage> page_;

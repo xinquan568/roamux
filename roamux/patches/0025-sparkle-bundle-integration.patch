@@ -78,17 +78,10 @@
  
  #include <AppKit/AppKit.h>
  #include <dispatch/dispatch.h>
-@@ -1252,7 +1257,19 @@
+@@ -1252,7 +1257,12 @@
  
  // This is called after profiles have been loaded and preferences registered.
  // It is safe to access the default profile here.
-+#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
-+// Roamux (roam-32): the "Check for Updates…" menu action.
-+- (void)roamuxCheckForUpdates:(id)sender {
-+  roamux::app::CheckForUpdates();
-+}
-+#endif
-+
  - (void)applicationDidFinishLaunching:(NSNotification*)notify {
 +#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
 +  // Roamux (roam-32): start the Sparkle updater (scheduled checks per the
@@ -98,39 +91,3 @@
    if (g_browser_process->browser_policy_connector()
            ->chrome_browser_cloud_management_controller()
            ->IsEnterpriseStartupDialogShowing()) {
---- a/chrome/browser/ui/cocoa/BUILD.gn
-+++ b/chrome/browser/ui/cocoa/BUILD.gn
-@@ -127,6 +127,9 @@
- 
-   public_deps = [ "//chrome/browser:browser_public_dependencies" ]
- 
-+  # Roamux (roam-32): the ROAMUX_ENABLE_SPARKLE buildflag for the menu item.
-+  deps = [ "//roamux/app:app_buildflags" ]
-+
-   deps += [
-     "//chrome/app:command_ids",
-     "//chrome/app/theme:chrome_unscaled_resources_grit",
---- a/chrome/browser/ui/cocoa/main_menu_builder.mm
-+++ b/chrome/browser/ui/cocoa/main_menu_builder.mm
-@@ -4,6 +4,8 @@
- 
- #import "chrome/browser/ui/cocoa/main_menu_builder.h"
- 
-+#include "roamux/app/app_buildflags.h"
-+
- #include "base/feature_list.h"
- #include "base/i18n/rtl.h"
- #include "base/mac/mac_util.h"
-@@ -61,6 +63,12 @@
-                   .tag(IDC_ABOUT)
-                   .target(app_delegate)
-                   .action(@selector(orderFrontStandardAboutPanel:)),
-+#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
-+              // Roamux (roam-32): Sparkle "Check for Updates…".
-+              Item(IDS_COMPONENTS_CHECK_FOR_UPDATE)
-+                  .target(app_delegate)
-+                  .action(@selector(roamuxCheckForUpdates:)),
-+#endif
-               Item().is_separator(),
-               Item(IDS_PREFERENCES)
-                   .tag(IDC_OPTIONS)

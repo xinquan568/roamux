@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# roam-140: the <roamux-update-card> element, relocated out of the retired
+# chrome://roamux-about bundle (roam-37). Built as a self-contained grdp that
+# the settings bundle merges (extra_grdp_deps) and serves under
+# chrome://settings/roamux_about/*; its build_ts is a ts_deps of the settings
+# ts_library so about_page.ts can import the element (see the settings BUILD.gn
+# patch, 0033). Kept as its own bundle (not folded into the settings file
+# lists) so the additive //roamux element stays self-contained and the
+# update_page.mojom-webui wiring is unchanged from the old bundle.
+
+import("//ui/webui/resources/tools/build_webui.gni")
+
+build_webui("resources") {
+  grd_prefix = "roamux_settings_about"
+
+  # Merged into the settings grd, then served relative to chrome://settings.
+  generate_grdp = true
+  grd_resource_path_prefix = "roamux_about"
+
+  static_files = [ "roamux_logo.png" ]
+
+  ts_files = [
+    "roamux_update_card.ts",
+    "roamux_update_card.html.ts",
+    "browser_proxy.ts",
+  ]
+
+  css_files = [ "roamux_update_card.css" ]
+
+  # roam-85: reuse the //roamux/mojom update-page WebUI bindings unchanged.
+  mojo_files_deps = [ "//roamux/mojom:mojom_ts__generator" ]
+  mojo_files = [ "$root_gen_dir/roamux/mojom/update_page.mojom-webui.ts" ]
+
+  ts_deps = [
+    "//third_party/lit/v3_0:build_ts",
+    "//ui/webui/resources/js:build_ts",
+    "//ui/webui/resources/mojo:build_ts",
+  ]
+
+  ts_composite = true
+  webui_context_type = "trusted"
+}

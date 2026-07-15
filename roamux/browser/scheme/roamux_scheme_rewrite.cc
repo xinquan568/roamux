@@ -22,10 +22,15 @@ namespace {
 struct AliasRow {
   std::string_view roamux_host;
   std::string_view chrome_host;
+  // Optional chrome:// path (roam-140). Empty = preserve the incoming path/ref
+  // (roamux://flags/#x → chrome://flags/#x). Non-empty = override the path
+  // (roamux://about → chrome://settings/help), needed when the target host is
+  // a real settings sub-page rather than a bare WebUI host.
+  std::string_view chrome_path;
 };
 constexpr AliasRow kAliasMap[] = {
-    {kRoamuxAliasAboutHost, kChromeUIRoamuxAboutHost}, // roamux://about
-    {kRoamuxAliasFlagsHost, "flags"},                  // roamux://flags
+    {kRoamuxAliasAboutHost, "settings", "/help"}, // roamux://about → settings/help
+    {kRoamuxAliasFlagsHost, "flags", ""},         // roamux://flags (path preserved)
 };
 
 } // namespace
@@ -45,6 +50,9 @@ bool MaybeRewriteRoamuxAliasURL(GURL *url,
       GURL::Replacements replacements;
       replacements.SetSchemeStr(content::kChromeUIScheme);
       replacements.SetHostStr(row.chrome_host);
+      if (!row.chrome_path.empty()) {
+        replacements.SetPathStr(row.chrome_path);
+      }
       *url = url->ReplaceComponents(replacements);
       break;
     }

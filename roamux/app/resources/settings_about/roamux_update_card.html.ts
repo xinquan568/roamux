@@ -1,23 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
+// roam-140: the <roamux-update-card> template — the update surface only
+// (status pill + Check Now + download/skip/restart). Identity + links moved to
+// about_page.html.
 import {html} from '//resources/lit/v3_0/lit.rollup.js';
 
-import type {RoamuxAboutAppElement} from './app.js';
+import type {RoamuxUpdateCardElement} from './roamux_update_card.js';
 
-export function getHtml(this: RoamuxAboutAppElement) {
+export function getHtml(this: RoamuxUpdateCardElement) {
   // clang-format off
   return html`
-    <div class="identity">
-      <img class="icon" src="chrome://roamux-about/roamux_logo.png" alt="Roamux">
-      <h1 id="productName">${this.getProductName_()}</h1>
-      <div id="version" class="version">${this.getVersion_()}</div>
-    </div>
-
-    <div class="links">
-      <a id="websiteLink" href="https://roamux.app" target="_blank">Website</a>
-      <a id="githubLink" href="https://github.com/xinquan568/roamux"
-          target="_blank">GitHub</a>
-    </div>
-
     ${this.updatesAvailable_ ? html`
       <div class="check-row">
         ${this.isChecking_() ? html`
