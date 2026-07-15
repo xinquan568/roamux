@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "base/test/scoped_feature_list.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/prefs/pref_service.h"
-#include "components/webui/chrome_urls/pref_names.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_type.h"
@@ -39,16 +36,6 @@ class RoamuxSchemeAliasBrowserTest : public roamux::test::RoamuxBrowserTest {
     features_.InitAndEnableFeature(features::kRoamuxSchemeAlias);
   }
 
-  void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
-    // chrome://roamux-about is registered internal-only
-    // (DefaultInternalWebUIConfig); without this pref HandleWebUI diverts it
-    // to chrome://debug-webuis-disabled (same enablement roam-37's mocha
-    // browsertest performs).
-    g_browser_process->local_state()->SetBoolean(
-        chrome_urls::kInternalOnlyUisEnabled, true);
-  }
-
  protected:
   content::WebContents* web_contents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
@@ -61,10 +48,11 @@ class RoamuxSchemeAliasBrowserTest : public roamux::test::RoamuxBrowserTest {
   base::test::ScopedFeatureList features_;
 };
 
-// AC1: a browser-initiated roamux://about commits chrome://roamux-about while
-// the omnibox-visible virtual URL stays roamux://about.
+// AC1: a browser-initiated roamux://about commits chrome://settings/help
+// (roam-140: the About surface moved there) while the omnibox-visible virtual
+// URL stays roamux://about.
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
-                       AboutAliasLoadsAboutWebUI) {
+                       AboutAliasLoadsSettingsHelp) {
   // 1-arg NavigateToURL succeeds iff the load is non-error and the observed
   // (virtual) URL equals the requested URL — i.e. the alias loads AND keeps
   // displaying as roamux://about.
@@ -72,7 +60,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
-  EXPECT_EQ(GURL("chrome://roamux-about/"), entry->GetURL());
+  EXPECT_EQ(GURL("chrome://settings/help"), entry->GetURL());
   EXPECT_EQ(GURL("roamux://about"), entry->GetVirtualURL());
 }
 
@@ -85,22 +73,6 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
   EXPECT_EQ(GURL("chrome://flags/"), entry->GetURL());
   EXPECT_EQ(GURL("roamux://flags"), entry->GetVirtualURL());
-}
-
-// AC3: the alias target keeps working directly — committed URL asserted (not
-// just the virtual URL, which would mask an interstitial diversion). Also the
-// browser-level check that about.html's <title> carries the Roamux brand
-// (roam-93: the mocha harness cannot see about.html's title, so it is pinned
-// here at the real page load).
-IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
-                       DirectChromeHostUnaffected) {
-  EXPECT_TRUE(
-      content::NavigateToURL(web_contents(), GURL("chrome://roamux-about/")));
-  content::NavigationEntry* entry = last_entry();
-  ASSERT_TRUE(entry);
-  EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
-  EXPECT_EQ(GURL("chrome://roamux-about/"), entry->GetURL());
-  EXPECT_EQ(u"About Roamux", web_contents()->GetTitle());
 }
 
 // AC3: unmapped roamux:// hosts never alias into the chrome:// namespace —
@@ -117,7 +89,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest, UnmappedHostDoesNotAlias) {
   EXPECT_NE(GURL("chrome://settings/"), entry->GetURL());
 }
 
-// AC4 (D2a proof): web content cannot reach the About WebUI through the alias.
+// AC4 (D2a proof): web content cannot reach the alias target through the alias.
 // "roamux" is listed in ProfileIOData::IsHandledProtocol, so CanRequestURL
 // denies it to renderers — the same layer that blocks chrome:// links from
 // web pages.
@@ -130,12 +102,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
                                                   GURL("roamux://about")));
   content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
-  EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
+  EXPECT_NE(GURL("chrome://settings/help"), entry->GetURL());
 }
 
 // AC4 (D7 proof): redirects never alias — forward rewriting happens at
 // navigation-entry creation only, so a server redirect targeting roamux://
-// lands on the handled-scheme dead-end, not the About WebUI.
+// lands on the handled-scheme dead-end, not the alias target.
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
                        ServerRedirectDoesNotAlias) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -144,13 +116,13 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   EXPECT_FALSE(content::NavigateToURL(web_contents(), redirect));
   content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
-  EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
+  EXPECT_NE(GURL("chrome://settings/help"), entry->GetURL());
 }
 
 // AC4 (D7 proof, renderer-initiated): web content driving the same server
 // redirect exercises the distinct renderer redirect path (CanRedirectToURL,
-// then the later CanRequestURL screening) — it must not reach the WebUI
-// either.
+// then the later CanRequestURL screening) — it must not reach the alias
+// target either.
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
                        ServerRedirectFromRendererDoesNotAlias) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -161,25 +133,18 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   EXPECT_FALSE(content::NavigateToURLFromRenderer(web_contents(), redirect));
   content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
-  EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
+  EXPECT_NE(GURL("chrome://settings/help"), entry->GetURL());
 }
 
 // AC5 (D2b proof): flag-off is inert — no rewrite; the handled-scheme
 // navigation is dropped without commit (tab stays on about:blank) rather than
-// reaching the OS external-protocol path (P3: the feature ships disabled).
-// Internal UIs are enabled here too, so a rewrite bug (rather than the
-// internal-UI gate) would be what a chrome://roamux-about commit indicates.
+// reaching the OS external-protocol path (P3: the feature ships disabled). A
+// rewrite bug would show up as a chrome://settings/help commit here.
 class RoamuxSchemeAliasFlagOffBrowserTest
     : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSchemeAliasFlagOffBrowserTest() {
     features_.InitAndDisableFeature(features::kRoamuxSchemeAlias);
-  }
-
-  void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
-    g_browser_process->local_state()->SetBoolean(
-        chrome_urls::kInternalOnlyUisEnabled, true);
   }
 
  protected:
@@ -193,18 +158,18 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasFlagOffBrowserTest, FlagOffIsInert) {
   content::NavigationEntry* entry = wc->GetController().GetLastCommittedEntry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(GURL("about:blank"), entry->GetURL());
-  EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
+  EXPECT_NE(GURL("chrome://settings/help"), entry->GetURL());
 }
 
 // roam-93 dieback (D2b): the OLD roamex:// scheme (pre-rebrand) is dead — it
-// never reaches the About WebUI (back to unknown-scheme behavior; exact error
+// never reaches the alias target (back to unknown-scheme behavior; exact error
 // surface not asserted). The "roamex" literal is historical and stays
 // (roam-94).
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest, OldRoamexSchemeIsDead) {
   EXPECT_FALSE(content::NavigateToURL(web_contents(), GURL("roamex://about")));
   content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
-  EXPECT_NE(GURL("chrome://roamux-about/"), entry->GetURL());
+  EXPECT_NE(GURL("chrome://settings/help"), entry->GetURL());
 }
 
 }  // namespace

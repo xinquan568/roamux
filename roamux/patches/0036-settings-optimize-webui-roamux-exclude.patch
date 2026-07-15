@@ -1,0 +1,16 @@
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -511,6 +511,11 @@
+       "settings.js",
+       "lazy_load.js",
+     ]
+-    optimize_webui_excludes =
+-        [ "chrome://resources/mojo/skia/public/mojom/skcolor.mojom-webui.js" ]
++    optimize_webui_excludes = [
++      "chrome://resources/mojo/skia/public/mojom/skcolor.mojom-webui.js",
++      # roam-140: <roamux-update-card> is served separately as its own
++      # build_webui bundle under chrome://settings/roamux_about/*, so it is
++      # external to the settings rollup (fetched at runtime, not inlined).
++      "chrome://settings/roamux_about/roamux_update_card.js",
++    ]
+     optimize_webui_external_paths =

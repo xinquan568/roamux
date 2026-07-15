@@ -7,6 +7,7 @@ mojom("mojom") {
   sources = [ "update_page.mojom" ]
 
   # roam-37: emit WebUI TypeScript bindings (update_page.mojom-webui.ts) for the
-  # chrome://roamux-about page. Page-local module path.
+  # update card. Originally the chrome://roamux-about page; the card moved to
+  # chrome://settings/help (roam-140). Page-local module path.
   webui_module_path = "/"
 }

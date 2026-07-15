@@ -5,23 +5,23 @@ diff --git a/chrome/browser/chrome_browser_interface_binders_webui.cc b/chrome/b
      BUILDFLAG(IS_CHROMEOS)
  #include "chrome/browser/ui/webui/skills/skills.mojom.h"
  #include "chrome/browser/ui/webui/skills/skills_ui.h"
-+// roam-138: the chrome://roamux-about update-page Mojo binder (flag-gated).
++// roam-140: the chrome://settings/help update-page Mojo binder (flag-gated).
 +#include "roamux/app/app_buildflags.h"
 +#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
-+#include "roamux/browser/ui/webui/about/roamux_about_ui.h"
++#include "chrome/browser/ui/webui/settings/settings_ui.h"
 +#endif
  #endif
- 
+
  namespace chrome::internal {
 @@ -100,6 +105,12 @@ void BindColorChangeListener(
  void PopulateChromeWebUIFrameBindersPartsAllPlatforms(
      mojo::BinderMapWithContext<content::RenderFrameHost*>* map,
      content::RenderFrameHost* render_frame_host) {
 +#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
-+  // roam-138: chrome://roamux-about requests UpdatePageHandlerFactory from the
++  // roam-140: chrome://settings/help requests UpdatePageHandlerFactory from the
 +  // frame broker; without this binder the renderer is killed (bad message).
 +  RegisterWebUIControllerInterfaceBinder<
-+      roamux::mojom::UpdatePageHandlerFactory, roamux::RoamuxAboutUI>(map);
++      roamux::mojom::UpdatePageHandlerFactory, settings::SettingsUI>(map);
 +#endif
    RegisterWebUIControllerInterfaceBinder<
        chrome_finds_internals::mojom::PageHandlerFactory,

@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
-// roam-37: chrome://roamux-about WebUI tests against a TS-side fake proxy —
-// the status matrix, Download→progress→Restart, Skip hides the card, NO
-// configuration/reset groups, identity + links. (TDD/P6.)
+// roam-140: <roamux-update-card> WebUI tests against a TS-side fake proxy — the
+// status matrix, Download→progress→Restart, Skip hides the card, and the static
+// "updates unavailable" state. Adapted from the retired chrome://roamux-about
+// about_test.ts (roam-37); identity + links assertions moved to the settings
+// about_page integration suite (roamux_settings_about_test.ts). (TDD/P6.)
 
-// app.js itself pulls in strings.m.js (roam-136), so loadTimeData carries the
-// REAL data-source values (productName, version, updatesAvailable) by the time
-// the element is constructed — the identity test pins the real brand string.
-// This suite deliberately does NOT import strings.m.js on its own: doing so
-// masked roam-136 (the production page renders blank when app.ts forgets the
-// import), so the suite now genuinely exercises the production bootstrap.
-import 'chrome://roamux-about/app.js';
+// The element pulls in strings.m.js (roam-136), so loadTimeData carries the REAL
+// data-source values (updatesAvailable) by the time the element is constructed.
+// This suite deliberately does NOT import strings.m.js on its own — doing so
+// masked roam-136 (the production card renders blank when the element forgets
+// the import), so the suite genuinely exercises the production bootstrap.
+import 'chrome://settings/roamux_about/roamux_update_card.js';
 
-import {RoamuxAboutAppElement} from 'chrome://roamux-about/app.js';
-import {BrowserProxyImpl} from 'chrome://roamux-about/browser_proxy.js';
-import type {BrowserProxy} from 'chrome://roamux-about/browser_proxy.js';
-import {UpdateStatus} from 'chrome://roamux-about/update_page.mojom-webui.js';
-import type {UpdateSnapshot} from 'chrome://roamux-about/update_page.mojom-webui.js';
+import {RoamuxUpdateCardElement} from 'chrome://settings/roamux_about/roamux_update_card.js';
+import {BrowserProxyImpl} from 'chrome://settings/roamux_about/browser_proxy.js';
+import type {BrowserProxy} from 'chrome://settings/roamux_about/browser_proxy.js';
+import {UpdateStatus} from 'chrome://settings/roamux_about/update_page.mojom-webui.js';
+import type {UpdateSnapshot} from 'chrome://settings/roamux_about/update_page.mojom-webui.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertEquals, assertTrue, assertFalse} from 'chrome://webui-test/chai_assert.js';
 
@@ -63,8 +64,8 @@ class FakeProxy implements BrowserProxy {
   }
 }
 
-suite('RoamuxAbout', function() {
-  let element: RoamuxAboutAppElement;
+suite('RoamuxUpdateCard', function() {
+  let element: RoamuxUpdateCardElement;
   let fake: FakeProxy;
 
   setup(async function() {
@@ -72,13 +73,11 @@ suite('RoamuxAbout', function() {
     // Force the update-card path on so the fake's onStateChanged listener is
     // registered at connect. In a non-sparkle test build the real
     // updatesAvailable is false, which would leave the card (and every card
-    // test) inert. productName is left as the real strings.m.js value so the
-    // identity test still pins the shipped brand. (roam-93 unbreak: this
-    // suite never ran before — the missing strings import failed construction.)
+    // test) inert.
     loadTimeData.overrideValues({updatesAvailable: true});
     // Inject before construction so no real Mojo bind ever fires (F3).
     BrowserProxyImpl.setInstance(fake);
-    element = new RoamuxAboutAppElement();
+    element = new RoamuxUpdateCardElement();
     element.setProxyForTesting(fake);
     document.body.appendChild(element);
     await element.updateComplete;
@@ -92,23 +91,15 @@ suite('RoamuxAbout', function() {
     return element.shadowRoot.querySelector(`#${id}`);
   }
 
-  test('identity and links render', function() {
-    assertTrue(!!q('productName'));
-    // roam-93: pin the brand TEXT, not just element presence — an
-    // existence-only check would pass either brand. (The <title> lives in
-    // about.html, which this mocha harness does not load, so it is not
-    // asserted here — the static title flip is self-evident in the diff.)
-    assertEquals('Roamux', q('productName')!.textContent.trim());
-    assertTrue(!!q('version'));
-    assertTrue(!!q('websiteLink'));
-    assertTrue(!!q('githubLink'));
-  });
-
   test('no configuration or reset groups present', function() {
-    // Termixion parity MINUS config: none of these exist.
+    // The card is the update surface ONLY — no settings/reset/config groups,
+    // and (post roam-140) no identity or links (those live in about_page.html).
     assertFalse(!!element.shadowRoot.querySelector('settings-section'));
     assertFalse(!!q('resetGroup'));
     assertFalse(!!q('configGroup'));
+    assertFalse(!!q('productName'));
+    assertFalse(!!q('websiteLink'));
+    assertFalse(!!q('githubLink'));
   });
 
   test('available shows card with download and skip', async function() {
@@ -246,4 +237,17 @@ suite('RoamuxAbout', function() {
       }
     });
   }
+
+  test('updates unavailable renders the static state', async function() {
+    // Reconstruct with updatesAvailable=false: the card must render the static
+    // "unavailable" note and NEVER register a Mojo listener / issue a check.
+    element.remove();
+    loadTimeData.overrideValues({updatesAvailable: false});
+    const offline = new RoamuxUpdateCardElement();
+    document.body.appendChild(offline);
+    await offline.updateComplete;
+    assertTrue(!!offline.shadowRoot.querySelector('#updatesUnavailable'));
+    assertFalse(!!offline.shadowRoot.querySelector('#checkNow'));
+    offline.remove();
+  });
 });

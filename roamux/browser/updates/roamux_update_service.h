@@ -29,6 +29,15 @@ namespace roamux::updates {
 // Objective-C-free for C++ includers.
 class SparkleOwner;
 
+// Returns the ONE process-wide Sparkle owner (exactly one SPUUpdater on
+// [NSBundle mainBundle]), creating and starting it — including its scheduled
+// background checks — on first call. Shared by every per-profile
+// RoamuxUpdateService AND by the app-launch roamux::app::InitSparkleUpdater();
+// this single-owner rule is the roam-140 fix for the two-owner second-click
+// hang. The returned owner is process-lived (never torn down). Flag-on only
+// (roamux_enable_sparkle).
+SparkleOwner* GetOrCreateSharedSparkleOwner();
+
 class RoamuxUpdateService : public KeyedService,
                             public mojom::UpdatePageHandlerFactory,
                             public mojom::UpdatePageHandler {

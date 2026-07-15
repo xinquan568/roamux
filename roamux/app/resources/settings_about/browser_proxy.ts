@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// roam-37: browser proxy for chrome://roamux-about — binds the update page to
-// roam-85's UpdatePageHandlerFactory (hands a UpdatePage remote + a handler
-// receiver via CreatePageHandler).
+// roam-140 (was roam-37): browser proxy for the <roamux-update-card> — binds
+// the update page to roam-85's UpdatePageHandlerFactory (hands a UpdatePage
+// remote + a handler receiver via CreatePageHandler). Under chrome://settings
+// the factory is bound by SettingsUI::BindInterface (Sparkle-gated).
 
 import {UpdatePageCallbackRouter, UpdatePageHandlerFactory, UpdatePageHandlerRemote} from './update_page.mojom-webui.js';
 
