@@ -28,6 +28,14 @@ ln -sfn "${GITHUB_WORKSPACE}/roamux" "${SRC}/roamux"
 # Declared channel 2: the runhook (idempotent; fails loudly on conflict — the rebase signal).
 python3 "${GITHUB_WORKSPACE}/roamux/build/apply_patches.py" --chromium-src "${SRC}"
 
+# roam-132: the rebrand-channel's XTB-binding tests are GRIT-dependent, so tier-1 CI (no
+# checkout) SKIPS them — yet that is where the load-bearing "translation still binds after
+# re-key" assertions live. This runner HAS the checkout, so run them fail-not-skip
+# (REQUIRE_GRIT=1 turns a skip into a failure). Hermetic (tmp fixtures) — runs before the
+# hours-long build so a regression fails fast. Uses ${SRC} only to import GRIT read-only.
+( cd "${GITHUB_WORKSPACE}" && REQUIRE_GRIT=1 ROAMUX_CHROMIUM_SRC="${SRC}" \
+    python3 -m unittest roamux.build.tests.test_rebrand_strings )
+
 # Warm CI build dir: APFS-clone the operator's warm out/Default on first use (copy-on-write).
 cd "${SRC}"
 if [ ! -d "${OUT}" ]; then

@@ -64,6 +64,16 @@ class Tier2JobScriptTest(unittest.TestCase):
                 self.assertTrue(any(m in line for m in allowed_markers),
                                 f"undeclared base access: {line.strip()}")
 
+    def test_rebrand_binding_gate_runs_fail_not_skip(self):
+        # roam-132 review: the GRIT-bound rebrand binding tests SKIP on tier-1 (no
+        # checkout) — that is where the load-bearing "translation still binds after
+        # re-key" assertions live. Tier-2 HAS the checkout, so it must run them
+        # fail-not-skip (REQUIRE_GRIT=1) against the base's GRIT, from the overlay
+        # root so the dotted test module resolves.
+        self.assertIn("REQUIRE_GRIT=1", self.code)
+        self.assertIn("test_rebrand_strings", self.code)
+        self.assertIn('ROAMUX_CHROMIUM_SRC="${SRC}"', self.code)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -50,9 +50,25 @@ python3 ~/chromium/src/roamux/build/apply_patches.py --chromium-src ~/chromium/s
 # Roamux (roam-32): vendor the pinned Sparkle.framework (needed by roamux_enable_sparkle=true
 # builds — the flag-on GN targets fail loudly without it; hash-verified, see plan §13.6/R16).
 python3 ~/chromium/src/roamux/build/fetch_sparkle.py
+
+# Roamux (roam-132): rebrand user-visible "Chromium" -> "Roamux" across the upstream GRIT string
+# sources (grd/grdp) + locale .xtb. A governed build channel (§12.2), like apply_patches.py — NOT
+# per-string patches. Run AFTER the patches and BEFORE any grit/resource compile.
+python3 ~/chromium/src/roamux/build/rebrand_strings.py --chromium-src ~/chromium/src
 ```
 (A symlink keeps the git repo as the source of truth; a `gclient` custom-solution/DEPS entry is the
 alternative once the overlay stabilizes. The `patches/` entry becomes a `gclient` runhook later, §12.5.)
+
+### Governed channels (bulk upstream mutation — declared, never silent)
+
+Roamux mutates the upstream tree only through **declared, idempotent, fail-loud channels** — never
+silent in-place edits — so every change is discoverable and CI-gated:
+
+| Channel | What it does | Idempotency / check |
+|---|---|---|
+| `roamux/build/apply_patches.py` | Applies `roamux/patches/*.patch` (build-graph wiring, `chromium_src` redirects). | Stack-aware; `--check` verifies without mutating; fails loud naming the patch. |
+| `roamux/build/fetch_sparkle.py` | Vendors the pinned, hash-verified Sparkle.framework. | No-op if already present unless `--force`. |
+| `roamux/build/rebrand_strings.py` | Rebrands user-visible `Chromium`→`Roamux` across the branded grd/grdp units (`chromium_strings.grd`, `generated_resources.grd`, `components_strings.grd`, `components_chromium_strings.grd`, `privacy_sandbox_strings.grd`) + their `.xtb`, re-keying each rebranded message's xtb id (via GRIT's `tclib.GenerateMessageId`) so translations stay bound (roam-132). Structure-aware — never touches attributes, `<ph>` names, comments or ids. | Idempotent (a rebranded tree is a no-op); `--check` reports pending rebrand (non-zero) without mutating; fails loud naming the file. Exclusions (legal/attribution, ChromeOS, domains, chrome:// URLs, code/histogram/policy ids) are versioned + test-pinned in `roamux/build/rebrand_exclusions.py`. The release workflow runs it after `apply_patches.py`, before the resource compile, and gates on the result. Its XTB-binding tests are GRIT-bound: tier-1 CI skips them (no checkout); the tier-2 self-hosted job runs them fail-not-skip (`REQUIRE_GRIT=1`). |
 
 ## 4. Configure + build (targeted — do NOT build `all`)
 
