@@ -87,6 +87,20 @@ jobs:
           symlink="${CHROMIUM_SRC}/roamux"
           ln -sfn "$(pwd)/roamux" "$symlink"
           python3 "${CHROMIUM_SRC}/roamux/build/apply_patches.py" --chromium-src "${CHROMIUM_SRC}"
+          # roam-132: rebrand user-visible "Chromium" -> "Roamux" across the GRIT string
+          # sources + locale xtb (governed channel §12.2, like apply_patches) — AFTER the
+          # patches and BEFORE the grit/resource compile (autoninja below) so the compiled
+          # .pak strings carry the product name. Then the post-substitution validation gate:
+          # a representative product string rebranded, legal/attribution intact, and the
+          # channel idempotent (--check clean). Fail the release otherwise.
+          python3 "${CHROMIUM_SRC}/roamux/build/rebrand_strings.py" --chromium-src "${CHROMIUM_SRC}"
+          rebrand_grd="${CHROMIUM_SRC}/chrome/app/chromium_strings.grd"
+          grep -q "Roamux" "$rebrand_grd" \
+            || { echo "::error::rebrand gate: no user-visible 'Roamux' in chromium_strings.grd"; exit 1; }
+          grep -q "The Chromium Authors" "$rebrand_grd" \
+            || { echo "::error::rebrand gate: legal attribution 'The Chromium Authors' was lost"; exit 1; }
+          python3 "${CHROMIUM_SRC}/roamux/build/rebrand_strings.py" --chromium-src "${CHROMIUM_SRC}" --check \
+            || { echo "::error::rebrand gate: --check still reports un-rebranded user-visible strings"; exit 1; }
           # roam-114: pass args via import() — NEVER newline-flatten the args file (its first
           # '#' would comment out every arg on the single flattened line). The overlay symlink
           # above makes //roamux/... resolve inside the checkout.

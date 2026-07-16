@@ -38,6 +38,10 @@ These encode the tier-1 + release posture structurally, so every future workflow
       check's contract is each AUTHORED commit, never platform merges (roam-134).  14. release.yml derives the stamped CFBundleVersion and the appcast sparkle:version from the tag
       via release_version.py (numeric, Sparkle-orderable) — never the raw tag string, which
       Sparkle's comparator cannot order across pre-releases (roam-141).
+  15. release.yml runs the rebrand channel (rebrand_strings.py, roam-132) AFTER apply_patches.py
+      and BEFORE the grit/resource compile (autoninja), followed by a post-substitution
+      validation gate — a representative product string is rebranded, legal attribution stays
+      "Chromium", and the channel is idempotent (--check clean) — or the release fails.
 """
 
 import pathlib
@@ -345,6 +349,41 @@ class WorkflowInvariantsTest(unittest.TestCase):
                          "rename_bundle must not stamp the raw tag string (roam-141)")
         self.assertFalse(any("generate_appcast.py" in l and "TAG#v" in l for l in lines),
                          "the appcast must not advertise the raw tag string (roam-141)")
+
+    def test_release_runs_rebrand_channel_and_gate_in_order(self):
+        # roam-132: the rebrand channel is a governed build step. It must run AFTER
+        # apply_patches.py (patches land first) and BEFORE the grit/resource compile
+        # (autoninja bakes the .pak strings), and be followed by a validation gate that
+        # proves a product string rebranded, legal attribution survived, and the pass is
+        # idempotent (--check clean). Ordering + gate are pinned structurally.
+        text = _read("release.yml")
+        self.assertIsNotNone(text, "release.yml missing")
+        lines = text.splitlines()
+
+        def _first(pred):
+            return next((i for i, l in enumerate(lines) if pred(l)), None)
+
+        apply_i = _first(lambda l: "apply_patches.py" in l)
+        rebrand_i = _first(lambda l: "rebrand_strings.py" in l and "--check" not in l)
+        compile_i = _first(lambda l: "autoninja -C" in l)  # the compile command, not a comment
+        self.assertIsNotNone(rebrand_i, "release.yml must invoke the rebrand channel "
+                                        "(rebrand_strings.py)")
+        self.assertIsNotNone(apply_i, "apply_patches.py invocation missing")
+        self.assertIsNotNone(compile_i, "autoninja (resource compile) missing")
+        self.assertLess(apply_i, rebrand_i,
+                        "rebrand must run AFTER apply_patches.py")
+        self.assertLess(rebrand_i, compile_i,
+                        "rebrand must run BEFORE the grit/resource compile (autoninja)")
+
+        # Post-substitution validation gate.
+        check_i = _first(lambda l: "rebrand_strings.py" in l and "--check" in l)
+        self.assertIsNotNone(check_i, "the rebrand gate must assert idempotency via --check")
+        self.assertLess(rebrand_i, check_i, "the --check gate runs after the rebrand pass")
+        self.assertLess(check_i, compile_i, "the rebrand gate must pass before the compile")
+        self.assertTrue(any("The Chromium Authors" in l for l in lines),
+                        "the gate must assert legal attribution stays 'Chromium'")
+        self.assertTrue(any("::error::rebrand gate" in l for l in lines),
+                        "the rebrand gate must fail the release loudly (::error::)")
 
     def test_workflows_carry_spdx(self):
         for wf in sorted(WORKFLOWS.glob("*.yml")):
