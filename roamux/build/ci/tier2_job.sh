@@ -28,6 +28,13 @@ ln -sfn "${GITHUB_WORKSPACE}/roamux" "${SRC}/roamux"
 # Declared channel 2: the runhook (idempotent; fails loudly on conflict — the rebase signal).
 python3 "${GITHUB_WORKSPACE}/roamux/build/apply_patches.py" --chromium-src "${SRC}"
 
+# roam-147: vendor Sparkle into this job's overlay before building. out/Default carries
+# roamux_enable_sparkle=true, and since roam-140 the tier-2 targets (roamux_browsertests)
+# link the Sparkle-backed updater — so the framework must be present at
+# roamux/third_party/sparkle (gitignored; absent in a fresh CI checkout). Mirrors the
+# release pipeline's "Vendor Sparkle" step; idempotent (a no-op once vendored, SHA-pinned).
+python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
+
 # roam-132: the rebrand-channel's XTB-binding tests are GRIT-dependent, so tier-1 CI (no
 # checkout) SKIPS them — yet that is where the load-bearing "translation still binds after
 # re-key" assertions live. This runner HAS the checkout, so run them fail-not-skip
