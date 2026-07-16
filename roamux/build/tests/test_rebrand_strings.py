@@ -51,6 +51,14 @@ def _grit_skip_reason():
 
 GRIT_SKIP = _grit_skip_reason()
 
+# roam-132 review: the GRIT-bound binding tests SKIP on tier-1 CI (no Chromium
+# checkout). But that is where the load-bearing xtb-binding assertions live, so on
+# a runner that HAS the checkout the CI step sets REQUIRE_GRIT=1 to turn the skip
+# into a HARD RUN: binding tests execute (and error loudly if grit is somehow
+# absent) instead of silently skipping. Tier-1 behaviour (skip) is unchanged.
+REQUIRE_GRIT = os.environ.get("REQUIRE_GRIT") == "1"
+_SKIP_BINDING = bool(GRIT_SKIP) and not REQUIRE_GRIT
+
 
 # ---------------------------------------------------------------------------
 # Pure: the guarded substitution + exclusions + idempotency (no GRIT needed).
@@ -241,7 +249,7 @@ def _write(path, text):
     path.write_text(text, encoding="utf-8")
 
 
-@unittest.skipIf(GRIT_SKIP, GRIT_SKIP or "")
+@unittest.skipIf(_SKIP_BINDING, GRIT_SKIP or "")
 class XtbBindingTest(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-rebrand-"))
@@ -387,6 +395,72 @@ class CliTest(unittest.TestCase):
             r = self._main("--chromium-src", d)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("target grd missing", r.stdout + r.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Branded-grd exclusions (roam-132 review): the components_chromium_strings.grd
+# About/version license labels attribute the upstream project and must NOT
+# rebrand, while sibling user-visible product strings must.
+# ---------------------------------------------------------------------------
+BRANDED_GRD = '''<?xml version="1.0" encoding="UTF-8"?>
+<grit base_dir="." latest_public_release="0" current_release="1" source_lang_id="en">
+  <release seq="1">
+    <messages>
+      <message name="IDS_VERSION_UI_LICENSE" desc="license label">
+        Chromium is made possible by the <ph name="BEGIN_LINK_CHROMIUM">&lt;a&gt;</ph>Chromium<ph name="END_LINK_CHROMIUM">&lt;/a&gt;</ph> open source project.
+      </message>
+      <message name="IDS_VERSION_UI_LICENSE_OTHER" desc="license label other">
+        Chromium is also made possible by other open source software.
+      </message>
+      <message name="IDS_SESSION_CRASHED_VIEW_MESSAGE" desc="user-visible">
+        Chromium didn't shut down correctly.
+      </message>
+    </messages>
+  </release>
+</grit>
+'''
+
+
+class BrandedGrdExclusionTest(unittest.TestCase):
+    def test_license_names_are_excluded(self):
+        for name in ("IDS_VERSION_UI_LICENSE", "IDS_VERSION_UI_LICENSE_CHROMIUM",
+                     "IDS_VERSION_UI_LICENSE_OTHER"):
+            self.assertTrue(excl.is_message_excluded(name),
+                            f"{name} must be excluded (attribution stays Chromium)")
+
+    def test_attribution_stays_but_user_visible_rebrands(self):
+        out, _ = rb.rewrite_grd_text(BRANDED_GRD)
+        # Attribution labels keep every "Chromium".
+        self.assertIn("Chromium is made possible by the", out)
+        self.assertIn("Chromium is also made possible by other open source software.", out)
+        self.assertNotIn("Roamux is made possible", out)
+        self.assertNotIn("Roamux is also made possible", out)
+        # The <ph> attribution link name is never touched regardless.
+        self.assertIn('<ph name="BEGIN_LINK_CHROMIUM">', out)
+        # The sibling user-visible product string DOES rebrand.
+        self.assertIn("Roamux didn't shut down correctly.", out)
+
+    def test_exclusion_version_bumped(self):
+        # The set changed for the two new branded grds — VERSION must have advanced.
+        self.assertGreaterEqual(excl.VERSION, 2)
+
+
+# ---------------------------------------------------------------------------
+# CI gate (roam-132 review): on a runner WITH the checkout the CI step sets
+# REQUIRE_GRIT=1 so the binding tests run fail-not-skip. This guard makes that
+# contract self-enforcing — if REQUIRE_GRIT is set but grit is unavailable, the
+# binding assertions would not execute, so fail loudly here.
+# ---------------------------------------------------------------------------
+class GritRequirementGateTest(unittest.TestCase):
+    def test_grit_present_when_required(self):
+        if REQUIRE_GRIT:
+            self.assertIsNone(
+                GRIT_SKIP,
+                f"REQUIRE_GRIT=1 but GRIT is unavailable ({GRIT_SKIP}) — the "
+                "load-bearing xtb-binding tests would not execute. The tier-2 CI "
+                "gate must run with a synced Chromium checkout (ROAMUX_CHROMIUM_SRC).")
+        else:
+            self.skipTest("REQUIRE_GRIT not set — tier-1 skip behaviour is unchanged")
 
 
 def _rmtree(path):

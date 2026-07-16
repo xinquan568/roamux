@@ -24,16 +24,26 @@ legal text (unacceptable), so when in doubt the guard KEEPS "Chromium".
 
 import re
 
-VERSION = 1
+# v2 (roam-132 review): added the components_chromium_strings.grd About/version
+# license-attribution message names (IDS_VERSION_UI_LICENSE*).
+VERSION = 2
 
-# Layer 1: message names that must never rebrand. These live in the target grds
-# (chrome/app/chromium_strings.grd) and carry legal/attribution text.
+# Layer 1: message names that must never rebrand — they carry legal/attribution
+# text about the upstream Chromium PROJECT (not the Roamux product), so the whole
+# message stays "Chromium". These live in the target *_strings.grd units.
 EXCLUDED_MESSAGE_NAMES = frozenset({
+    # chrome/app/chromium_strings.grd — copyright / company / OS license.
     "IDS_ABOUT_VERSION_COMPANY_NAME",   # "The Chromium Authors"
     "IDS_ABOUT_VERSION_COPYRIGHT",      # "Copyright <YEAR> The Chromium Authors. ..."
     "IDS_ABOUT_CROS_VERSION_LICENSE",   # ChromeOS open-source license blurb
     "IDS_ABOUT_VERSION_LICENSE",        # open-source license blurb (defensive)
     "IDS_ABOUT_VERSION_LICENSE_EULA",   # EULA (defensive)
+    # components/components_chromium_strings.grd — the About/version license labels:
+    # "Chromium is made possible by the Chromium open source project ..." (the
+    # attribution links to the Chromium project itself and must read "Chromium").
+    "IDS_VERSION_UI_LICENSE",           # "... made possible by the Chromium open source project and other ..."
+    "IDS_VERSION_UI_LICENSE_CHROMIUM",  # "... made possible by the Chromium open source project."
+    "IDS_VERSION_UI_LICENSE_OTHER",     # "... also made possible by other open source software."
 })
 
 # Layer 2a: the rebrandable token. A leading guard keeps the match off dotted /

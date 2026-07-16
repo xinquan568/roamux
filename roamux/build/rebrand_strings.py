@@ -53,10 +53,15 @@ is_message_excluded = _excl.is_message_excluded
 # The upstream targets (relative to --chromium-src). grd_reader follows each
 # grd's ``<part file=...>`` grdp includes; the physical grdp/xtb files are
 # discovered from the grd itself (discover_grdp_files / discover_xtb_files).
+# The *_chromium_strings.grd units are the Chromium-BRANDED string sources (their
+# google_chrome_strings.grd siblings ship only in official Google builds, which
+# Roamux never produces) — they carry the bulk of the literal product mentions.
 TARGET_GRDS = (
     "chrome/app/chromium_strings.grd",
     "chrome/app/generated_resources.grd",
     "components/components_strings.grd",
+    "components/components_chromium_strings.grd",
+    "components/privacy_sandbox_strings.grd",
 )
 
 
