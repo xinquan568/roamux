@@ -280,7 +280,7 @@ diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
  import("//chrome/common/features.gni")
  import("//components/captive_portal/core/features.gni")
  import("//components/compose/features.gni")
-@@ -5715,6 +5716,28 @@
+@@ -5714,6 +5715,28 @@
      "//roamux/browser/tab_visit/tab_visit_command.cc",
      "//roamux/browser/tab_visit/tab_visit_command.h",
    ]
