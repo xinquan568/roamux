@@ -70,7 +70,7 @@ suite('RoamuxSettingsAbout', function() {
     // first, the upstream base it is pinned to second.
     const secondaries =
         Array.from(page.shadowRoot!.querySelectorAll('.secondary'))
-            .map(e => e.textContent!.trim());
+            .map(e => e.textContent.trim());
 
     const roamuxLine = secondaries.find(t => t.startsWith('Roamux '));
     assertTrue(!!roamuxLine, `no Roamux version line in: ${secondaries}`);
@@ -79,7 +79,7 @@ suite('RoamuxSettingsAbout', function() {
     // The regression this issue reports: the product line must not be showing
     // the Chromium version.
     assertFalse(
-        roamuxLine!.includes('149.0.7827.201'),
+        roamuxLine.includes('149.0.7827.201'),
         'the Roamux version line must not carry the Chromium version');
 
     // Separate element, not a newline — aboutBrowserVersion renders as one
