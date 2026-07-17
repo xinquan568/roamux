@@ -62,24 +62,43 @@ class RoamuxAboutRetiredTest(unittest.TestCase):
 class SettingsUpdateBinderTest(unittest.TestCase):
     """Invariant 2: the settings host binds the update-page factory (roam-140)."""
 
-    # roam-140: patch 0032 now repoints the UpdatePageHandlerFactory binder to
-    # settings::SettingsUI (and 0033 lands the gated SettingsUI::BindInterface
-    # overload), so this invariant is live.
+    # roam-140 repointed the UpdatePageHandlerFactory binder to settings::SettingsUI
+    # (0033 lands the gated SettingsUI::BindInterface overload). roam-152 fixed the
+    # registration SITE: M149 chrome://settings resolves WebUI Mojo through the
+    # per-WebUI interface broker, so the factory must be added to that broker
+    # (registry.ForWebUI<settings::SettingsUI>().Add<...>()), NOT the legacy
+    # RenderFrameHost binder map — else the broker never sees it and the renderer
+    # is killed (RESULT_CODE_KILLED_BAD_MESSAGE) when the card binds.
     def test_settings_host_binds_update_page_handler_factory(self):
-        binder = "\n".join(
+        registration = "\n".join(
+            text for text in _patch_texts().values()
+            if ".Add<roamux::mojom::UpdatePageHandlerFactory>" in text
+        )
+        self.assertIn(
+            "ForWebUI<settings::SettingsUI>", registration,
+            "UpdatePageHandlerFactory must be added to SettingsUI's per-WebUI "
+            "interface broker chain (roam-152)",
+        )
+        self.assertIn(
+            "PopulateChromeWebUIFrameInterfaceBrokers", registration,
+            "... in the per-WebUI broker populate path, not the legacy frame map",
+        )
+        self.assertNotIn(
+            "RoamuxAboutUI", registration,
+            "the UpdatePageHandlerFactory registration must not name the "
+            "retired RoamuxAboutUI (roam-140)",
+        )
+        # Regression guard: it must NOT be (re)registered on the legacy
+        # RenderFrameHost binder map via RegisterWebUIControllerInterfaceBinder.
+        legacy = "\n".join(
             text for text in _patch_texts().values()
             if "RegisterWebUIControllerInterfaceBinder" in text
             and "UpdatePageHandlerFactory" in text
         )
-        self.assertIn(
-            "SettingsUI", binder,
-            "the UpdatePageHandlerFactory Mojo binder must dispatch to "
-            "SettingsUI now that chrome://settings/help hosts the update card",
-        )
-        self.assertNotIn(
-            "RoamuxAboutUI", binder,
-            "the UpdatePageHandlerFactory binder must no longer name the "
-            "retired RoamuxAboutUI (roam-140)",
+        self.assertEqual(
+            "", legacy,
+            "UpdatePageHandlerFactory must not use the legacy frame-map path "
+            "(RegisterWebUIControllerInterfaceBinder) — roam-152",
         )
 
 
