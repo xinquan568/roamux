@@ -56,5 +56,66 @@ class OrderingPropertyTest(unittest.TestCase):
             self.assertLess(a, b, f"{ta} ({a}) must sort below {tb} ({b})")
 
 
+class SourceVersionTest(unittest.TestCase):
+    """roam-156: roamux/build/VERSION is the single source of the marketing version.
+
+    Before this, the marketing string existed only in the git tag and the appcast, so
+    nothing in the running binary knew it was 0.0.1-alpha.6 — the About page fell back
+    to the Chromium version. VERSION inverts that: the file is the source, the tag is
+    validated against it.
+    """
+
+    def test_read_source_version_matches_version_file(self):
+        raw = (pathlib.Path(rv.__file__).resolve().parent / "VERSION").read_text()
+        self.assertEqual(rv.read_source_version(),
+                         raw.split("=", 1)[1].strip())
+
+    def test_version_file_parses_under_chromium_version_py(self):
+        # //build/util/version.py FetchValuesFromFile does
+        #   line.rstrip('\r\n').split('=', 1)
+        # on EVERY line, with no comment or blank-line handling — a '#' SPDX header or
+        # a blank line raises ValueError and breaks the GN build. Pin the shape here,
+        # where it costs milliseconds, rather than discovering it as a confusing gn error.
+        path = pathlib.Path(rv.__file__).resolve().parent / "VERSION"
+        lines = path.read_text().split("\n")
+        self.assertEqual(lines[-1], "", "VERSION must end with exactly one newline")
+        for line in lines[:-1]:
+            self.assertIn("=", line, f"non-KEY=VALUE line would ValueError: {line!r}")
+            self.assertFalse(line.startswith("#"), f"comment breaks the parser: {line!r}")
+            self.assertNotEqual(line.strip(), "", "blank line breaks the parser")
+
+
+class SourceTagAgreementTest(unittest.TestCase):
+    """The invariant roam-156 exists to protect: the two producers of the marketing
+    string must never disagree, or the About page and the Sparkle update dialog tell
+    the user different things about the same binary."""
+
+    def test_source_version_round_trips_through_tag_grammar(self):
+        # The stored string must be one _TAG_RE accepts, so the compiled-in value and
+        # the appcast's shortVersionString are the same string by construction.
+        src = rv.read_source_version()
+        self.assertEqual(rv.short_version("v" + src), src)
+
+    def test_check_tag_accepts_matching_tag(self):
+        src = rv.read_source_version()
+        self.assertTrue(rv.check_tag("v" + src))
+        self.assertTrue(rv.check_tag(src))  # leading v optional, as _TAG_RE allows
+
+    def test_check_tag_rejects_mismatched_tag(self):
+        self.assertFalse(rv.check_tag("v9.9.9-alpha.1"))
+
+    def test_check_tag_handles_final_release_with_no_stage_segment(self):
+        # A final release is '0.0.2', NOT '0.0.2-final.0' — _TAG_RE's pre-release group
+        # is optional. This is the case a decomposed MAJOR/MINOR/PATCH/STAGE/N VERSION
+        # file could not round-trip, and is why the marketing string is stored verbatim.
+        self.assertTrue(rv.check_tag("v0.0.2", source_version="0.0.2"))
+        self.assertFalse(rv.check_tag("v0.0.2", source_version="0.0.2-alpha.1"))
+
+    def test_field_source_is_what_the_appcast_consumes(self):
+        # Guards T3b: release.yml's appcast shortVersionString must stay file-derived.
+        # If someone repoints it at --field short --tag, this and the workflow diverge.
+        self.assertEqual(rv.read_source_version(), rv.field_value("source", tag=None))
+
+
 if __name__ == "__main__":
     unittest.main()
