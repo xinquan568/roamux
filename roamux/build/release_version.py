@@ -78,19 +78,30 @@ def read_source_version(path=_VERSION_FILE):
 
 
 def check_tag(tag, source_version=None):
-    """True when `tag` names the version VERSION declares.
+    """True when `tag` names the version VERSION declares, AND both are well-formed.
 
     The release job gates on this before it builds anything: a tag that disagrees with
     VERSION would ship a binary whose About page and update dialog contradict each other.
     Comparison is on the marketing string, so it holds for finals ('0.0.2', no stage
     segment) as well as pre-releases.
+
+    Grammar is validated, not assumed. short_version() only strips a leading 'v' — it
+    never parses — so comparing short_version(tag) to the file would pass a matching
+    pair that _TAG_RE rejects (e.g. 'v0.0.1-gamma.1': not a known stage). That would
+    clear this gate and then blow up in bundle_version() further down the release job,
+    after the build — exactly the late failure the early gate exists to prevent. Parse
+    both sides here so a bad version dies at the gate.
     """
     if source_version is None:
         source_version = read_source_version()
     try:
-        return short_version(tag) == source_version
+        # _parse() raises on an unparseable core or an unknown stage. Run it over both
+        # sides: the tag may be well-formed while VERSION is not, or vice versa.
+        _parse(tag)
+        _parse(source_version)
     except ValueError:
         return False
+    return short_version(tag) == source_version
 
 
 def field_value(field, tag=None):

@@ -93,8 +93,24 @@ class SourceTagAgreementTest(unittest.TestCase):
     def test_source_version_round_trips_through_tag_grammar(self):
         # The stored string must be one _TAG_RE accepts, so the compiled-in value and
         # the appcast's shortVersionString are the same string by construction.
+        #
+        # Assert via bundle_version(), NOT short_version(): short_version only strips a
+        # leading 'v' and never parses, so comparing short_version("v"+src) to src would
+        # be a tautology about string slicing and would pass for any src whatsoever.
         src = rv.read_source_version()
-        self.assertEqual(rv.short_version("v" + src), src)
+        rv.bundle_version("v" + src)  # raises if the stored string is not in the grammar
+
+    def test_check_tag_rejects_a_matching_but_ungrammatical_pair(self):
+        # The hole a naive check_tag leaves: tag and VERSION agree as strings, but the
+        # version is not one the encoder understands ('gamma' is not a stage). Without
+        # parsing, this clears the early gate and then dies in bundle_version() later in
+        # the release job — after the build, which is exactly what the gate must prevent.
+        self.assertFalse(
+            rv.check_tag("v0.0.1-gamma.1", source_version="0.0.1-gamma.1"))
+        self.assertFalse(rv.check_tag("not-a-version", source_version="not-a-version"))
+        # And anything check_tag accepts must actually encode.
+        self.assertTrue(rv.check_tag("v0.0.2", source_version="0.0.2"))
+        rv.bundle_version("v0.0.2")
 
     def test_check_tag_accepts_matching_tag(self):
         src = rv.read_source_version()
