@@ -97,12 +97,21 @@ def _check_glyph(root, errors):
         errors.append(f"{GLYPH}: no visible element references a <mask> via url(#id) — "
                       f"the mask cuts nothing")
         return
-    # White full-size field + black r=72 knockout at the icon centre (matches the app
-    # icon's white-disc negative space).
+    # Luminance is what makes the white field pass and the black circle cut; the SVG
+    # default is luminance, so accept it unset, but reject an explicit alpha mask.
+    mtype = referenced.get("mask-type") or referenced.get("{http://www.w3.org/1999/xlink}mask-type")
+    if mtype not in (None, "luminance"):
+        errors.append(f"{GLYPH}: mask-type is {mtype!r}, not luminance — the field/knockout would not "
+                      f"cut as intended")
+    # White field covering the whole 512x512 canvas + black r=72 knockout at the icon
+    # centre (matches the app icon's white-disc negative space). A tiny white rect would
+    # leave most of the rays masked out.
     field = [r for r in _findall(referenced, "rect")
-             if (r.get("fill") or "").upper() == "#FFFFFF"]
+             if (r.get("fill") or "").upper() == "#FFFFFF"
+             and r.get("width") == "512" and r.get("height") == "512"]
     if not field:
-        errors.append(f"{GLYPH}: mask has no white field <rect> — nothing would be visible")
+        errors.append(f"{GLYPH}: mask has no full-size (512x512) white field <rect> — the rays "
+                      f"would be mostly masked out")
     hole = [c for c in _findall(referenced, "circle")
             if (c.get("fill") or "").upper() == "#000000"]
     if not hole:
