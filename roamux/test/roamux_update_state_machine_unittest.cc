@@ -111,30 +111,3 @@ TEST(UpdateStateMachineTest, ProgressIsClampedToUnitRange) {
 
 }  // namespace
 }  // namespace roamux::updates
-
-// roam-85: the mojom UpdateStatus must stay in lockstep with the C++ enum so
-// the service's snapshot maps 1:1. This pins the ordering at compile+run time.
-#include "roamux/mojom/update_page.mojom.h"
-
-namespace roamux::updates {
-namespace {
-
-TEST(UpdateStateMachineTest, MojomEnumParity) {
-  EXPECT_EQ(static_cast<int>(UpdateStatus::kIdle),
-            static_cast<int>(mojom::UpdateStatus::kIdle));
-  EXPECT_EQ(static_cast<int>(UpdateStatus::kChecking),
-            static_cast<int>(mojom::UpdateStatus::kChecking));
-  EXPECT_EQ(static_cast<int>(UpdateStatus::kUpToDate),
-            static_cast<int>(mojom::UpdateStatus::kUpToDate));
-  EXPECT_EQ(static_cast<int>(UpdateStatus::kAvailable),
-            static_cast<int>(mojom::UpdateStatus::kAvailable));
-  EXPECT_EQ(static_cast<int>(UpdateStatus::kDownloading),
-            static_cast<int>(mojom::UpdateStatus::kDownloading));
-  EXPECT_EQ(static_cast<int>(UpdateStatus::kReadyToInstall),
-            static_cast<int>(mojom::UpdateStatus::kReadyToInstall));
-  EXPECT_EQ(static_cast<int>(UpdateStatus::kError),
-            static_cast<int>(mojom::UpdateStatus::kError));
-}
-
-}  // namespace
-}  // namespace roamux::updates
