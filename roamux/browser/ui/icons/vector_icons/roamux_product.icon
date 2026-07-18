@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+// roam-159: the Roamux product mark for the omnibox chip on chrome:// URLs —
+// the roam-157 rays glyph (four palette rays, transparent field, no tile/
+// shadow) as fixed-colour vector paths. PATH_COLOR_ARGB overrides the
+// security-chip tint at paint time (paint_vector_icon.cc), so the mark is
+// identical in light and dark themes. Strokes use the paint default round
+// caps. Geometry: the 512-canvas glyph scaled by 1/32; ray inner ends pulled
+// to r=117/512 so the round cap's inner edge lands at the glyph's r=72 centre
+// hole. Gate: roamux/build/check_omnibox_icon.py.
+CANVAS_DIMENSIONS, 16,
+PATH_COLOR_ARGB, 0xFF, 0xEA, 0x43, 0x35,
+STROKE, 2.83f,
+MOVE_TO, 5.41f, 5.41f,
+LINE_TO, 3.36f, 3.36f,
+NEW_PATH,
+PATH_COLOR_ARGB, 0xFF, 0xFB, 0xBC, 0x05,
+STROKE, 2.83f,
+MOVE_TO, 10.59f, 5.41f,
+LINE_TO, 12.64f, 3.36f,
+NEW_PATH,
+PATH_COLOR_ARGB, 0xFF, 0x34, 0xA8, 0x53,
+STROKE, 2.83f,
+MOVE_TO, 10.59f, 10.59f,
+LINE_TO, 12.64f, 12.64f,
+NEW_PATH,
+PATH_COLOR_ARGB, 0xFF, 0x42, 0x85, 0xF4,
+STROKE, 2.83f,
+MOVE_TO, 5.41f, 10.59f,
+LINE_TO, 3.36f, 12.64f

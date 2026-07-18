@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: Apache-2.0
+// roam-159: template for the generated roamux vector-icons header (the
+// aggregate_vector_icons script reads this pair from the icon directory).
+// Edit this template, never the generated file.
+
+#ifndef ROAMUX_BROWSER_UI_ICONS_VECTOR_ICONS_H_
+#define ROAMUX_BROWSER_UI_ICONS_VECTOR_ICONS_H_
+
+namespace gfx {
+struct VectorIcon;
+}
+
+#define VECTOR_ICON_TEMPLATE_H(icon_name) \
+extern const gfx::VectorIcon icon_name;
+
+namespace roamux {
+
+TEMPLATE_PLACEHOLDER
+
+}
+
+#undef VECTOR_ICON_TEMPLATE_H
+
+#endif  // ROAMUX_BROWSER_UI_ICONS_VECTOR_ICONS_H_

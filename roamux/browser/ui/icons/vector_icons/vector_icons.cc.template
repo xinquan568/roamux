@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+// roam-159: template for the generated roamux vector-icons impl. Edit this
+// template, never the generated file.
+
+#include "roamux/browser/ui/icons/vector_icons.h"
+
+#include "components/vector_icons/cc_macros.h"
+#include "ui/gfx/vector_icon_types.h"
+
+#define DECLARE_VECTOR_COMMAND(x) using gfx::x;
+DECLARE_VECTOR_COMMANDS
+
+namespace roamux {
+
+TEMPLATE_PLACEHOLDER
+
+}
