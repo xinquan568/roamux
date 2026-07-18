@@ -1,0 +1,58 @@
+diff --git a/components/webui/version/resources/about_version.html b/components/webui/version/resources/about_version.html
+index 3b68920690..2970620003 100644
+--- a/components/webui/version/resources/about_version.html
++++ b/components/webui/version/resources/about_version.html
+@@ -30,16 +30,11 @@ about:version template page
+     <div id="outer">
+       <div id="logo">
+ <if expr="not is_android and not is_ios">
+-        <!-- Version for themes. -->
+-        <picture>
+-          <source srcset="chrome://theme/IDR_PRODUCT_LOGO_WHITE,
+-                          chrome://theme/IDR_PRODUCT_LOGO_WHITE@2x 2x"
+-                  media="(prefers-color-scheme: dark)">
+-          <source srcset="chrome://theme/IDR_PRODUCT_LOGO,
+-                          chrome://theme/IDR_PRODUCT_LOGO@2x 2x"
+-                  media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)">
+-          <img alt="$i18n{logo_alt_text}" src="chrome://theme/IDR_PRODUCT_LOGO">
+-        </picture>
++        <!-- Roamux (roam-169): both themes ride the current-channel-logo
++             chain — the theme-independent Roamux glyph (roam-158). -->
++        <img alt="$i18n{logo_alt_text}"
++            srcset="chrome://theme/current-channel-logo@1x 1x,
++                    chrome://theme/current-channel-logo@2x 2x">
+ </if>
+ <if expr="is_ios or is_android">
+         <picture>
+diff --git a/ui/webui/resources/images/chrome_logo_dark.svg b/ui/webui/resources/images/chrome_logo_dark.svg
+index 19ba047be4..1b93040f29 100644
+--- a/ui/webui/resources/images/chrome_logo_dark.svg
++++ b/ui/webui/resources/images/chrome_logo_dark.svg
+@@ -1 +1,25 @@
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#a)" fill="#fff"><path d="M5.225 10.265A6.996 6.996 0 0 1 12 5h9.733a11.976 11.976 0 0 0-19.512.061l3.004 5.204zM22.898 7h-6.003a6.979 6.979 0 0 1 1.162 8.498l.008.004-4.872 8.438A11.98 11.98 0 0 0 22.898 7zm-9.009 11.735A6.964 6.964 0 0 1 5.944 15.5l-.004.002-4.87-8.435a11.98 11.98 0 0 0 9.812 16.877l3.007-5.21z"/><path d="M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h24v24H0z"/></clipPath></defs></svg>
+\ No newline at end of file
++<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 512 512" role="img" aria-labelledby="title">
++  <title id="title">Roamux</title>
++  <!--
++    roam-169: the Roamux glyph as the payload for upstream's
++    ui/webui/resources/images/chrome_logo_dark.svg (patch 0038 replaces that file's
++    content with exactly this file). The dark <source> of every default-slot
++    cr-toolbar/cr-drawer <picture> (and contextual_tasks' dark <img>) resolves that
++    URL, bypassing chrome://theme/current-channel-logo (roam-158) in dark mode.
++    Fixed palette + transparent field -> identical art in light and dark, which is
++    the issue's goal. Root width/height stay 24 (the upstream asset's intrinsic
++    size; cr_toolbar/cr_drawer CSS pins 24x24 anyway). Geometry is roamux_glyph.svg
++    (roam-157) unchanged; keep the two files' shapes in sync on any redesign —
++    roamux/build/check_dark_logo.py enforces structure and patch sync.
++  -->
++  <mask id="roamuxGlyphHole" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512" mask-type="luminance">
++    <rect x="0" y="0" width="512" height="512" fill="#FFFFFF"/>
++    <circle cx="256" cy="256" r="72" fill="#000000"/>
++  </mask>
++  <g mask="url(#roamuxGlyphHole)" fill="none" stroke-linecap="round" stroke-width="90.608">
++    <line x1="219.230" y1="219.230" x2="107.508" y2="107.508" stroke="#EA4335"/>
++    <line x1="292.770" y1="219.230" x2="404.492" y2="107.508" stroke="#FBBC05"/>
++    <line x1="292.770" y1="292.770" x2="404.492" y2="404.492" stroke="#34A853"/>
++    <line x1="219.230" y1="292.770" x2="107.508" y2="404.492" stroke="#4285F4"/>
++  </g>
++</svg>

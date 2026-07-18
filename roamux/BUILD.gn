@@ -169,6 +169,7 @@ test("roamux_browsertests") {
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
   sources = [
     "test/roamux_clear_browsing_data_browsertest.cc",
+    "test/roamux_dark_logo_browsertest.cc",
     "test/roamux_edge_import_coordinator_browsertest.cc",
     "test/roamux_edge_import_driver_browsertest.cc",
     "test/roamux_frame_rtl_fullscreen_browsertest.cc",
@@ -230,9 +231,11 @@ test("roamux_browsertests") {
     "//testing/gtest",
     "//third_party/blink/public/common",
     "//third_party/leveldatabase",
+    "//ui/base",
     "//ui/events:test_support",
     "//ui/gfx/codec",
     "//ui/gfx/geometry",
+    "//ui/webui/resources",
     "//ui/views",
     "//url",
   ]
