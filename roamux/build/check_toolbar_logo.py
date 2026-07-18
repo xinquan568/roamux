@@ -127,7 +127,8 @@ def _rgba_pixels(data):
     if depth != 8 or colour != 6:
         raise CheckError(
             f"expected 8-bit RGBA (depth 8, colour type 6), got depth {depth}"
-            f" colour type {colour} — regenerate via qlmanage")
+            f" colour type {colour} — regenerate per the recipe in this"
+            " script's docstring")
     if interlace != 0:
         raise CheckError("interlaced PNG — regenerate without interlacing")
     idat = b"".join(body for ctype, body in _chunks(data) if ctype == b"IDAT")

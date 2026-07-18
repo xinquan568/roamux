@@ -2,8 +2,9 @@
 """roam-158: the current-channel-logo per-scale PNGs must be the real Roamux glyph.
 
 Fails RED today: roamux/app/resources/theme/default_{100,200}_percent/product_logo_32.png do not
-exist yet. Goes GREEN once the qlmanage-rendered glyph PNGs ship. Runs in tier-1 (pure Python), so
-a 1x1/opaque/flat stub regression on the toolbar logo is caught in seconds on every PR.
+exist yet. Goes GREEN once the rendered glyph PNGs ship (headless-Chrome rasterization; see the
+check_toolbar_logo.py docstring for the recipe — qlmanage flattens the transparency). Runs in
+tier-1 (pure Python), so a 1x1/opaque/flat stub regression is caught in seconds on every PR.
 """
 
 import pathlib
