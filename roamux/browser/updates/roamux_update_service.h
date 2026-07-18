@@ -67,11 +67,19 @@ class RoamuxUpdateService : public KeyedService, public UpdateCommands {
   const std::string& skipped_version_for_testing() const {
     return state_machine_.skipped_version_for_testing();
   }
+  // Dispatch counters (roam-160 step-8 F2): the browsertest proves each About
+  // button's click actually reaches the service verb.
+  int checks_for_testing() const { return checks_for_testing_; }
+  int downloads_for_testing() const { return downloads_for_testing_; }
+  int relaunches_for_testing() const { return relaunches_for_testing_; }
 
  private:
   void PushSnapshot(const UpdateSnapshot& snapshot);
 
   UpdateStateMachine state_machine_;
+  int checks_for_testing_ = 0;
+  int downloads_for_testing_ = 0;
+  int relaunches_for_testing_ = 0;
   // roam-160: non-Mojo snapshot listeners (the native-row adapter).
   SnapshotCallbackList snapshot_callbacks_;
   // The single process-wide Sparkle owner (not owned uniquely; process-lived).

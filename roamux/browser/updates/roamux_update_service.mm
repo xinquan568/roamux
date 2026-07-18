@@ -247,12 +247,15 @@ RoamuxUpdateService::~RoamuxUpdateService() {
 }
 
 void RoamuxUpdateService::CheckForUpdates() {
+  ++checks_for_testing_;
   shared_owner_->CheckForUpdates();
 }
 void RoamuxUpdateService::Download() {
+  ++downloads_for_testing_;
   shared_owner_->Download();
 }
 void RoamuxUpdateService::InstallAndRelaunch() {
+  ++relaunches_for_testing_;
   shared_owner_->InstallAndRelaunch();
 }
 void RoamuxUpdateService::Skip(const std::string& version) {

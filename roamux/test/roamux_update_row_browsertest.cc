@@ -180,10 +180,18 @@ IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest,
       Reached("inAbout('.icon-container cr-icon') &&"
               " inAbout('.icon-container cr-icon').getAttribute('icon') === "
               "'cr:error'"));
-  // The branded page never renders a support.google.com link.
-  EXPECT_TRUE(Reached(
-      "Array.from(aboutPage().shadowRoot.querySelectorAll('a'))"
-      ".every(a => !visible(a) || !a.href.includes('support.google.com'))"));
+  // The branded page renders NO support.google.com link, and the
+  // obsolete-system link's target is repointed at the repo docs even while
+  // hidden (step-8 — the criterion is about rendering; the update-error
+  // learn-more anchor keeps its upstream href but is branded-hidden).
+  EXPECT_TRUE(
+      Reached("Array.from(aboutPage().shadowRoot.querySelectorAll('a'))"
+              ".every(a => !visible(a) ||"
+              " !a.href.includes('support.google.com'))"));
+  EXPECT_TRUE(
+      Reached("!inAbout('#deprecationWarning a') ||"
+              " inAbout('#deprecationWarning a').href.includes("
+              "'github.com/xinquan568/roamux')"));
 }
 
 IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest,
@@ -215,6 +223,51 @@ IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest, SkipClickReachesTheService) {
   Fire(UpdateEventType::kUpdateFound, "9.9.9-test");
   EXPECT_TRUE(Reached("!statusText().includes('9.9.9-test')"))
       << "a skipped version must never re-surface as an offer";
+}
+
+// Step-8 F2: every consent/recovery button's click must reach its service
+// verb — proven via the service's dispatch counters (the owner's Sparkle
+// replies are nil in tests, so the counters are the observable effect).
+IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest,
+                       DownloadClickReachesTheService) {
+  Fire(UpdateEventType::kCheckStarted);
+  Fire(UpdateEventType::kUpdateFound, "9.9.9-test");
+  ASSERT_TRUE(Reached("visible(inAbout('#roamuxDownload'))"));
+  const int before = service_->downloads_for_testing();
+  ASSERT_TRUE(content::ExecJs(
+      web_contents_,
+      std::string(kPrelude) + "inAbout('#roamuxDownload').click();"));
+  EXPECT_TRUE(base::test::RunUntil(
+      [&]() { return service_->downloads_for_testing() == before + 1; }));
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest,
+                       TryAgainClickReachesTheService) {
+  Fire(UpdateEventType::kCheckStarted);
+  Fire(UpdateEventType::kError, "", "SUAppcastError 2001");
+  ASSERT_TRUE(Reached("visible(inAbout('#roamuxTryAgain'))"));
+  const int before = service_->checks_for_testing();
+  ASSERT_TRUE(content::ExecJs(
+      web_contents_,
+      std::string(kPrelude) + "inAbout('#roamuxTryAgain').click();"));
+  EXPECT_TRUE(base::test::RunUntil(
+      [&]() { return service_->checks_for_testing() > before; }));
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest,
+                       RelaunchClickRoutesThroughSparkle) {
+  Fire(UpdateEventType::kCheckStarted);
+  Fire(UpdateEventType::kUpdateFound, "9.9.9-test");
+  Fire(UpdateEventType::kDownloadStarted);
+  Fire(UpdateEventType::kReadyToInstall);
+  ASSERT_TRUE(Reached("visible(inAbout('#relaunch'))"));
+  const int before = service_->relaunches_for_testing();
+  ASSERT_TRUE(content::ExecJs(
+      web_contents_, std::string(kPrelude) + "inAbout('#relaunch').click();"));
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return service_->relaunches_for_testing() == before + 1;
+  })) << "branded NEARLY_UPDATED Relaunch must route InstallAndRelaunch"
+         " (install-on-quit), not the generic relaunch";
 }
 
 }  // namespace roamux::updates

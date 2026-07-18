@@ -375,7 +375,7 @@ index 2cba81221d..4d7a6b1091 100644
  
  # These are the dependencies for the "ui" target that are outside of
 diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
-index 46209f6de1..b37e7c91f5 100644
+index 46209f6de1..857b0d2b9f 100644
 --- a/chrome/browser/ui/webui/settings/settings_ui.cc
 +++ b/chrome/browser/ui/webui/settings/settings_ui.cc
 @@ -60,8 +60,22 @@
@@ -401,7 +401,7 @@ index 46209f6de1..b37e7c91f5 100644
  #if BUILDFLAG(IS_MAC)
  #include "roamux/browser/ui/webui/roamux_shortcuts_handler.h"
  #endif
-@@ -499,6 +513,72 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
+@@ -499,6 +513,79 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
    AddLocalizedStrings(html_source, profile, web_ui->GetWebContents());
    AddSecurityData(html_source);
  
@@ -425,6 +425,13 @@ index 46209f6de1..b37e7c91f5 100644
 +  html_source->AddString("roamuxUpdateErrSignature",
 +                         "The update couldn't be verified and wasn't"
 +                         " installed.");
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++  // roam-160 (step-8): the obsolete-system deprecation link must not point at
++  // support.google.com on the branded page either — repoint at the repo docs.
++  html_source->AddString(
++      "aboutObsoleteSystemURL",
++      "https://github.com/xinquan568/roamux/blob/main/docs/help.md");
++#endif
 +  // roam-156: `productName`, `version` and `aboutChromiumVersion` are keys the
 +  // SERVED html references ($i18n{...} in settings_menu.html /
 +  // about_page.html). Template substitution runs over the whole file at serve
