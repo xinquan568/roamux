@@ -9,10 +9,11 @@ overlay source/patch text (this test never builds):
      host source is deleted and no patch re-registers its WebUIConfig
      (RoamuxAboutUIConfig, formerly added by the now-removed patch 0027).
 
-  2. The settings WebUI host binds roamux::mojom::UpdatePageHandlerFactory —
-     the Mojo binder that used to dispatch to RoamuxAboutUI now dispatches to
-     SettingsUI (repointed patch 0032 + the SettingsUI::BindInterface overload).
-     See the TODO on test_settings_host_binds_update_page_handler_factory.
+  2. roam-160 retired the Mojo update surface entirely (the native About row
+     rides VersionUpdater now): NO patch may bind or register
+     UpdatePageHandlerFactory on ANY path — a partial resurrection of the
+     binder is exactly the half-registered shape that killed the renderer in
+     roam-152.
 
 roam-128 history (retired with the page): the standalone host had to use the
 regular DefaultWebUIConfig (never DefaultInternalWebUIConfig) so it was not
@@ -60,45 +61,22 @@ class RoamuxAboutRetiredTest(unittest.TestCase):
 
 
 class SettingsUpdateBinderTest(unittest.TestCase):
-    """Invariant 2: the settings host binds the update-page factory (roam-140)."""
+    """Invariant 2 (roam-160): the Mojo update surface is fully retired."""
 
-    # roam-140 repointed the UpdatePageHandlerFactory binder to settings::SettingsUI
-    # (0033 lands the gated SettingsUI::BindInterface overload). roam-152 fixed the
-    # registration SITE: M149 chrome://settings resolves WebUI Mojo through the
-    # per-WebUI interface broker, so the factory must be added to that broker
-    # (registry.ForWebUI<settings::SettingsUI>().Add<...>()), NOT the legacy
-    # RenderFrameHost binder map — else the broker never sees it and the renderer
-    # is killed (RESULT_CODE_KILLED_BAD_MESSAGE) when the card binds.
-    def test_settings_host_binds_update_page_handler_factory(self):
-        registration = "\n".join(
-            text for text in _patch_texts().values()
-            if ".Add<roamux::mojom::UpdatePageHandlerFactory>" in text
-        )
-        self.assertIn(
-            "ForWebUI<settings::SettingsUI>", registration,
-            "UpdatePageHandlerFactory must be added to SettingsUI's per-WebUI "
-            "interface broker chain (roam-152)",
-        )
-        self.assertIn(
-            "PopulateChromeWebUIFrameInterfaceBrokers", registration,
-            "... in the per-WebUI broker populate path, not the legacy frame map",
-        )
-        self.assertNotIn(
-            "RoamuxAboutUI", registration,
-            "the UpdatePageHandlerFactory registration must not name the "
-            "retired RoamuxAboutUI (roam-140)",
-        )
-        # Regression guard: it must NOT be (re)registered on the legacy
-        # RenderFrameHost binder map via RegisterWebUIControllerInterfaceBinder.
-        legacy = "\n".join(
-            text for text in _patch_texts().values()
-            if "RegisterWebUIControllerInterfaceBinder" in text
-            and "UpdatePageHandlerFactory" in text
-        )
+    # roam-140/152 bound UpdatePageHandlerFactory on SettingsUI's per-WebUI
+    # broker for the <roamux-update-card>. roam-160 deleted the card AND the
+    # mojom; updates ride VersionUpdater/AboutHandler messages instead. A
+    # LINGERING binder registration (either the broker path or the legacy
+    # frame map) would reference a deleted interface — refuse both.
+    def test_no_patch_binds_the_retired_update_page_factory(self):
+        offenders = [
+            name for name, text in _patch_texts().items()
+            if "UpdatePageHandlerFactory" in text
+        ]
         self.assertEqual(
-            "", legacy,
-            "UpdatePageHandlerFactory must not use the legacy frame-map path "
-            "(RegisterWebUIControllerInterfaceBinder) — roam-152",
+            [], offenders,
+            "roam-160 retired the update-page Mojo surface, but these patches "
+            "still reference UpdatePageHandlerFactory: {}".format(offenders),
         )
 
 

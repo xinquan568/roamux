@@ -8,14 +8,12 @@
 
 // Register the relocated element so <roamux-update-card> upgrades when the
 // branded about_page stamps it.
-import 'chrome://settings/roamux_about/roamux_update_card.js';
 
 import type {SettingsAboutPageElement} from 'chrome://settings/settings.js';
 import {loadTimeData} from 'chrome://settings/settings.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 
-const GITHUB_URL = 'https://github.com/xinquan568/roamux';
 
 suite('RoamuxSettingsAbout', function() {
   let page: SettingsAboutPageElement;
@@ -46,10 +44,6 @@ suite('RoamuxSettingsAbout', function() {
   function q(selector: string): HTMLElement|null {
     return page.shadowRoot!.querySelector<HTMLElement>(selector);
   }
-
-  test('embeds the roamux update card', function() {
-    assertTrue(!!q('roamux-update-card'));
-  });
 
   test('branded logo and title render', function() {
     const logo = q('#product-logo') as HTMLImageElement | null;
@@ -89,12 +83,4 @@ suite('RoamuxSettingsAbout', function() {
         `no Chromium base line in: ${secondaries}`);
   });
 
-  test('website and github links both resolve to the GitHub repo', function() {
-    const website = q('#websiteLink') as HTMLAnchorElement | null;
-    const github = q('#githubLink') as HTMLAnchorElement | null;
-    assertTrue(!!website);
-    assertTrue(!!github);
-    assertEquals(GITHUB_URL, website.href);
-    assertEquals(GITHUB_URL, github.href);
-  });
 });

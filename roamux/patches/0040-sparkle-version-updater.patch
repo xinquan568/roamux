@@ -1,0 +1,153 @@
+diff --git a/chrome/browser/ui/webui/help/version_updater_mac.mm b/chrome/browser/ui/webui/help/version_updater_mac.mm
+index d619a644ce..0ff56fc28a 100644
+--- a/chrome/browser/ui/webui/help/version_updater_mac.mm
++++ b/chrome/browser/ui/webui/help/version_updater_mac.mm
+@@ -34,6 +34,18 @@
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/l10n/l10n_util_mac.h"
+ 
++// Roamux (roam-160): the Sparkle-backed VersionUpdater is selected ahead of
++// VersionUpdaterMac (whose updater has nothing behind it in this build).
++#include "roamux/app/app_buildflags.h"
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++#include "chrome/browser/profiles/profile.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/web_contents.h"
++#include "roamux/browser/updates/roamux_update_service.h"
++#include "roamux/browser/updates/roamux_update_service_factory.h"
++#include "roamux/browser/updates/roamux_version_updater.h"
++#endif
++
+ namespace {
+ 
+ int GetDownloadProgress(int64_t downloaded_bytes, int64_t total_bytes) {
+@@ -133,6 +145,20 @@ class VersionUpdaterMac : public VersionUpdater {
+ }  // namespace
+ 
+ std::unique_ptr<VersionUpdater> VersionUpdater::Create(
+-    content::WebContents* /* web_contents */) {
++    content::WebContents* web_contents) {
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++  // Roamux (roam-160): drive the native About row from the Sparkle service
++  // (per-profile facade over the single process-wide owner). Falls through to
++  // the stock updater when no service exists (OTR / system profiles), which
++  // keeps the row's stock behaviour rather than crashing.
++  if (web_contents) {
++    if (auto* service =
++            roamux::updates::RoamuxUpdateServiceFactory::GetForProfile(
++                Profile::FromBrowserContext(
++                    web_contents->GetBrowserContext()))) {
++      return std::make_unique<roamux::updates::RoamuxVersionUpdater>(service);
++    }
++  }
++#endif
+   return base::WrapUnique(new VersionUpdaterMac());
+ }
+diff --git a/chrome/browser/ui/webui/settings/about_handler.cc b/chrome/browser/ui/webui/settings/about_handler.cc
+index 58dc7343e9..35a7d58a7c 100644
+--- a/chrome/browser/ui/webui/settings/about_handler.cc
++++ b/chrome/browser/ui/webui/settings/about_handler.cc
+@@ -51,6 +51,14 @@
+ #include "ui/base/l10n/l10n_util.h"
+ #include "v8/include/v8-version-string.h"
+ 
++// Roamux (roam-160): the native-row update commands dispatch to the Sparkle
++// service.
++#include "roamux/app/app_buildflags.h"
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++#include "roamux/browser/updates/roamux_update_service.h"
++#include "roamux/browser/updates/roamux_update_service_factory.h"
++#endif
++
+ #if BUILDFLAG(IS_CHROMEOS)
+ #include <optional>
+ 
+@@ -315,6 +323,24 @@ void AboutHandler::RegisterMessages() {
+   web_ui()->RegisterMessageCallback(
+       "openHelpPage", base::BindRepeating(&AboutHandler::HandleOpenHelpPage,
+                                           base::Unretained(this)));
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++  // Roamux (roam-160): the native About row's consent-first commands.
++  // Download/Skip render on NEED_PERMISSION_TO_UPDATE; Relaunch after
++  // NEARLY_UPDATED routes install-on-quit through Sparkle. All dispatch to
++  // the per-profile RoamuxUpdateService (null-safe for OTR/system profiles).
++  web_ui()->RegisterMessageCallback(
++      "roamuxDownloadUpdate",
++      base::BindRepeating(&AboutHandler::HandleRoamuxDownloadUpdate,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "roamuxSkipUpdate",
++      base::BindRepeating(&AboutHandler::HandleRoamuxSkipUpdate,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "roamuxInstallAndRelaunch",
++      base::BindRepeating(&AboutHandler::HandleRoamuxInstallAndRelaunch,
++                          base::Unretained(this)));
++#endif  // BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
+ #if BUILDFLAG(IS_CHROMEOS)
+   web_ui()->RegisterMessageCallback(
+       "openDiagnostics",
+@@ -528,6 +554,35 @@ void AboutHandler::HandleOpenHelpPage(const base::ListValue& args) {
+   chrome::ShowHelp(browser, chrome::HelpSource::kWebUI);
+ }
+ 
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++void AboutHandler::HandleRoamuxDownloadUpdate(const base::ListValue& args) {
++  DCHECK(args.empty());
++  if (auto* service =
++          roamux::updates::RoamuxUpdateServiceFactory::GetForProfile(
++              profile_)) {
++    service->Download();
++  }
++}
++
++void AboutHandler::HandleRoamuxSkipUpdate(const base::ListValue& args) {
++  CHECK_EQ(1u, args.size());
++  if (auto* service =
++          roamux::updates::RoamuxUpdateServiceFactory::GetForProfile(
++              profile_)) {
++    service->Skip(args[0].GetString());
++  }
++}
++
++void AboutHandler::HandleRoamuxInstallAndRelaunch(const base::ListValue& args) {
++  DCHECK(args.empty());
++  if (auto* service =
++          roamux::updates::RoamuxUpdateServiceFactory::GetForProfile(
++              profile_)) {
++    service->InstallAndRelaunch();
++  }
++}
++#endif  // BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++
+ #if BUILDFLAG(IS_CHROMEOS)
+ void AboutHandler::HandleOpenDiagnostics(const base::ListValue& args) {
+   DCHECK(args.empty());
+diff --git a/chrome/browser/ui/webui/settings/about_handler.h b/chrome/browser/ui/webui/settings/about_handler.h
+index f3bcddd212..b9219b29c0 100644
+--- a/chrome/browser/ui/webui/settings/about_handler.h
++++ b/chrome/browser/ui/webui/settings/about_handler.h
+@@ -17,6 +17,8 @@
+ #include "chrome/browser/upgrade_detector/upgrade_observer.h"
+ #include "components/policy/core/common/policy_service.h"
+ #include "content/public/browser/web_ui_message_handler.h"
++// Roamux (roam-160): gates the native-row update command handlers.
++#include "roamux/app/app_buildflags.h"
+ 
+ #if BUILDFLAG(IS_CHROMEOS)
+ #include "base/callback_list.h"
+@@ -81,6 +83,14 @@ class AboutHandler : public settings::SettingsPageUIHandler,
+   // Opens the help page. |args| must be empty.
+   void HandleOpenHelpPage(const base::ListValue& args);
+ 
++#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
++  // Roamux (roam-160): the native About row's consent-first update commands,
++  // dispatched to the per-profile RoamuxUpdateService.
++  void HandleRoamuxDownloadUpdate(const base::ListValue& args);
++  void HandleRoamuxSkipUpdate(const base::ListValue& args);
++  void HandleRoamuxInstallAndRelaunch(const base::ListValue& args);
++#endif
++
+ #if BUILDFLAG(IS_CHROMEOS)
+   // Checks if ReleaseNotes is enabled.
+   void HandleGetEnabledReleaseNotes(const base::ListValue& args);

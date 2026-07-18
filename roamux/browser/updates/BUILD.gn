@@ -15,20 +15,6 @@ source_set("update_state_machine") {
   deps = [ "//base" ]
 }
 
-# Test doubles for the update-page Mojo (roam-85); roam-37's WebUI tests reuse.
-source_set("test_support") {
-  testonly = true
-  sources = [
-    "fake_update_page_handler.cc",
-    "fake_update_page_handler.h",
-  ]
-  public_deps = [
-    ":update_state_machine",
-    "//roamux/mojom",
-  ]
-  deps = [ "//mojo/public/cpp/bindings" ]
-}
-
 # roam-140 (B0): the per-profile RoamuxUpdateService + its factory — the facade
 # over the ONE process-wide Sparkle owner. Extracted from patch 0026's inline
 # `sources +=` on chrome/browser/profiles:profiles_extra_parts_impl so both that
@@ -47,11 +33,10 @@ if (roamux_enable_sparkle) {
       "roamux_update_service.mm",
       "roamux_update_service_factory.cc",
       "roamux_update_service_factory.h",
+      "version_updater_seam.h",
     ]
     deps = [
       "//chrome/browser/profiles:profile",
-      "//mojo/public/cpp/bindings",
-      "//roamux/mojom",
       ":update_state_machine",
     ]
     configs += [ "//roamux/app:sparkle_link" ]

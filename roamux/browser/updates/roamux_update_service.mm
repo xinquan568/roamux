@@ -246,22 +246,6 @@ RoamuxUpdateService::~RoamuxUpdateService() {
   shared_owner_ = nullptr;
 }
 
-void RoamuxUpdateService::BindFactory(
-    mojo::PendingReceiver<mojom::UpdatePageHandlerFactory> receiver) {
-  factory_receiver_.reset();
-  factory_receiver_.Bind(std::move(receiver));
-}
-
-void RoamuxUpdateService::CreatePageHandler(
-    mojo::PendingRemote<mojom::UpdatePage> page,
-    mojo::PendingReceiver<mojom::UpdatePageHandler> handler) {
-  page_.reset();
-  page_.Bind(std::move(page));
-  handler_receiver_.reset();
-  handler_receiver_.Bind(std::move(handler));
-  PushSnapshot(state_machine_.snapshot());
-}
-
 void RoamuxUpdateService::CheckForUpdates() {
   shared_owner_->CheckForUpdates();
 }
@@ -280,18 +264,17 @@ void RoamuxUpdateService::OnUpdateEvent(const UpdateEvent& event) {
   PushSnapshot(state_machine_.OnEvent(event));
 }
 
+base::CallbackListSubscription RoamuxUpdateService::SubscribeToSnapshots(
+    SnapshotCallbackList::CallbackType callback) {
+  // roam-160: fire immediately (this subscriber only) so the native row
+  // renders the current state, then on every change.
+  auto subscription = snapshot_callbacks_.Add(callback);
+  callback.Run(state_machine_.snapshot());
+  return subscription;
+}
+
 void RoamuxUpdateService::PushSnapshot(const UpdateSnapshot& snapshot) {
-  if (!page_) {
-    return;
-  }
-  auto out = mojom::UpdateSnapshot::New();
-  out->status = static_cast<mojom::UpdateStatus>(snapshot.status);
-  out->version = snapshot.version;
-  out->date = snapshot.date;
-  out->notes = snapshot.notes;
-  out->error = snapshot.error;
-  out->progress = snapshot.progress;
-  page_->OnStateChanged(std::move(out));
+  snapshot_callbacks_.Notify(snapshot);
 }
 
 }  // namespace roamux::updates

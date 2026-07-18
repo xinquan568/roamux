@@ -72,6 +72,9 @@ class UpdateStateMachine {
   UpdateSnapshot OnEvent(const UpdateEvent& event);
 
   const UpdateSnapshot& snapshot() const { return snapshot_; }
+  const std::string& skipped_version_for_testing() const {
+    return skipped_version_;
+  }
 
  private:
   UpdateSnapshot snapshot_;

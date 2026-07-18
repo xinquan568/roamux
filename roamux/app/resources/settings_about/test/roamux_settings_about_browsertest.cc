@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// roam-140: runs the chrome://settings/help Roamux About WebUI mocha tests —
-// the relocated <roamux-update-card> element suite (roamux_update_card_test.ts)
-// against a TS-side fake page handler, and the branded about_page integration
-// suite (roamux_settings_about_test.ts). The page is loaded under the settings
-// host so the element's chrome://settings/roamux_about/* imports and the
-// settings-about-page module resolve. Replaces the retired
-// roamux_about_browsertest.cc (roam-37).
+// roam-140/roam-160: runs the chrome://settings/help Roamux About WebUI mocha
+// tests — the branded about_page integration suite (roamux_settings_about_test
+// .ts) and the left-nav chip suite (roam-157). The update card and its suite
+// were retired by roam-160 (updates render in the NATIVE row; per-state
+// coverage lives in roamux/test/roamux_update_row_browsertest.cc, tier-2).
 
 #include "base/strings/stringprintf.h"
 #include "chrome/common/webui_url_constants.h"
@@ -24,12 +22,6 @@ class RoamuxSettingsAboutBrowserTest : public WebUIMochaBrowserTest {
   }
 
  protected:
-  void RunCardTestCase(const std::string& test_case) {
-    RunTest("roamux_settings_about/roamux_update_card_test.js",
-            base::StringPrintf("runMochaTest('RoamuxUpdateCard', '%s');",
-                               test_case.c_str()));
-  }
-
   void RunAboutTestCase(const std::string& test_case) {
     RunTest("roamux_settings_about/roamux_settings_about_test.js",
             base::StringPrintf("runMochaTest('RoamuxSettingsAbout', '%s');",
@@ -47,44 +39,10 @@ class RoamuxSettingsAboutBrowserTest : public WebUIMochaBrowserTest {
   base::test::ScopedFeatureList webui_toolbar_disables_;
 };
 
-// --- <roamux-update-card> element suite ---
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, NoConfigGroups) {
-  RunCardTestCase("no configuration or reset groups present");
-}
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, AvailableShowsCard) {
-  RunCardTestCase("available shows card with download and skip");
-}
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, DownloadProgressRestart) {
-  RunCardTestCase("download then progress then restart");
-}
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, SkipHidesCard) {
-  RunCardTestCase("skip hides the card");
-}
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, CheckNow) {
-  RunCardTestCase("check now issues a check");
-}
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, UpdatesUnavailable) {
-  RunCardTestCase("updates unavailable renders the static state");
-}
-
 // --- branded chrome://settings/help integration suite ---
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, EmbedsUpdateCard) {
-  RunAboutTestCase("embeds the roamux update card");
-}
 
 IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, BrandedLogoAndTitle) {
   RunAboutTestCase("branded logo and title render");
-}
-
-IN_PROC_BROWSER_TEST_F(RoamuxSettingsAboutBrowserTest, LinksResolveToGitHub) {
-  RunAboutTestCase("website and github links both resolve to the GitHub repo");
 }
 
 // roam-156 left this mocha case without a C++ runner, so it never executed. roam-157

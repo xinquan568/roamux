@@ -1,45 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
-# roam-140: the <roamux-update-card> element, relocated out of the retired
-# chrome://roamux-about bundle (roam-37). Built as a self-contained grdp that
-# the settings bundle merges (extra_grdp_deps) and serves under
-# chrome://settings/roamux_about/*; its build_ts is a ts_deps of the settings
-# ts_library so about_page.ts can import the element (see the settings BUILD.gn
-# patch, 0033). Kept as its own bundle (not folded into the settings file
-# lists) so the additive //roamux element stays self-contained and the
-# update_page.mojom-webui wiring is unchanged from the old bundle.
+# roam-140/roam-160: the Roamux About static assets — roamux_logo.svg (the
+# About hero) and roamux_glyph.svg (the left-nav chip, roam-157; also the
+# source of truth for the theme/dark-logo renders, roam-158/169). A plain
+# generate_grd bundle the settings grd merges (extra_grdp_deps) and serves
+# under chrome://settings/roamux_about/*. Static-assets-only: roam-160 retired
+# the <roamux-update-card> element (and its browser_proxy + mojo bindings +
+# build_webui TS pipeline) — updates render in the NATIVE About row via the
+# Sparkle-backed RoamuxVersionUpdater (//roamux/browser/updates).
 
-import("//ui/webui/resources/tools/build_webui.gni")
+import("//ui/webui/resources/tools/generate_grd.gni")
 
-build_webui("resources") {
+generate_grd("build_grdp") {
   grd_prefix = "roamux_settings_about"
-
-  # Merged into the settings grd, then served relative to chrome://settings.
-  generate_grdp = true
-  grd_resource_path_prefix = "roamux_about"
-
-  static_files = [
-    "roamux_logo.svg",
+  out_grd = "$target_gen_dir/resources.grdp"
+  input_files = [
     "roamux_glyph.svg",
+    "roamux_logo.svg",
   ]
-
-  ts_files = [
-    "roamux_update_card.ts",
-    "roamux_update_card.html.ts",
-    "browser_proxy.ts",
-  ]
-
-  css_files = [ "roamux_update_card.css" ]
-
-  # roam-85: reuse the //roamux/mojom update-page WebUI bindings unchanged.
-  mojo_files_deps = [ "//roamux/mojom:mojom_ts__generator" ]
-  mojo_files = [ "$root_gen_dir/roamux/mojom/update_page.mojom-webui.ts" ]
-
-  ts_deps = [
-    "//third_party/lit/v3_0:build_ts",
-    "//ui/webui/resources/js:build_ts",
-    "//ui/webui/resources/mojo:build_ts",
-  ]
-
-  ts_composite = true
-  webui_context_type = "trusted"
+  input_files_base_dir = rebase_path(".", "//")
+  resource_path_prefix = "roamux_about"
 }

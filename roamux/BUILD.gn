@@ -110,7 +110,6 @@ test("roamux_unittests") {
     "//roamux/browser/updates:update_state_machine",
     "//roamux/common",
     "//roamux/common:crypto_passkey",
-    "//roamux/mojom",
     "//roamux/utility/importer",
     "//sql",
     "//storage/common",
@@ -133,7 +132,6 @@ test("roamux_browser_unittests") {
     "test/roamux_browser_prefs_hook_unittest.cc",
     "test/roamux_scheme_classifier_unittest.cc",
     "test/roamux_settings_private_prefs_unittest.cc",
-    "test/roamux_update_page_mojo_unittest.cc",
     "test/settled_visit_journal_service_unittest.cc",
     "test/tab_initial_url_helper_unittest.cc",
     "test/tab_initial_url_persistence_unittest.cc",
@@ -147,9 +145,7 @@ test("roamux_browser_unittests") {
     "//content/test:test_support",
     "//mojo/public/cpp/bindings",
     "//roamux/browser/tab_visit",
-    "//roamux/browser/updates:test_support",
     "//roamux/common",
-    "//roamux/mojom",
     "//testing/gtest",
     "//third_party/metrics_proto",
   ]
@@ -160,6 +156,17 @@ test("roamux_browser_unittests") {
   # sparkle_link cannot carry ldflags — see the roam-121 note in app/BUILD.gn).
   if (roamux_enable_sparkle) {
     configs += [ "//roamux/app:sparkle_test_rpath" ]
+
+    # roam-160: the native-row VersionUpdater adapter + its suite. The adapter
+    # is a roamux-owned file compiled into the upstream owner of
+    # version_updater_mac.mm in production (patch 0040); here it compiles with
+    # its tests against the pure seam.
+    sources += [
+      "browser/updates/roamux_version_updater.cc",
+      "browser/updates/roamux_version_updater.h",
+      "test/roamux_version_updater_unittest.cc",
+    ]
+    deps += [ "//chrome/browser/ui" ]
   }
 }
 
@@ -248,7 +255,10 @@ test("roamux_browsertests") {
   # the real SettingsUI Mojo binder) only exists when the Sparkle-backed update
   # service is compiled in.
   if (roamux_enable_sparkle) {
-    sources += [ "test/roamux_update_service_factory_browsertest.cc" ]
+    sources += [
+      "test/roamux_update_row_browsertest.cc",
+      "test/roamux_update_service_factory_browsertest.cc",
+    ]
     deps += [ "//roamux/browser/updates:update_service" ]
 
     # roam-150: same as roamux_browser_unittests — the linked Sparkle framework
