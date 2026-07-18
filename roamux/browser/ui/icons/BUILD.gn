@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# roam-159: the Roamux colour vector icons (currently the omnibox-chip product
+# mark). Returned from ChromeLocationBarModelDelegate::GetVectorIconOverride()'s
+# kChromeUIScheme arm via patch 0039; consumed as //roamux/browser/ui/icons.
+import("//components/vector_icons/vector_icons.gni")
+
+aggregate_vector_icons("roamux_vector_icons") {
+  icon_directory = "vector_icons"
+  sources = [ "roamux_product.icon" ]
+}
+
+static_library("icons") {
+  sources = get_target_outputs(":roamux_vector_icons")
+  deps = [
+    ":roamux_vector_icons",
+    "//components/vector_icons",
+    "//skia",
+    "//ui/gfx",
+  ]
+}
