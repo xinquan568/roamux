@@ -33,6 +33,30 @@ class Tier2JobScriptTest(unittest.TestCase):
         self.assertIn('ln -sfn "${GITHUB_WORKSPACE}/roamux"', self.code)  # channel 1: symlink flip
         self.assertIn("apply_patches.py", self.code)                       # channel 2: the runhook
 
+    def test_base_reconciled_to_pristine_before_runhook(self):
+        # roam-175 (roam-160 postmortem): the runhook's stack simulator matches the
+        # tree only against prefixes of THIS checkout's stack, so after a
+        # patch-rewriting/deleting PR the base still carries the PREVIOUS stack —
+        # which matches no prefix and fails the job in seconds. The job must
+        # reconcile the base's tracked state to pristine first: reset --hard (NOT
+        # `checkout -- .`, which restores from a possibly-staged index), then a
+        # clean that drops files a superseded stack ADDED while sparing the overlay
+        # symlink (-e /roamux — untracked by design) and every ignored path (no -x:
+        # out/CI and the warm caches live there). Single -f only: clean must never
+        # descend into nested git repos (Chromium's DEPS-managed submodules).
+        lines = self.code.splitlines()
+        reset = next((i for i, l in enumerate(lines) if "reset --hard HEAD" in l),
+                     None)
+        clean = next((i for i, l in enumerate(lines) if "clean -fd -e /roamux" in l),
+                     None)
+        runhook = next(i for i, l in enumerate(lines) if "apply_patches.py" in l)
+        self.assertIsNotNone(reset, "no `reset --hard HEAD` reconcile in the job")
+        self.assertIsNotNone(clean, "no `clean -fd -e /roamux` reconcile in the job")
+        self.assertLess(reset, runhook, "reconcile must precede the runhook")
+        self.assertLess(clean, runhook, "reconcile must precede the runhook")
+        self.assertNotIn("-x", lines[clean], "clean -x would nuke out/CI")
+        self.assertNotIn("-ff", lines[clean], "clean -ff would enter submodules")
+
     def test_staleness_gate_runs(self):
         self.assertIn("check_override_staleness.py", self.code)
 
@@ -57,8 +81,11 @@ class Tier2JobScriptTest(unittest.TestCase):
     def test_base_writes_only_via_declared_channels(self):
         # Every line that references the base checkout var must be one of the declared channels,
         # a read-only use, or the build-dir path (out/CI lives under the base by design).
+        # "reset --hard" / "clean -fd" (roam-175): the channel-2 reconcile precondition —
+        # exact-command markers, so no other git mutation of the base sneaks past.
         allowed_markers = ("ln -sfn", "apply_patches.py", "check_override_staleness.py", "--chromium-src",
-                           "autoninja", "gn ", "cd ", "cp ", "OUT=", "SRC=", "echo", "test ", "[ ")
+                           "autoninja", "gn ", "cd ", "cp ", "OUT=", "SRC=", "echo", "test ", "[ ",
+                           "reset --hard HEAD", "clean -fd -e /roamux")
         for line in self.code.splitlines():
             if "${SRC}" in line or "$SRC" in line:
                 self.assertTrue(any(m in line for m in allowed_markers),

@@ -3,7 +3,8 @@
 # Roamux tier-2 CI job (roam-36, plan §12.6 personal-machine v1): warm-base incremental build + the
 # Roamux test suites, run on the self-hosted runner. The shared base checkout is touched ONLY via the
 # two declared, restored channels: (1) the overlay symlink (flipped to this job's checkout, restored
-# by the EXIT trap), (2) the idempotent fail-loud patch runhook. No sudo; no secrets on this tier.
+# by the EXIT trap), (2) the pristine-reconcile + idempotent fail-loud patch runhook (roam-175: the
+# base's tracked state is CI-owned). No sudo; no secrets on this tier.
 set -euo pipefail
 
 SRC="${ROAMUX_CHROMIUM_SRC:-${HOME}/chromium/src}"
@@ -24,6 +25,20 @@ echo "== tier-2 warm-base job: base=${SRC} out=${OUT} workspace=${GITHUB_WORKSPA
 
 # Declared channel 1: point the base's overlay at THIS job's checkout.
 ln -sfn "${GITHUB_WORKSPACE}/roamux" "${SRC}/roamux"
+
+# Channel 2 precondition (roam-175, roam-160 postmortem): reconcile the base's tracked
+# state to pristine. The runhook's stack simulator matches the tree only against
+# prefixes of THIS checkout's stack — after a patch-rewriting/deleting PR the base
+# still carries the PREVIOUS stack, which matches no prefix and fails the job in
+# seconds. reset --hard, not `checkout -- .` (that restores from a possibly-staged
+# index); clean drops files a superseded stack ADDED, sparing the overlay symlink
+# (-e /roamux, untracked by design) and all ignored paths (no -x: out/CI and the
+# warm caches live there); single -f never descends into nested git repos (the
+# DEPS-managed submodules). Consequence, documented in docs/ci/self-hosted-runner.md:
+# the base's tracked state is CI-owned — uncommitted local edits do not survive a run.
+echo "reconciling base to pristine (drops any superseded stack state)"
+git -C "${SRC}" reset --hard HEAD
+git -C "${SRC}" clean -fd -e /roamux
 
 # Declared channel 2: the runhook (idempotent; fails loudly on conflict — the rebase signal).
 python3 "${GITHUB_WORKSPACE}/roamux/build/apply_patches.py" --chromium-src "${SRC}"
