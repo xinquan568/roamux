@@ -16,6 +16,13 @@ TEST(RoamuxSmokeTest, FeatureFlagsDefaultDisabled) {
   EXPECT_FALSE(base::FeatureList::IsEnabled(roamux::features::kBraveStyleProfiles));
 }
 
+// roam-179 (E8): the scheme alias/display flag SHIPS ENABLED — the rebrand
+// epic's user-visible branding is on by default, with the flag kept as a
+// kill-switch (D3; flag-off identity is proven at the browser level).
+TEST(RoamuxSmokeTest, SchemeAliasShipsEnabled) {
+  EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kRoamuxSchemeAlias));
+}
+
 // Pref keys are stable, local, and namespaced under "roamux." (plan §7.2).
 TEST(RoamuxSmokeTest, PrefKeysAreNamespaced) {
   EXPECT_STREQ("roamux.tabs.strip_position", roamux::prefs::kTabStripPosition);

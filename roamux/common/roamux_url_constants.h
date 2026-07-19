@@ -10,11 +10,11 @@ namespace roamux {
 // unit test pins literal↔constant agreement).
 inline constexpr char kRoamuxScheme[] = "roamux";
 
-// roamux:// alias hosts (roam-91): the curated alias map rewrites
-// roamux://about → chrome://settings/help (roam-140) and roamux://flags →
-// chrome://flags.
+// roamux:// path-override host (roam-91/roam-140, generalized by roam-179):
+// roamux://about → chrome://settings/help. All other hosts take the generic
+// scheme-only swap in roamux_scheme_rewrite.cc; the former kRoamuxAliasFlagsHost
+// row is subsumed by that rule.
 inline constexpr char kRoamuxAliasAboutHost[] = "about";
-inline constexpr char kRoamuxAliasFlagsHost[] = "flags";
 
 } // namespace roamux
 

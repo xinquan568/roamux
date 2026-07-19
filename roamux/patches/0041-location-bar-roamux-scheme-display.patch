@@ -1,0 +1,40 @@
+--- a/chrome/browser/ui/toolbar/chrome_location_bar_model_delegate.cc
++++ b/chrome/browser/ui/toolbar/chrome_location_bar_model_delegate.cc
+@@ -31,6 +31,8 @@
+ #include "components/security_interstitials/content/security_interstitial_tab_helper.h"
+ #include "components/security_state/content/security_state_tab_helper.h"
+ #include "components/security_state/core/security_state.h"
++// ROAMUX(roam-179): roamux:// display branding for chrome:// URLs.
++#include "roamux/browser/scheme/roamux_scheme_display.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/ssl_status.h"
+@@ -63,9 +65,13 @@ std::u16string
+ ChromeLocationBarModelDelegate::FormattedStringWithEquivalentMeaning(
+     const GURL& url,
+     const std::u16string& formatted_url) const {
+-  return AutocompleteInput::FormattedStringWithEquivalentMeaning(
+-      url, formatted_url, ChromeAutocompleteSchemeClassifier(GetProfile()),
+-      nullptr);
++  // ROAMUX(roam-179): brand chrome:// display text as roamux:// (flag-gated
++  // in the helper; the branded text re-parses to the same destination via the
++  // roam-91 forward rewrite, satisfying this method's contract).
++  return roamux::MaybeBrandFormattedUrlForDisplay(
++      url, AutocompleteInput::FormattedStringWithEquivalentMeaning(
++               url, formatted_url,
++               ChromeAutocompleteSchemeClassifier(GetProfile()), nullptr));
+ }
+ 
+ bool ChromeLocationBarModelDelegate::GetURL(GURL* url) const {
+--- a/chrome/browser/ui/toolbar/BUILD.gn
++++ b/chrome/browser/ui/toolbar/BUILD.gn
+@@ -36,6 +36,9 @@ source_set("toolbar") {
+     "//components/security_state/core",
+     "//content/public/browser",
+     "//content/public/common",
++
++    # ROAMUX(roam-179): roamux:// display branding hook.
++    "//roamux/browser/scheme",
+   ]
+ 
+   if (enable_offline_pages) {

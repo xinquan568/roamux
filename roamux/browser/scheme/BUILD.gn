@@ -5,6 +5,8 @@
 
 source_set("scheme") {
   sources = [
+    "roamux_scheme_display.cc",
+    "roamux_scheme_display.h",
     "roamux_scheme_rewrite.cc",
     "roamux_scheme_rewrite.h",
   ]

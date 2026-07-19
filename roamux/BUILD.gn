@@ -74,6 +74,7 @@ test("roamux_unittests") {
     "test/roamux_indexed_db_import_stage_unittest.cc",
     "test/roamux_overlay_mechanism_unittest.cc",
     "test/roamux_prefs_unittest.cc",
+    "test/roamux_scheme_display_unittest.cc",
     "test/roamux_scheme_rewrite_unittest.cc",
     "test/roamux_signin_build_state_unittest.cc",
     "test/roamux_signin_inert_unittest.cc",
@@ -176,6 +177,7 @@ test("roamux_browser_unittests") {
 test("roamux_browsertests") {
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
   sources = [
+    "test/roamux_chrome_urls_branding_browsertest.cc",
     "test/roamux_clear_browsing_data_browsertest.cc",
     "test/roamux_dark_logo_browsertest.cc",
     "test/roamux_edge_import_coordinator_browsertest.cc",
@@ -190,6 +192,7 @@ test("roamux_browsertests") {
     "test/roamux_profile_creation_browsertest.cc",
     "test/roamux_reload_initial_url_browsertest.mm",
     "test/roamux_scheme_alias_browsertest.cc",
+    "test/roamux_scheme_display_browsertest.cc",
     "test/roamux_shortcuts_browsertest.mm",
     "test/roamux_signin_optin_browsertest.cc",
     "test/roamux_signin_surface_sweep_browsertest.cc",
