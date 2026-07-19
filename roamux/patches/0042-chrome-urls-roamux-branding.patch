@@ -109,11 +109,3 @@
        }`)}
    </ul>` : ''}
  ${this.commandUrls_.length ? html`
-@@ -45,6 +47,6 @@ ${this.commandUrls_.length ? html`
-     address bar if you need them.
-   </p>
-   <ul>
--    ${this.commandUrls_.map(url => html`<li>${url}</li>`)}
-+    ${this.commandUrls_.map(url => html`<li>${this.displayUrl_(url)}</li>`)}
-   </ul>` : ''}`;
- }

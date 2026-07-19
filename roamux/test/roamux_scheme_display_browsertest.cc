@@ -2,17 +2,20 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/omnibox/omnibox_view.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "components/omnibox/browser/location_bar_model.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_type.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/test/support/roamux_browser_test.h"
@@ -71,25 +74,31 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeDisplayBrowserTest,
   EXPECT_EQ(u"roamux://version", displayed_text());
 }
 
-// The omnibox edit text round-trips: what the user would edit is roamux://…,
-// and that text re-navigates to the same chrome:// destination (the
-// FormattedStringWithEquivalentMeaning contract, closed-loop).
+// T5e (Step-5 F2): the FOCUSED omnibox edit text is the branded roamux://…
+// form, and accepting that text through the omnibox itself (classifier →
+// forward rewrite) commits the same chrome:// destination — the
+// FormattedStringWithEquivalentMeaning contract, closed-loop.
 IN_PROC_BROWSER_TEST_F(RoamuxSchemeDisplayBrowserTest,
-                       OmniboxTextIsBrandedAndRoundTrips) {
+                       FocusedOmniboxTextIsBrandedAndAcceptRoundTrips) {
   ASSERT_TRUE(
       content::NavigateToURL(web_contents(), GURL("chrome://version")));
+  chrome::FocusLocationBar(browser());
   OmniboxView* omnibox =
       browser()->window()->GetLocationBar()->GetOmniboxView();
   ASSERT_TRUE(omnibox);
   const std::u16string text = omnibox->GetText();
   EXPECT_EQ(u"roamux://version", text);
-  // Round-trip: navigating the displayed text lands on the same destination
-  // (virtual URL = the roamux:// form, committed URL = chrome://version).
-  const GURL round_trip(base::UTF16ToUTF8(text));
-  EXPECT_TRUE(content::NavigateToURL(web_contents(), round_trip));
+  // Accept the branded text through the omnibox input path (not a direct
+  // NavigateToURL): SendToOmniboxAndSubmit sets the text and accepts it via
+  // the edit model, exercising the classifier and the forward rewrite.
+  content::TestNavigationObserver observer(web_contents());
+  ui_test_utils::SendToOmniboxAndSubmit(browser(), base::UTF16ToUTF8(text));
+  observer.Wait();
   content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(GURL("chrome://version/"), entry->GetURL());
+  EXPECT_EQ(GURL("roamux://version"), entry->GetVirtualURL());
+  EXPECT_EQ(u"roamux://version", displayed_text());
 }
 
 // roam-140 regression guard: the about path-override still displays and

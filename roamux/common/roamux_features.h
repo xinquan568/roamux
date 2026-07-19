@@ -15,7 +15,8 @@ BASE_DECLARE_FEATURE(kTabVisitNav);      // E4 — tab visit-order navigation
 BASE_DECLARE_FEATURE(
     kBraveStyleProfiles); // E5 — Brave-style profiles + hidden optional sign-in
 BASE_DECLARE_FEATURE(
-    kRoamuxSchemeAlias); // E0 — roamux:// scheme alias (branding, roam-91)
+    kRoamuxSchemeAlias); // E8 — roamux:// scheme alias + display branding
+                         // (roam-91/roam-179; SHIPS ENABLED, kill-switch)
 
 } // namespace roamux::features
 

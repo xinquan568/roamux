@@ -31,10 +31,19 @@ constexpr char kProbeScript[] = R"((async () => {
   // First real (non-self) link: href carries the destination, textContent
   // the display branding.
   const link = app.shadowRoot.querySelector('ul li a[href]:not([href="#"])');
+  // First command-URL row (the section is headed "Command URLs for Debug";
+  // rows are plain <li> without an anchor) — must stay chrome://.
+  const cmdH2 = [...app.shadowRoot.querySelectorAll('h2')]
+      .find(h => h.textContent.startsWith('Command URLs'));
+  let cmd = '';
+  for (let el = cmdH2 && cmdH2.nextElementSibling; el; el = el.nextElementSibling) {
+    if (el.tagName === 'UL') { cmd = el.querySelector('li').textContent; break; }
+  }
   return JSON.stringify({
     title: title,
     text: link ? link.textContent : '',
     href: link ? link.getAttribute('href') : '',
+    cmd: cmd,
   });
 })())";
 
@@ -63,6 +72,9 @@ IN_PROC_BROWSER_TEST_F(RoamuxChromeUrlsBrandingBrowserTest,
       << probe;
   EXPECT_NE(probe.find("\"text\":\"roamux://"), std::string::npos) << probe;
   EXPECT_NE(probe.find("\"href\":\"chrome://"), std::string::npos) << probe;
+  // Command-URL rows stay UNBRANDED even with the flag on (plan D4: they are
+  // type-only debug URLs, rendered without an anchor).
+  EXPECT_NE(probe.find("\"cmd\":\"chrome://"), std::string::npos) << probe;
 }
 
 class RoamuxChromeUrlsBrandingFlagOffBrowserTest
