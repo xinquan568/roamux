@@ -95,6 +95,14 @@ jobs:
           set -euo pipefail
           symlink="${CHROMIUM_SRC}/roamux"
           ln -sfn "$(pwd)/roamux" "$symlink"
+          # roam-175: reconcile the shared base to pristine before the runhook — the
+          # stack simulator matches only prefixes of THIS tag's stack, so a base left
+          # at a superseded stack (or carrying a prior release's rebrand mutations)
+          # would fail — or silently contaminate — the tag-time build. Same discipline
+          # as tier2_job.sh: no -x (warm out dirs live), -e /roamux (the overlay
+          # symlink is untracked by design), single -f (never enter submodules).
+          git -C "${CHROMIUM_SRC}" reset --hard HEAD
+          git -C "${CHROMIUM_SRC}" clean -fd -e /roamux
           python3 "${CHROMIUM_SRC}/roamux/build/apply_patches.py" --chromium-src "${CHROMIUM_SRC}"
           # roam-132: rebrand user-visible "Chromium" -> "Roamux" across the GRIT string
           # sources + locale xtb (governed channel §12.2, like apply_patches) — AFTER the

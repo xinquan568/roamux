@@ -11,8 +11,21 @@ This is the **personal-machine v1** (Q(i5)-B: user-provisioned, the operator's o
 a standing labeled runner (`self-hosted, macos, chromium-builder`); the pinned checkout
 (`~/chromium/src` per `CHROMIUM_PIN`) as the shared warm base; a CI-owned build dir (`out/CI`,
 APFS-cloned copy-on-write from the operator's `out/Default`); **declared-channel** base access (the
-job touches the base only via the overlay symlink — restored by an EXIT trap — and the idempotent
-fail-loud runhook; structurally test-enforced by `test_tier2_job.py`).
+job touches the base only via the overlay symlink — restored by an EXIT trap — and the
+pristine-reconcile + idempotent fail-loud runhook; structurally test-enforced by
+`test_tier2_job.py`).
+
+**The base's tracked state is CI-owned (roam-175).** Every tier-2/release run first reconciles
+`~/chromium/src` to pristine (`git reset --hard HEAD` + `git clean -fd -e /roamux` — never `-x`,
+so `out/*` and all ignored caches survive; `-e /roamux` spares the overlay symlink; single `-f`
+never enters the DEPS submodules) before re-applying the job's own patch stack. Rationale: the
+runhook's stack simulator (roam-77) matches the tree only against prefixes of the *current*
+stack, so a base left at a superseded stack — any patch-rewriting or patch-deleting change, first
+hit by roam-160/PR #173 — matches no prefix and fails the job; a prior release's
+`rebrand_strings.py` mutations would silently contaminate the next build. Operator consequence:
+**uncommitted local edits to the base do not survive a CI run** — transient local stack states
+(the local build-gate flow) are fair game by design; anything you want to keep must live in the
+overlay or a patch.
 
 **Not delivered (the upgrade path, in order):** a dedicated low-privilege runner user (clean HOME —
 no keychain/SSH/`gh` tokens); filesystem-enforced read-only base; JIT/ephemeral runners; per-job VM
@@ -58,6 +71,7 @@ gh variable delete ROAMUX_CI_CHROMIUM_RUNNER --repo <owner>/<repo>
 `out/CI` is an APFS clone of the operator's warm `out/Default` (near-instant, ~zero disk until
 divergence) made on first job use; ninja then builds incrementally. Refresh = delete `out/CI` (the
 next job re-clones). Known v1 contention: the runner shares the machine/checkout with local
-development — jobs serialize on the single runner; a PR that *changes* patches leaves the base's
-applied set at branch state until the next runhook run converges it; avoid heavy local builds while
-a CI job runs.
+development — jobs serialize on the single runner; each run reconciles the base to pristine and
+re-applies its own stack (roam-175 — so whatever applied set a run leaves behind, the next run
+recovers; before roam-175 a patch-rewriting PR wedged the runhook until a manual reset); avoid
+heavy local builds while a CI job runs — the reconcile will reset a racing local stack mid-build.
