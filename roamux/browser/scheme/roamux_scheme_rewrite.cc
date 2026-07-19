@@ -13,24 +13,25 @@ namespace roamux {
 
 namespace {
 
-// The curated alias map (roam-91). Adding a branding alias is a row here plus
-// its unit/browser test rows — never new patch surface. Unlisted hosts keep
-// the handled-scheme no-commit dead-end (patch 0028 lists "roamux" in
-// ProfileIOData::IsHandledProtocol, so they are dropped rather than handed to
-// the OS external-protocol path), and a generic roamux://X → chrome://X
-// rewrite is deliberately NOT offered (no shadowing of real chrome:// hosts).
+// The path-override map (roam-91, generalized by roam-179). Rows exist ONLY
+// for hosts whose chrome:// target differs by more than the scheme
+// (roamux://about → chrome://settings/help, roam-140). Every other host takes
+// the generic scheme-only swap below — roamux://X → chrome://X can never
+// shadow a real chrome:// host because the host is untouched. Hosts that
+// don't exist as WebUIs (roamux://no-such-host) rewrite to their chrome://
+// form and fail exactly as the typed chrome:// URL would; renderer-initiated
+// roamux:// stays blocked by the handled-scheme registration (patch 0028
+// lists "roamux" in ProfileIOData::IsHandledProtocol), never the OS
+// external-protocol path.
 struct AliasRow {
   std::string_view roamux_host;
   std::string_view chrome_host;
-  // Optional chrome:// path (roam-140). Empty = preserve the incoming path/ref
-  // (roamux://flags/#x → chrome://flags/#x). Non-empty = override the path
-  // (roamux://about → chrome://settings/help), needed when the target host is
-  // a real settings sub-page rather than a bare WebUI host.
+  // chrome:// path override — non-empty for rows whose target is a settings
+  // sub-page rather than a bare WebUI host.
   std::string_view chrome_path;
 };
 constexpr AliasRow kAliasMap[] = {
     {kRoamuxAliasAboutHost, "settings", "/help"}, // roamux://about → settings/help
-    {kRoamuxAliasFlagsHost, "flags", ""},         // roamux://flags (path preserved)
 };
 
 } // namespace
@@ -45,18 +46,20 @@ bool MaybeRewriteRoamuxAliasURL(GURL *url,
   if (!url->SchemeIs(kRoamuxScheme)) {
     return false;
   }
+  GURL::Replacements replacements;
+  replacements.SetSchemeStr(content::kChromeUIScheme);
   for (const AliasRow &row : kAliasMap) {
     if (url->GetHost() == row.roamux_host) {
-      GURL::Replacements replacements;
-      replacements.SetSchemeStr(content::kChromeUIScheme);
       replacements.SetHostStr(row.chrome_host);
       if (!row.chrome_path.empty()) {
         replacements.SetPathStr(row.chrome_path);
       }
-      *url = url->ReplaceComponents(replacements);
       break;
     }
   }
+  // roam-179: hosts without an override row take the scheme-only swap —
+  // host/path/ref preserved.
+  *url = url->ReplaceComponents(replacements);
   // Chaining idiom (browser_about_handler.cc precedent): having re-written the
   // URL, let the later chrome: handlers process it.
   return false;

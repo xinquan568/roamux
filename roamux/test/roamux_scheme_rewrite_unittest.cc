@@ -58,12 +58,28 @@ TEST_F(RoamuxSchemeRewriteTest, RewritesFlagsPreservingPathAndRef) {
   EXPECT_EQ("chrome://flags/#roamux-scheme-alias", url.spec());
 }
 
-TEST_F(RoamuxSchemeRewriteTest, LeavesUnmappedRoamuxHostUntouched) {
+// roam-179: unlisted hosts are no longer a dead-end — the generic rule swaps
+// the scheme only (host/path/ref untouched), superseding the roam-91 curated
+// dead-end contract.
+TEST_F(RoamuxSchemeRewriteTest, GenericHostRewritesSchemeOnly) {
   features_.InitAndEnableFeature(features::kRoamuxSchemeAlias);
   GURL url("roamux://settings");
-  const GURL original = url;
   EXPECT_FALSE(MaybeRewriteRoamuxAliasURL(&url, nullptr));
-  EXPECT_EQ(original, url);
+  EXPECT_EQ("chrome://settings/", url.spec());
+}
+
+TEST_F(RoamuxSchemeRewriteTest, GenericVersionHostRewrites) {
+  features_.InitAndEnableFeature(features::kRoamuxSchemeAlias);
+  GURL url("roamux://version");
+  EXPECT_FALSE(MaybeRewriteRoamuxAliasURL(&url, nullptr));
+  EXPECT_EQ("chrome://version/", url.spec());
+}
+
+TEST_F(RoamuxSchemeRewriteTest, GenericPreservesPathAndRef) {
+  features_.InitAndEnableFeature(features::kRoamuxSchemeAlias);
+  GURL url("roamux://settings/searchEngines#one");
+  EXPECT_FALSE(MaybeRewriteRoamuxAliasURL(&url, nullptr));
+  EXPECT_EQ("chrome://settings/searchEngines#one", url.spec());
 }
 
 // The issue's no-shadowing negative: real chrome:// URLs — including the alias
@@ -91,10 +107,13 @@ TEST_F(RoamuxSchemeRewriteTest, NeverTouchesWebSchemes) {
 // mapped hosts.
 TEST_F(RoamuxSchemeRewriteTest, FlagOffIsInert) {
   features_.InitAndDisableFeature(features::kRoamuxSchemeAlias);
-  GURL url("roamux://about");
-  const GURL original = url;
-  EXPECT_FALSE(MaybeRewriteRoamuxAliasURL(&url, nullptr));
-  EXPECT_EQ(original, url);
+  // Mapped host AND a generic host (roam-179): both strict no-ops when off.
+  for (const char *spec : {"roamux://about", "roamux://version"}) {
+    GURL url(spec);
+    const GURL original = url;
+    EXPECT_FALSE(MaybeRewriteRoamuxAliasURL(&url, nullptr));
+    EXPECT_EQ(original, url) << spec;
+  }
 }
 
 // roam-93 dieback (D2a): the OLD roamex:// scheme (pre-rebrand) is no longer

@@ -5,7 +5,8 @@
 #include "base/feature_list.h"
 
 // Per-feature base::Feature flags — each ships DISABLED by default until its
-// epic completes (plan P3).
+// epic completes (plan P3), then flips on with the flag kept as a kill-switch
+// (first: kRoamuxSchemeAlias, roam-179).
 namespace roamux::features {
 
 BASE_DECLARE_FEATURE(kTabStripPosition); // E1 — configurable tab-strip position
@@ -15,7 +16,8 @@ BASE_DECLARE_FEATURE(kTabVisitNav);      // E4 — tab visit-order navigation
 BASE_DECLARE_FEATURE(
     kBraveStyleProfiles); // E5 — Brave-style profiles + hidden optional sign-in
 BASE_DECLARE_FEATURE(
-    kRoamuxSchemeAlias); // E0 — roamux:// scheme alias (branding, roam-91)
+    kRoamuxSchemeAlias); // E8 — roamux:// scheme alias + display branding
+                         // (roam-91/roam-179; SHIPS ENABLED, kill-switch)
 
 } // namespace roamux::features
 

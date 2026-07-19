@@ -75,18 +75,21 @@ IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest,
   EXPECT_EQ(GURL("roamux://flags"), entry->GetVirtualURL());
 }
 
-// AC3: unmapped roamux:// hosts never alias into the chrome:// namespace —
-// the curated map is not a generic roamux://X → chrome://X rewrite. A
-// handled-but-unmapped roamux:// URL is dropped without committing anything:
-// the tab stays on the initial about:blank — never chrome://settings, never
-// an OS external-protocol handoff.
-IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest, UnmappedHostDoesNotAlias) {
-  EXPECT_FALSE(
+// AC3 (superseded by roam-179): hosts without a path-override row take the
+// GENERIC scheme-only swap — roamux://settings commits chrome://settings
+// while the omnibox-visible virtual URL stays roamux://settings. (The roam-91
+// curated dead-end contract this test used to pin was deliberately retired;
+// the renderer-block and redirect proofs below — and their generic-host
+// re-proofs in roamux_scheme_display_browsertest.cc — are what keep the
+// security posture.)
+IN_PROC_BROWSER_TEST_F(RoamuxSchemeAliasBrowserTest, GenericHostAliases) {
+  EXPECT_TRUE(
       content::NavigateToURL(web_contents(), GURL("roamux://settings")));
   content::NavigationEntry* entry = last_entry();
   ASSERT_TRUE(entry);
-  EXPECT_EQ(GURL("about:blank"), entry->GetURL());
-  EXPECT_NE(GURL("chrome://settings/"), entry->GetURL());
+  EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
+  EXPECT_EQ(GURL("chrome://settings/"), entry->GetURL());
+  EXPECT_EQ(GURL("roamux://settings"), entry->GetVirtualURL());
 }
 
 // AC4 (D2a proof): web content cannot reach the alias target through the alias.

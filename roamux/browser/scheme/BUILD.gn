@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-# roam-91: the roamux:// scheme alias — curated roamux://<host> → chrome://<host>
-# forward rewrite (flag-gated by kRoamuxSchemeAlias). Additive //roamux; hooked
-# upstream only via declared patch 0028 (plan §12.2).
+# roam-91/roam-179: the roamux:// scheme surface — the generic
+# roamux://<host> → chrome://<host> forward rewrite (path-override map on
+# top) and the presentation-only chrome:// → roamux:// display branding
+# (flag-gated by kRoamuxSchemeAlias, checked per call). Additive //roamux;
+# hooked upstream only via declared patches 0028 + 0041 (plan §12.2).
 
 source_set("scheme") {
   sources = [
+    "roamux_scheme_display.cc",
+    "roamux_scheme_display.h",
     "roamux_scheme_rewrite.cc",
     "roamux_scheme_rewrite.h",
   ]
