@@ -116,13 +116,17 @@ TEST(ComputeBottomStripLayoutTest, NegativeStripHeightYieldsEmptyBand) {
 namespace roamux {
 namespace {
 
+// roam-182: the upstream pref is registered here only to prove the dock
+// predicates IGNORE it (sole-authority contract). Local literal — the mirror
+// constant retired from the predicate API with roam-182.
+inline constexpr char kUpstreamVerticalTabsPref[] = "vertical_tabs.enabled";
+
 class VerticalPlacementPredicateTest : public testing::Test {
  protected:
   VerticalPlacementPredicateTest() {
     prefs::RegisterProfilePrefs(pref_service_.registry());
-    // Mirror of the upstream pref this overlay reads (never writes).
-    pref_service_.registry()->RegisterBooleanPref(
-        kUpstreamVerticalTabsEnabledPref, false);
+    pref_service_.registry()->RegisterBooleanPref(kUpstreamVerticalTabsPref,
+                                                  false);
   }
 
   TestingPrefServiceSimple pref_service_;
@@ -149,27 +153,25 @@ TEST_F(VerticalPlacementPredicateTest, DisplayFalseWhenFlagOff) {
   EXPECT_FALSE(ShouldDisplayVerticalTabsForPlacement(&pref_service_));
 }
 
-TEST_F(VerticalPlacementPredicateTest, RightDockOnlyWhenRoamuxDriven) {
+TEST_F(VerticalPlacementPredicateTest, RightDockFollowsPlacementAlone) {
   base::test::ScopedFeatureList features;
   features.InitAndEnableFeature(features::kTabStripPosition);
   SetTabStripPlacement(&pref_service_, TabStripPlacement::kRight);
   EXPECT_TRUE(ShouldDockVerticalTabStripRight(&pref_service_));
-  // Upstream pref explicitly ON keeps the upstream (left) dock.
-  pref_service_.SetBoolean(kUpstreamVerticalTabsEnabledPref, true);
-  EXPECT_FALSE(ShouldDockVerticalTabStripRight(&pref_service_));
-  pref_service_.SetBoolean(kUpstreamVerticalTabsEnabledPref, false);
+  // roam-182 sole authority: the upstream pref no longer moves the dock.
+  pref_service_.SetBoolean(kUpstreamVerticalTabsPref, true);
+  EXPECT_TRUE(ShouldDockVerticalTabStripRight(&pref_service_));
   SetTabStripPlacement(&pref_service_, TabStripPlacement::kLeft);
   EXPECT_FALSE(ShouldDockVerticalTabStripRight(&pref_service_));
 }
 
-TEST_F(VerticalPlacementPredicateTest, LeftDockOnlyWhenRoamuxDriven) {
+TEST_F(VerticalPlacementPredicateTest, LeftDockFollowsPlacementAlone) {
   base::test::ScopedFeatureList features;
   features.InitAndEnableFeature(features::kTabStripPosition);
   SetTabStripPlacement(&pref_service_, TabStripPlacement::kLeft);
   EXPECT_TRUE(ShouldDockVerticalTabStripLeft(&pref_service_));
-  pref_service_.SetBoolean(kUpstreamVerticalTabsEnabledPref, true);
-  EXPECT_FALSE(ShouldDockVerticalTabStripLeft(&pref_service_));
-  pref_service_.SetBoolean(kUpstreamVerticalTabsEnabledPref, false);
+  pref_service_.SetBoolean(kUpstreamVerticalTabsPref, true);
+  EXPECT_TRUE(ShouldDockVerticalTabStripLeft(&pref_service_));
   SetTabStripPlacement(&pref_service_, TabStripPlacement::kRight);
   EXPECT_FALSE(ShouldDockVerticalTabStripLeft(&pref_service_));
 }

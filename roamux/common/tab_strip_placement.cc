@@ -39,26 +39,15 @@ bool ShouldDisplayVerticalTabsForPlacement(const PrefService* pref_service) {
 }
 
 bool ShouldDockVerticalTabStripRight(const PrefService* pref_service) {
-  if (GetTabStripPlacement(pref_service) != TabStripPlacement::kRight) {
-    return false;
-  }
-  // Robust to contexts where the upstream pref is not registered.
-  const PrefService::Preference* upstream =
-      pref_service->FindPreference(kUpstreamVerticalTabsEnabledPref);
-  const bool upstream_on =
-      upstream && upstream->GetValue()->GetIfBool().value_or(false);
-  return !upstream_on;
+  // roam-182: sole authority — the dock side follows the roamux placement
+  // alone; the upstream pref is no longer consulted (it was the source of the
+  // "placement does nothing" bug when upstream vertical tabs were on).
+  return GetTabStripPlacement(pref_service) == TabStripPlacement::kRight;
 }
 
 bool ShouldDockVerticalTabStripLeft(const PrefService* pref_service) {
-  if (GetTabStripPlacement(pref_service) != TabStripPlacement::kLeft) {
-    return false;
-  }
-  const PrefService::Preference* upstream =
-      pref_service->FindPreference(kUpstreamVerticalTabsEnabledPref);
-  const bool upstream_on =
-      upstream && upstream->GetValue()->GetIfBool().value_or(false);
-  return !upstream_on;
+  // roam-182: see ShouldDockVerticalTabStripRight.
+  return GetTabStripPlacement(pref_service) == TabStripPlacement::kLeft;
 }
 
 BottomStripLayout ComputeBottomStripLayout(const gfx::Rect& client_area,

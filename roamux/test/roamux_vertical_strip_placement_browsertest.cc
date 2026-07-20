@@ -6,6 +6,7 @@
 
 #include <string_view>
 
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
@@ -209,8 +210,11 @@ class RoamuxVerticalStripUpstreamPrecedenceTest
   base::test::ScopedFeatureList features_;
 };
 
+// roam-182 sole authority: the roamux placement drives display and dock even
+// when the upstream pref is explicitly on (the old precedence rule made every
+// placement a user-visible no-op in exactly this profile state).
 IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
-                       UpstreamPrefOnKeepsLeadingDockDespiteRoamuxRight) {
+                       RoamuxRightDocksRightDespiteUpstreamPrefOn) {
   BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser());
   PrefService* prefs = browser()->profile()->GetPrefs();
   prefs->SetBoolean(::prefs::kVerticalTabsEnabled, true);
@@ -223,10 +227,157 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
   EXPECT_TRUE(vertical->GetVisible());
   gfx::RectF rect(gfx::SizeF(vertical->size()));
   views::View::ConvertRectToTarget(vertical, bv, &rect);
-  // Upstream pref wins: leading (left) dock.
-  EXPECT_EQ(bv->GetLocalBounds().x(), gfx::ToEnclosingRect(rect).x());
-  // And roamux never wrote the upstream pref's value back off/on.
+  EXPECT_EQ(bv->GetLocalBounds().right(), gfx::ToEnclosingRect(rect).right());
+  // Mid-session the upstream pref is display-inert, not rewritten
+  // (normalization happens only at profile init).
   EXPECT_TRUE(prefs->GetBoolean(::prefs::kVerticalTabsEnabled));
+}
+
+// The direct regression test for the reported bug: with the upstream pref set
+// (the state the stock "Tab position: Vertical" dropdown produces), every
+// placement must still take live effect.
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
+                       AllFourPlacementsActWithUpstreamPrefSet) {
+  BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser());
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  prefs->SetBoolean(::prefs::kVerticalTabsEnabled, true);
+
+  auto set_placement = [&](int value) {
+    prefs->SetInteger(prefs::kTabStripPosition, value);
+    base::RunLoop().RunUntilIdle();
+    bv->DeprecatedLayoutImmediately();
+  };
+  views::View* horizontal =
+      FindViewByClassName(bv, "HorizontalTabStripRegionView");
+  ASSERT_NE(nullptr, horizontal);
+
+  set_placement(0);  // top
+  EXPECT_TRUE(horizontal->GetVisible());
+  EXPECT_LT(BoundsInBrowserView(horizontal, bv).y(),
+            bv->GetLocalBounds().height() / 2);
+
+  set_placement(1);  // bottom
+  EXPECT_TRUE(horizontal->GetVisible());
+  EXPECT_EQ(bv->GetLocalBounds().bottom(),
+            BoundsInBrowserView(horizontal, bv).bottom());
+
+  set_placement(2);  // left
+  views::View* vertical = FindViewByClassName(bv, "VerticalTabStripRegionView");
+  ASSERT_NE(nullptr, vertical);
+  EXPECT_TRUE(vertical->GetVisible());
+  EXPECT_EQ(bv->GetLocalBounds().x(), BoundsInBrowserView(vertical, bv).x());
+
+  set_placement(3);  // right
+  EXPECT_TRUE(vertical->GetVisible());
+  EXPECT_EQ(bv->GetLocalBounds().right(),
+            BoundsInBrowserView(vertical, bv).right());
+}
+
+// roam-182: with the flag on, the upstream "switch to vertical" toggle maps
+// onto the placement (kLeft) instead of writing the upstream pref.
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
+                       UpstreamToggleToVerticalMapsToLeftPlacement) {
+  SetPlacementAndLayout(0);  // top (horizontal).
+  auto* controller = ::tabs::VerticalTabStripStateController::From(browser());
+  ASSERT_NE(nullptr, controller);
+
+  controller->SetVerticalTabsEnabled(true);
+  base::RunLoop().RunUntilIdle();
+  browser_view()->DeprecatedLayoutImmediately();
+
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  EXPECT_EQ(2, prefs->GetInteger(prefs::kTabStripPosition));  // kLeft.
+  EXPECT_FALSE(prefs->GetBoolean(::prefs::kVerticalTabsEnabled));
+  views::View* vertical = vertical_region();
+  ASSERT_NE(nullptr, vertical);
+  EXPECT_TRUE(vertical->GetVisible());
+}
+
+// roam-182 lock semantics under sole authority: a placement change that flips
+// the display mode while an enable-state lock is held stays frozen (no mid-lock
+// mode-change notification, visible state unchanged), and reconciles with
+// EXACTLY ONE notification on unlock to the placement-ONLY answer even with the
+// upstream pref set (the old code kept the upstream contribution and stayed
+// vertical). Covered in both directions: vertical->horizontal and
+// horizontal->vertical.
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
+                       LockedVerticalToHorizontalReconcilesOnceOnUnlock) {
+  BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser());
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  auto* controller = ::tabs::VerticalTabStripStateController::From(browser());
+  ASSERT_NE(nullptr, controller);
+
+  prefs->SetBoolean(::prefs::kVerticalTabsEnabled, true);
+  prefs->SetInteger(prefs::kTabStripPosition, 2);  // left — vertical visible.
+  base::RunLoop().RunUntilIdle();
+  bv->DeprecatedLayoutImmediately();
+  views::View* vertical = FindViewByClassName(bv, "VerticalTabStripRegionView");
+  ASSERT_NE(nullptr, vertical);
+  ASSERT_TRUE(vertical->GetVisible());
+
+  int mode_changes = 0;
+  auto subscription = controller->RegisterOnModeChanged(base::BindRepeating(
+      [](int* n, ::tabs::VerticalTabStripStateController*) { ++*n; },
+      &mode_changes));
+
+  {
+    auto lock = controller->GetEnableStateLock();
+    prefs->SetInteger(prefs::kTabStripPosition, 1);  // bottom while locked.
+    base::RunLoop().RunUntilIdle();
+    bv->DeprecatedLayoutImmediately();
+    EXPECT_TRUE(vertical->GetVisible()) << "display must stay frozen mid-lock";
+    EXPECT_EQ(0, mode_changes) << "no mode-change notification while locked";
+  }
+  base::RunLoop().RunUntilIdle();
+  bv->DeprecatedLayoutImmediately();
+
+  EXPECT_EQ(1, mode_changes) << "exactly one reconcile notification on unlock";
+  EXPECT_FALSE(vertical->GetVisible());
+  views::View* horizontal =
+      FindViewByClassName(bv, "HorizontalTabStripRegionView");
+  ASSERT_NE(nullptr, horizontal);
+  EXPECT_TRUE(horizontal->GetVisible());
+  EXPECT_EQ(bv->GetLocalBounds().bottom(),
+            BoundsInBrowserView(horizontal, bv).bottom());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
+                       LockedHorizontalToVerticalReconcilesOnceOnUnlock) {
+  BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser());
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  auto* controller = ::tabs::VerticalTabStripStateController::From(browser());
+  ASSERT_NE(nullptr, controller);
+
+  prefs->SetBoolean(::prefs::kVerticalTabsEnabled, true);
+  prefs->SetInteger(prefs::kTabStripPosition, 0);  // top — horizontal.
+  base::RunLoop().RunUntilIdle();
+  bv->DeprecatedLayoutImmediately();
+  views::View* horizontal =
+      FindViewByClassName(bv, "HorizontalTabStripRegionView");
+  ASSERT_NE(nullptr, horizontal);
+  ASSERT_TRUE(horizontal->GetVisible());
+
+  int mode_changes = 0;
+  auto subscription = controller->RegisterOnModeChanged(base::BindRepeating(
+      [](int* n, ::tabs::VerticalTabStripStateController*) { ++*n; },
+      &mode_changes));
+
+  {
+    auto lock = controller->GetEnableStateLock();
+    prefs->SetInteger(prefs::kTabStripPosition, 3);  // right while locked.
+    base::RunLoop().RunUntilIdle();
+    bv->DeprecatedLayoutImmediately();
+    EXPECT_EQ(0, mode_changes) << "no mode-change notification while locked";
+  }
+  base::RunLoop().RunUntilIdle();
+  bv->DeprecatedLayoutImmediately();
+
+  EXPECT_EQ(1, mode_changes) << "exactly one reconcile notification on unlock";
+  views::View* vertical = FindViewByClassName(bv, "VerticalTabStripRegionView");
+  ASSERT_NE(nullptr, vertical);
+  EXPECT_TRUE(vertical->GetVisible());
+  EXPECT_EQ(bv->GetLocalBounds().right(),
+            BoundsInBrowserView(vertical, bv).right());
 }
 
 }  // namespace
