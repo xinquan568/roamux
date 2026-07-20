@@ -34,9 +34,13 @@ void MigrateProfilePrefs(PrefService* pref_service) {
   }
   const PrefService::Preference* upstream =
       pref_service->FindPreference(kUpstreamVerticalTabsEnabled);
-  // Only normalize an explicitly-true, unmanaged upstream pref. A managed
-  // value is policy-owned; leave it (and the placement) untouched.
+  const PrefService::Preference* placement_pref =
+      pref_service->FindPreference(kTabStripPosition);
+  // Only normalize an explicitly-true, unmanaged upstream pref, and never when
+  // EITHER pref is policy-owned — a managed value must not be rewritten and a
+  // managed placement must not be forced onto Left. Leave both untouched.
   if (!upstream || upstream->IsManaged() ||
+      (placement_pref && placement_pref->IsManaged()) ||
       !pref_service->GetBoolean(kUpstreamVerticalTabsEnabled)) {
     return;
   }

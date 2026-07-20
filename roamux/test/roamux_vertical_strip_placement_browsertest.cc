@@ -6,6 +6,7 @@
 
 #include <string_view>
 
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
@@ -292,12 +293,15 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
   EXPECT_TRUE(vertical->GetVisible());
 }
 
-// roam-182 lock semantics under sole authority: a placement change while an
-// enable-state lock is held stays frozen (visible state unchanged), and the
-// unlock reconcile lands on the placement-ONLY answer even with the upstream
-// pref set (the old code kept the upstream contribution and stayed vertical).
+// roam-182 lock semantics under sole authority: a placement change that flips
+// the display mode while an enable-state lock is held stays frozen (no mid-lock
+// mode-change notification, visible state unchanged), and reconciles with
+// EXACTLY ONE notification on unlock to the placement-ONLY answer even with the
+// upstream pref set (the old code kept the upstream contribution and stayed
+// vertical). Covered in both directions: vertical->horizontal and
+// horizontal->vertical.
 IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
-                       LockedPlacementChangeReconcilesToPlacementOnlyAnswer) {
+                       LockedVerticalToHorizontalReconcilesOnceOnUnlock) {
   BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser());
   PrefService* prefs = browser()->profile()->GetPrefs();
   auto* controller = ::tabs::VerticalTabStripStateController::From(browser());
@@ -311,16 +315,23 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
   ASSERT_NE(nullptr, vertical);
   ASSERT_TRUE(vertical->GetVisible());
 
+  int mode_changes = 0;
+  auto subscription = controller->RegisterOnModeChanged(base::BindRepeating(
+      [](int* n, ::tabs::VerticalTabStripStateController*) { ++*n; },
+      &mode_changes));
+
   {
     auto lock = controller->GetEnableStateLock();
     prefs->SetInteger(prefs::kTabStripPosition, 1);  // bottom while locked.
     base::RunLoop().RunUntilIdle();
     bv->DeprecatedLayoutImmediately();
     EXPECT_TRUE(vertical->GetVisible()) << "display must stay frozen mid-lock";
+    EXPECT_EQ(0, mode_changes) << "no mode-change notification while locked";
   }
   base::RunLoop().RunUntilIdle();
   bv->DeprecatedLayoutImmediately();
 
+  EXPECT_EQ(1, mode_changes) << "exactly one reconcile notification on unlock";
   EXPECT_FALSE(vertical->GetVisible());
   views::View* horizontal =
       FindViewByClassName(bv, "HorizontalTabStripRegionView");
@@ -328,6 +339,45 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
   EXPECT_TRUE(horizontal->GetVisible());
   EXPECT_EQ(bv->GetLocalBounds().bottom(),
             BoundsInBrowserView(horizontal, bv).bottom());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripUpstreamPrecedenceTest,
+                       LockedHorizontalToVerticalReconcilesOnceOnUnlock) {
+  BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser());
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  auto* controller = ::tabs::VerticalTabStripStateController::From(browser());
+  ASSERT_NE(nullptr, controller);
+
+  prefs->SetBoolean(::prefs::kVerticalTabsEnabled, true);
+  prefs->SetInteger(prefs::kTabStripPosition, 0);  // top — horizontal.
+  base::RunLoop().RunUntilIdle();
+  bv->DeprecatedLayoutImmediately();
+  views::View* horizontal =
+      FindViewByClassName(bv, "HorizontalTabStripRegionView");
+  ASSERT_NE(nullptr, horizontal);
+  ASSERT_TRUE(horizontal->GetVisible());
+
+  int mode_changes = 0;
+  auto subscription = controller->RegisterOnModeChanged(base::BindRepeating(
+      [](int* n, ::tabs::VerticalTabStripStateController*) { ++*n; },
+      &mode_changes));
+
+  {
+    auto lock = controller->GetEnableStateLock();
+    prefs->SetInteger(prefs::kTabStripPosition, 3);  // right while locked.
+    base::RunLoop().RunUntilIdle();
+    bv->DeprecatedLayoutImmediately();
+    EXPECT_EQ(0, mode_changes) << "no mode-change notification while locked";
+  }
+  base::RunLoop().RunUntilIdle();
+  bv->DeprecatedLayoutImmediately();
+
+  EXPECT_EQ(1, mode_changes) << "exactly one reconcile notification on unlock";
+  views::View* vertical = FindViewByClassName(bv, "VerticalTabStripRegionView");
+  ASSERT_NE(nullptr, vertical);
+  EXPECT_TRUE(vertical->GetVisible());
+  EXPECT_EQ(bv->GetLocalBounds().right(),
+            BoundsInBrowserView(vertical, bv).right());
 }
 
 }  // namespace

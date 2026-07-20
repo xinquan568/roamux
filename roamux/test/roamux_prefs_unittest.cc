@@ -117,6 +117,16 @@ TEST_F(RoamuxPrefsMigrationTest, ManagedUpstreamPrefIsUntouched) {
   EXPECT_TRUE(prefs_.GetBoolean(kUpstreamVerticalTabsPref));
 }
 
+TEST_F(RoamuxPrefsMigrationTest, ManagedPlacementBlocksMigration) {
+  // A policy-owned placement must not be forced onto Left, and the upstream
+  // pref must not be cleared underneath it.
+  prefs_.SetBoolean(kUpstreamVerticalTabsPref, true);
+  prefs_.SetManagedPref(roamux::prefs::kTabStripPosition, base::Value(0));
+  roamux::prefs::MigrateProfilePrefs(&prefs_);
+  EXPECT_EQ(prefs_.GetInteger(roamux::prefs::kTabStripPosition), 0);
+  EXPECT_TRUE(prefs_.GetBoolean(kUpstreamVerticalTabsPref));
+}
+
 TEST(RoamuxPrefsMigrationFlagOffTest, FlagOffIsStrictNoOp) {
   base::test::ScopedFeatureList features;
   features.InitAndDisableFeature(roamux::features::kTabStripPosition);
