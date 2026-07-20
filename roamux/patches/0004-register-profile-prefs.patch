@@ -11,7 +11,7 @@ index 092d14266a..bb0b1e7092 100644
      ":util",
      "//chrome/browser:browser_process",
 diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
-index 15f4e73527..2152c94864 100644
+index 15f4e73527..7223c50487 100644
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
 @@ -213,6 +213,7 @@
@@ -30,3 +30,15 @@ index 15f4e73527..2152c94864 100644
    safe_browsing::RegisterProfilePrefs(registry);
    safety_check::prefs::RegisterProfilePrefs(registry);
    SearchPrefetchService::RegisterProfilePrefs(registry);
+@@ -2723,6 +2725,11 @@ void MigrateObsoleteProfilePrefs(PrefService* profile_prefs,
+   // Please don't delete the following line. It is used by PRESUBMIT.py.
+   // END_MIGRATE_OBSOLETE_PROFILE_PREFS
+ 
++  // Roamux (roam-182): normalize the upstream vertical-tabs pref onto the
++  // roamux tab-strip placement (sole-authority contract). Flag-gated and a
++  // no-op unless an unmanaged vertical_tabs.enabled is explicitly true.
++  roamux::prefs::MigrateProfilePrefs(profile_prefs);
++
+   // IMPORTANT NOTE: This code is *not* run on iOS Chrome. If a pref is migrated
+   // or cleared here, and that pref is also used in iOS Chrome, it may also need
+   // to be migrated or cleared specifically for iOS as well. This could be by

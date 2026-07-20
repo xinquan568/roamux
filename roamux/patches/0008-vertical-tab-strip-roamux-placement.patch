@@ -36,19 +36,28 @@ index 6aaf694106..34157ef829 100644
  
        std::optional<bool> restored_state_collapsed =
 diff --git a/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc b/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc
-index 9919d3a042..3744a236b2 100644
+index 9919d3a042..b206814076 100644
 --- a/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc
 +++ b/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc
-@@ -22,6 +22,8 @@
- #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
- #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
- #include "chrome/browser/ui/tabs/features.h"
+@@ -6,6 +6,7 @@
+ 
+ #include <optional>
+ 
++#include "base/feature_list.h"
+ #include "base/i18n/rtl.h"
+ #include "base/metrics/user_metrics.h"
+ #include "base/metrics/user_metrics_action.h"
+@@ -30,6 +31,9 @@
+ #include "components/prefs/pref_notifier_impl.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/sessions/core/session_id.h"
++#include "roamux/common/roamux_features.h"
 +#include "roamux/common/roamux_prefs.h"
 +#include "roamux/common/tab_strip_placement.h"
- #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
- #include "chrome/browser/ui/views/interaction/browser_elements_views.h"
- #include "chrome/common/pref_names.h"
-@@ -63,6 +65,17 @@ VerticalTabStripStateController::VerticalTabStripStateController(
+ #include "ui/actions/actions.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/views/vector_icons.h"
+@@ -63,6 +67,17 @@ VerticalTabStripStateController::VerticalTabStripStateController(
        base::BindRepeating(&VerticalTabStripStateController::OnModeChanged,
                            base::Unretained(this)));
  
@@ -66,35 +75,37 @@ index 9919d3a042..3744a236b2 100644
    if (IsVerticalTabsExpandOnHoverFeatureEnabled()) {
      is_expand_on_hover_enabled_ =
          pref_service_->GetBoolean(prefs::kVerticalTabsExpandOnHoverEnabled);
-@@ -174,10 +187,26 @@ void VerticalTabStripStateController::SetDelegate(Delegate* delegate) {
+@@ -174,10 +189,29 @@ void VerticalTabStripStateController::SetDelegate(Delegate* delegate) {
  }
  
  bool VerticalTabStripStateController::ShouldDisplayVerticalTabs() const {
--  return IsVerticalTabsFeatureEnabled() && is_vertical_tabs_enabled_;
-+  // Roamux (roam-8): placement left/right also displays the strip (flag-gated
-+  // by roamux::kTabStripPosition; deliberately independent of the upstream
-+  // feature flags, which are disabled-by-default at this pin). Reads the
-+  // cached contribution so the answer is frozen while a lock is held, exactly
-+  // like the upstream is_vertical_tabs_enabled_ cache.
-+  return (IsVerticalTabsFeatureEnabled() && is_vertical_tabs_enabled_) ||
-+         roamux_placement_wants_vertical_;
++  // Roamux (roam-182): with the roamux flag on, the placement is the SOLE
++  // authority for vertical display — the upstream pref/feature contribution is
++  // ignored (ORing it in was the "placement does nothing" bug when upstream
++  // vertical tabs were on). Reads the cached placement contribution so the
++  // answer stays frozen while an enable-state lock is held.
++  if (base::FeatureList::IsEnabled(roamux::features::kTabStripPosition)) {
++    return roamux_placement_wants_vertical_;
++  }
+   return IsVerticalTabsFeatureEnabled() && is_vertical_tabs_enabled_;
  }
  
  void VerticalTabStripStateController::SetVerticalTabsEnabled(bool enabled) {
-+  // Roamux (roam-8): when the roamux placement is what displays the strip
-+  // (upstream pref off), "switch to horizontal" must reset the roamux
-+  // placement — writing the upstream pref would be a user-visible no-op.
-+  if (!enabled &&
-+      roamux::ShouldDisplayVerticalTabsForPlacement(pref_service_) &&
-+      !pref_service_->GetBoolean(prefs::kVerticalTabsEnabled)) {
++  // Roamux (roam-182): with the flag on, the roamux placement is the sole
++  // authority, so the upstream "switch vertical/horizontal" toggle maps onto
++  // placement (vertical -> Left, horizontal -> Top) instead of writing the
++  // upstream pref, which the display decision no longer reads. The placement
++  // write drives the swap via OnRoamuxPlacementChanged.
++  if (base::FeatureList::IsEnabled(roamux::features::kTabStripPosition)) {
 +    roamux::SetTabStripPlacement(pref_service_,
-+                                 roamux::TabStripPlacement::kTop);
++                                 enabled ? roamux::TabStripPlacement::kLeft
++                                         : roamux::TabStripPlacement::kTop);
 +    return;
 +  }
    NotifyModeWillChange();
    pref_service_->SetBoolean(prefs::kVerticalTabsEnabled, enabled);
  }
-@@ -298,9 +327,29 @@ void VerticalTabStripStateController::OnModeChanged() {
+@@ -298,9 +332,29 @@ void VerticalTabStripStateController::OnModeChanged() {
    is_vertical_tabs_enabled_ =
        pref_service_->GetBoolean(prefs::kVerticalTabsEnabled);
  
@@ -124,7 +135,7 @@ index 9919d3a042..3744a236b2 100644
  void VerticalTabStripStateController::OnExpandOnHoverEnabledChanged() {
    is_expand_on_hover_enabled_ =
        pref_service_->GetBoolean(prefs::kVerticalTabsExpandOnHoverEnabled);
-@@ -336,9 +385,17 @@ void VerticalTabStripStateController::OnLockDestroyed() {
+@@ -336,9 +390,17 @@ void VerticalTabStripStateController::OnLockDestroyed() {
    enable_state_lock_count_--;
  
    if (enable_state_lock_count_ == 0) {

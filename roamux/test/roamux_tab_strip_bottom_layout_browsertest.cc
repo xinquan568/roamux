@@ -127,9 +127,9 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripBottomLayoutFlagOffTest,
   EXPECT_LT(gfx::ToEnclosingRect(rect).y(), bv->GetLocalBounds().height() / 2);
 }
 
-// Coexistence rule D1: while upstream vertical tabs are displayed, the roamux
-// placement is structurally inert — the vertical strip owns the layout and the
-// horizontal strip stays hidden regardless of roamux.tabs.strip_position.
+// roam-182 sole authority (supersedes the roam-7 coexistence rule): the roamux
+// placement drives the layout even while the upstream vertical-tabs pref is
+// explicitly on — a Bottom placement yields a horizontal bottom band.
 class RoamuxTabStripCoexistenceTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabStripCoexistenceTest() {
@@ -142,7 +142,7 @@ class RoamuxTabStripCoexistenceTest : public roamux::test::RoamuxBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(RoamuxTabStripCoexistenceTest,
-                       UpstreamVerticalTabsWinOverRoamuxBottom) {
+                       RoamuxBottomWinsOverUpstreamVerticalTabs) {
   BrowserView* bv = BrowserView::GetBrowserViewForBrowser(browser());
   PrefService* prefs = browser()->profile()->GetPrefs();
   prefs->SetBoolean(::prefs::kVerticalTabsEnabled, true);
@@ -150,21 +150,19 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripCoexistenceTest,
   base::RunLoop().RunUntilIdle();
   bv->DeprecatedLayoutImmediately();
 
+  // Sole authority: placement Bottom keeps the horizontal strip, docked to
+  // the bottom band; the vertical strip is not displayed.
   views::View* vertical = FindViewByClassName(bv, "VerticalTabStripRegionView");
-  ASSERT_NE(nullptr, vertical);
-  EXPECT_TRUE(vertical->GetVisible());
-
-  // The horizontal strip does not occupy a bottom band: either hidden or not
-  // bottom-aligned.
+  if (vertical) {
+    EXPECT_FALSE(vertical->GetVisible());
+  }
   views::View* horizontal =
       FindViewByClassName(bv, "HorizontalTabStripRegionView");
   ASSERT_NE(nullptr, horizontal);
-  if (horizontal->GetVisible()) {
-    gfx::RectF rect(gfx::SizeF(horizontal->size()));
-    views::View::ConvertRectToTarget(horizontal, bv, &rect);
-    EXPECT_NE(bv->GetLocalBounds().bottom(),
-              gfx::ToEnclosingRect(rect).bottom());
-  }
+  EXPECT_TRUE(horizontal->GetVisible());
+  gfx::RectF rect(gfx::SizeF(horizontal->size()));
+  views::View::ConvertRectToTarget(horizontal, bv, &rect);
+  EXPECT_EQ(bv->GetLocalBounds().bottom(), gfx::ToEnclosingRect(rect).bottom());
 }
 
 }  // namespace
