@@ -283,9 +283,14 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripPositionSettingsTest,
 class RoamuxSubTogglesTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSubTogglesTest() {
+    // ::tabs::kVerticalTabs is required because
+    // IsVerticalTabsExpandOnHoverFeatureEnabled() (which backs the
+    // showVerticalTabsExpandOnHoverEnabled loadTimeData bool) is
+    // IsVerticalTabsFeatureEnabled() && kVerticalTabsExpandOnHover — self-
+    // contained rather than relying on the field-trial testing config.
     features_.InitWithFeatures(
-        {features::kTabStripPosition, ::tabs::kVerticalTabsExpandOnHover,
-         tab_groups::kProjectsPanel},
+        {features::kTabStripPosition, ::tabs::kVerticalTabs,
+         ::tabs::kVerticalTabsExpandOnHover, tab_groups::kProjectsPanel},
         {});
   }
 
@@ -399,6 +404,11 @@ IN_PROC_BROWSER_TEST_F(RoamuxSubTogglesGuardOffTest,
   EXPECT_EQ(true,
             content::EvalJs(web_contents, WaitUntilHiddenIdScript(
                                               "roamuxExpandOnHover", 20)));
+  // Also the organizer row — proves the showTabSearchEnabled_/
+  // showProjectsPanelEnabled_ guards are preserved.
+  EXPECT_EQ(true,
+            content::EvalJs(web_contents, WaitUntilHiddenIdScript(
+                                              "roamuxShowOrganizer", 20)));
 }
 
 class RoamuxUpstreamRowStockTest : public roamux::test::RoamuxBrowserTest {
