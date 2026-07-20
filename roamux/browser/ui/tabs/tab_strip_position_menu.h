@@ -20,6 +20,17 @@ inline constexpr int kTabStripPositionSubMenuCommandId = 2101;
 // roamux::TabStripPlacement values).
 inline constexpr int kTabStripPositionFirstItemCommandId = 2102;
 
+// roam-181: true for every command id this submenu owns (the anchor 2101 and
+// the four radio items 2102-2105). Single source of truth for the guard in
+// upstream TabContextMenuController (patch 0005): the anchor row lives in the
+// parent TabMenuModel, so without this guard its id reaches the upstream
+// delegate's blind static_cast to TabStripModel::ContextMenuCommand and dies
+// on fatal NOTREACHED()/CHECK paths in TabStripModel.
+inline constexpr bool IsTabStripPositionCommandId(int command_id) {
+  return command_id >= kTabStripPositionSubMenuCommandId &&
+         command_id <= kTabStripPositionFirstItemCommandId + 3;
+}
+
 // The flag-gated "Tab strip position (Roamux)" submenu for the tab context
 // menu: four radio items whose checked state mirrors
 // roamux::prefs::kTabStripPosition and whose activation writes it. Acts as its
