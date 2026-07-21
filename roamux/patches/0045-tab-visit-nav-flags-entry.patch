@@ -1,0 +1,47 @@
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+index d392da9..ee08bc7 100644
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -4767,6 +4767,14 @@ const FeatureEntry kFeatureEntries[] = {
+      "shortcut row in Appearance settings.",
+      kOsMac | kOsWin | kOsLinux,
+      FEATURE_VALUE_TYPE(roamux::features::kInitialUrl)},
++    // Roamux (roam-189): E4 tab visit-order navigation, shipped default-on and
++    // user-toggleable here.
++    {"roamux-tab-visit-nav", "Roamux: tab visit-order navigation",
++     "Enables Roamux tab visit-order navigation: settled tab visits are "
++     "recorded per profile, and the tab-visit back / forward shortcuts walk "
++     "them in most-recently-used order.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kTabVisitNav)},
+ // Include generated flags for flag unexpiry; see //docs/flag_expiry.md and
+ // //tools/flags/generate_unexpire_flags.py.
+ #include "build/chromeos_buildflags.h"
+diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
+index a1004dc..a0cb414 100644
+--- a/chrome/browser/flag-metadata.json
++++ b/chrome/browser/flag-metadata.json
+@@ -8410,6 +8410,11 @@
+     "owners": [ "xinquan568@users.noreply.github.com" ],
+     "expiry_milestone": -1
+   },
++  {
++    "name": "roamux-tab-visit-nav",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
+   {
+     "name": "robust-window-management-experimental",
+     "owners": [ "aishwaryarj@google.com", "rathomas@google.com", "clank-large-form-factors@google.com" ],
+diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-never-expire-list.json
+index dfe7466..83f4d61 100644
+--- a/chrome/browser/flag-never-expire-list.json
++++ b/chrome/browser/flag-never-expire-list.json
+@@ -118,6 +118,7 @@
+   "roamux-initial-url",
+   "roamux-signin-opt-in",
+   "roamux-tab-strip-position",
++  "roamux-tab-visit-nav",
+   "scheduler-configuration",
+   "set-market-url-for-testing",
+   "show-autofill-type-predictions",

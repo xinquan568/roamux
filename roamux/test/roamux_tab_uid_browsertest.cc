@@ -160,7 +160,13 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabUidTest, DiscardKeepsTheSameUid) {
 class RoamuxTabUidFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxTabUidFlagOffTest() {
-    features_.InitAndDisableFeature(features::kInitialUrl);
+    // The uid helper is minted when EITHER kInitialUrl OR kTabVisitNav is on
+    // (tab_uid_tab_helper.cc). Both ship default-on (roam-187, roam-189), so
+    // "no helper" requires pinning BOTH off — disabling only kInitialUrl
+    // stopped proving inertness the day kTabVisitNav graduated.
+    features_.InitWithFeatures(
+        /*enabled=*/{},
+        /*disabled=*/{features::kInitialUrl, features::kTabVisitNav});
   }
 
  protected:

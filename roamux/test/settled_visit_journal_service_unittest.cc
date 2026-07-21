@@ -48,6 +48,23 @@ GetTabStateSync(SettledVisitJournalService* service,
   return {future.Get<0>(), future.Get<1>()};
 }
 
+// roam-189: kTabVisitNav ships default-on, and the E4 factories are eager
+// (ServiceIsCreatedWithBrowserContext), so a TestingProfile constructed under
+// the compiled default gains a regular journal service whose disk-backed
+// store opens asynchronously — racing this file's PathExists assertions. The
+// pin below runs BEFORE the profile member constructs (first-member order; a
+// ctor-body Init would be too late), so any eagerly-created service is inert
+// and no disk open can occur during construction. The per-fixture
+// ScopedFeatureLists nest on top for the test-body state; keep this member
+// FIRST and keep the per-fixture lists in derived classes (destruction order
+// depends on it).
+struct ConstructionFeaturePin {
+  ConstructionFeaturePin() {
+    features.InitAndDisableFeature(roamux::features::kTabVisitNav);
+  }
+  base::test::ScopedFeatureList features;
+};
+
 class SettledVisitJournalServiceTestBase : public testing::Test {
  public:
   SettledVisitJournalServiceTestBase() {
@@ -60,6 +77,8 @@ class SettledVisitJournalServiceTestBase : public testing::Test {
     return profile->GetPath().Append(FILE_PATH_LITERAL("RoamuxTabVisits"));
   }
 
+  // FIRST member — see ConstructionFeaturePin above (roam-189).
+  ConstructionFeaturePin construction_pin_;
   content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
 };
