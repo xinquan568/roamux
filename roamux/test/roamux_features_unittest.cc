@@ -35,4 +35,10 @@ TEST(RoamuxFeaturesTest, InitialUrlEnabledByDefault) {
   EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kInitialUrl));
 }
 
+TEST(RoamuxFeaturesTest, TabVisitNavEnabledByDefault) {
+  // roam-189: the E4 tab visit-order navigation ships enabled by default
+  // (chrome://flags/#roamux-tab-visit-nav lets users opt out).
+  EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kTabVisitNav));
+}
+
 }  // namespace
