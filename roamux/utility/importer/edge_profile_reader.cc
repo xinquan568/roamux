@@ -181,11 +181,24 @@ std::vector<user_data_importer::ImporterURLRow> EdgeProfileReader::ReadHistory()
     if (!url.is_valid()) {
       continue;
     }
+    // roam-203: Edge stores last_visit_time = 0 for urls rows with no recorded
+    // visit. HistoryBackend::AddPagesWithDetails DCHECKs !last_visit.is_null()
+    // on every row, and with DCHECKs off it drops them anyway via
+    // IsExpiredVisitTime — a null base::Time is the Windows epoch (1601), far
+    // below the expiration cutoff. Skipping here therefore matches release
+    // behaviour exactly while removing the dev-build abort. Do NOT synthesise a
+    // timestamp instead: for a non-synced source the backend "makes up a visit"
+    // and calls AddVisit(), fabricating a visit that never happened (these rows
+    // carry visit_count = 0).
+    const base::Time last_visit = FromChromeTime(s.ColumnInt64(4));
+    if (last_visit.is_null()) {
+      continue;
+    }
     user_data_importer::ImporterURLRow row(url);
     row.title = s.ColumnString16(1);
     row.visit_count = s.ColumnInt(2);
     row.typed_count = s.ColumnInt(3);
-    row.last_visit = FromChromeTime(s.ColumnInt64(4));
+    row.last_visit = last_visit;
     rows.push_back(std::move(row));
   }
   return rows;
