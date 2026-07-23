@@ -2,6 +2,7 @@
 #include "roamux/browser/ui/tabs/initial_url_menu.h"
 
 #include "base/feature_list.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/web_contents.h"
 #include "roamux/browser/tabs/tab_initial_url_helper.h"
@@ -28,7 +29,7 @@ class InitialUrlMenuModel : public ui::SimpleMenuModel,
                             public ui::SimpleMenuModel::Delegate {
  public:
   explicit InitialUrlMenuModel(content::WebContents* contents)
-      : ui::SimpleMenuModel(this), contents_(contents) {
+      : ui::SimpleMenuModel(this), contents_(contents->GetWeakPtr()) {
     AddItem(kEditInitialUrlCommandId, u"Edit initial URL…");
     AddItem(kSetInitialUrlToCurrentPageCommandId,
             u"Set initial URL to current page");
@@ -36,33 +37,44 @@ class InitialUrlMenuModel : public ui::SimpleMenuModel,
 
   // ui::SimpleMenuModel::Delegate:
   bool IsCommandIdEnabled(int command_id) const override {
+    if (!contents_) {
+      return false;
+    }
     if (command_id == kSetInitialUrlToCurrentPageCommandId) {
-      return CanSetToCurrentPage(contents_);
+      return CanSetToCurrentPage(contents_.get());
     }
     return true;
   }
 
   void ExecuteCommand(int command_id, int event_flags) override {
-    TabInitialUrlHelper::MaybeCreateForWebContents(contents_);
+    if (!contents_) {
+      return;
+    }
+    content::WebContents* contents = contents_.get();
+    TabInitialUrlHelper::MaybeCreateForWebContents(contents);
     TabInitialUrlHelper* helper =
-        TabInitialUrlHelper::FromWebContents(contents_);
+        TabInitialUrlHelper::FromWebContents(contents);
     if (!helper) {
       return;
     }
     switch (command_id) {
       case kEditInitialUrlCommandId:
-        ShowEditInitialUrlDialog(contents_);
+        ShowEditInitialUrlDialog(contents);
         break;
       case kSetInitialUrlToCurrentPageCommandId:
-        if (CanSetToCurrentPage(contents_)) {
-          helper->SetUserInitialUrl(contents_->GetLastCommittedURL());
+        if (CanSetToCurrentPage(contents)) {
+          helper->SetUserInitialUrl(contents->GetLastCommittedURL());
         }
         break;
     }
   }
 
  private:
-  const raw_ptr<content::WebContents> contents_;
+  // roam-204: the owning TabMenuModel is window-scoped and outlives tabs
+  // (upstream holds its own tab handle weakly for the same reason), so a raw
+  // pointer here dangles at window teardown. Weak + null-checks keep the
+  // retained submenu inert once the tab is gone.
+  base::WeakPtr<content::WebContents> contents_;
 };
 
 }  // namespace
