@@ -22,23 +22,30 @@ std::optional<base::Version> DetectEdgeVersion(
     const base::FilePath& user_data_dir);
 
 // The versioned Edge import adapter (roam-19 / I-3.5). It resolves the Edge
-// User-Data / profile layout, detects the source version, decides whether that
-// version is within the milestone family this build supports (Edge 150.x), and
-// answers per-carrier source availability / schema-presence — the "schema
-// mismatch" signal. Constructing it never touches the destination and never
-// mutates the source. A single concrete adapter targets the 150.x family today;
-// the class is the seam a future Edge schema break plugs a new adapter into.
+// User-Data root and the SUPPLIED source profile directory (roam-202: the
+// profile is selected once, at detection, and propagated here — the adapter
+// never resolves the layout itself), detects the source version, decides
+// whether that version is within the milestone family this build supports
+// (Edge 150.x), and answers per-carrier source availability /
+// schema-presence — the "schema mismatch" signal. Constructing it never touches
+// the destination and never mutates the source. A single concrete adapter
+// targets the 150.x family today; the class is the seam a future Edge schema
+// break plugs a new adapter into.
 class EdgeImportAdapter {
  public:
   // The Edge major-milestone family this build's adapter targets.
   static constexpr uint32_t kSupportedMilestone = 150;
 
-  // Locates `<app_data_root>/Microsoft Edge` (+ `/Default`), detects the
-  // version, and returns an adapter. Always returns a non-null adapter — even
-  // when the version is undetermined or outside the supported family — so the
-  // import flow can best-effort and report, rather than aborting.
+  // Locates `<app_data_root>/Microsoft Edge`, detects the version, and
+  // returns an adapter probing `profile_dir` — the SOURCE profile directory
+  // selected at detection (roam-202: SourceProfile.source_path is the single
+  // point of profile selection; this adapter never re-derives it). Always
+  // returns a non-null adapter — even when the version is undetermined or
+  // outside the supported family — so the import flow can best-effort and
+  // report, rather than aborting.
   static std::unique_ptr<EdgeImportAdapter> Detect(
-      const base::FilePath& app_data_root);
+      const base::FilePath& app_data_root,
+      const base::FilePath& profile_dir);
 
   EdgeImportAdapter(const EdgeImportAdapter&) = delete;
   EdgeImportAdapter& operator=(const EdgeImportAdapter&) = delete;
