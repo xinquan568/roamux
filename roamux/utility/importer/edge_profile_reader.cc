@@ -168,7 +168,8 @@ bool IsSafeProfileName(const std::string& name) {
     return false;
   }
   for (const char c : name) {
-    if (static_cast<unsigned char>(c) < 0x20) {
+    const unsigned char byte = static_cast<unsigned char>(c);
+    if (byte < 0x20 || byte == 0x7f) {  // C0 controls, NUL, and DEL.
       return false;
     }
   }

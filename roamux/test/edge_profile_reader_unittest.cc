@@ -431,7 +431,27 @@ TEST(EdgeDetectionTest, NulTruncatedNameCannotEscape) {
   ASSERT_TRUE(base::WriteFile(
       app_data.GetPath().Append(FILE_PATH_LITERAL("Bookmarks")), "{}"));
   const base::FilePath profile1 = edge.AddPopulatedProfile("Profile 1");
-  edge.WriteLocalState(R"({"profile":{"last_used":"..\u0000evil"}})");
+  for (const char* local_state :
+       {R"({"profile":{"last_used":"..\u0000evil"}})",
+        R"({"profile":{"info_cache":{"..\u0000evil":{"name":"E"}}}})"}) {
+    SCOPED_TRACE(local_state);
+    edge.WriteLocalState(local_state);
+
+    std::optional<user_data_importer::SourceProfile> profile =
+        DetectEdgeSourceProfile(app_data.GetPath());
+    ASSERT_TRUE(profile.has_value());
+    EXPECT_EQ(profile1, profile->source_path);
+  }
+}
+
+// roam-202: DEL (0x7f) is a control byte too - a name carrying it is
+// rejected rather than converted.
+TEST(EdgeDetectionTest, DelByteNameRejected) {
+  base::ScopedTempDir app_data;
+  ASSERT_TRUE(app_data.CreateUniqueTempDir());
+  EdgeLayoutBuilder edge(app_data.GetPath());
+  const base::FilePath profile1 = edge.AddPopulatedProfile("Profile 1");
+  edge.WriteLocalState(R"({"profile":{"last_used":"Bad\u007fName"}})");
 
   std::optional<user_data_importer::SourceProfile> profile =
       DetectEdgeSourceProfile(app_data.GetPath());
