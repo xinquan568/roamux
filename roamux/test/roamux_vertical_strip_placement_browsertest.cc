@@ -546,11 +546,14 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
 
   CollapseAndWait(controller, false);
   browser_view()->DeprecatedLayoutImmediately();
-  const int expanded_y = BoundsInBrowserView(vertical, browser_view()).y();
+  // Absolute pin (plan V4): the expanded strip starts at the client top.
+  ASSERT_EQ(0, BoundsInBrowserView(vertical, browser_view()).y());
 
   CollapseAndWait(controller, true);
   browser_view()->DeprecatedLayoutImmediately();
-  EXPECT_EQ(expanded_y, BoundsInBrowserView(vertical, browser_view()).y());
+  // The collapsed rail is flush too — no leading-exclusion offset on the
+  // right dock.
+  EXPECT_EQ(0, BoundsInBrowserView(vertical, browser_view()).y());
 }
 
 IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
@@ -563,12 +566,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
 
   CollapseAndWait(controller, false);
   browser_view()->DeprecatedLayoutImmediately();
-  const int expanded_y = BoundsInBrowserView(vertical, browser_view()).y();
+  ASSERT_EQ(0, BoundsInBrowserView(vertical, browser_view()).y());
 
   CollapseAndWait(controller, true);
   browser_view()->DeprecatedLayoutImmediately();
   // The left dock sits below the traffic-light band when collapsed.
-  EXPECT_GT(BoundsInBrowserView(vertical, browser_view()).y(), expanded_y);
+  EXPECT_GT(BoundsInBrowserView(vertical, browser_view()).y(), 0);
 }
 
 // roam-205: with no collapsed offset on the right dock, the top container's
