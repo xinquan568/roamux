@@ -185,6 +185,53 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
   EXPECT_TRUE(helper()->is_user_locked());
 }
 
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
+                       RetainedSubmenuInertAfterTabDestroyed) {
+  // roam-204: patch 0012's TabMenuModel retains this submenu for the whole
+  // window's life, so the model must stay inert once its tab is gone — both
+  // commands disabled, activation a no-op, destruction releasing nothing.
+  ASSERT_TRUE(AddTabAtIndex(1, embedded_test_server()->GetURL("/title1.html"),
+                            ui::PAGE_TRANSITION_TYPED));
+  ASSERT_EQ(2, browser()->tab_strip_model()->count());
+  content::WebContents* tab = browser()->tab_strip_model()->GetWebContentsAt(1);
+
+  // Retain the submenu the way the patched TabMenuModel::Build does.
+  ui::SimpleMenuModel parent(nullptr);
+  std::unique_ptr<ui::SimpleMenuModel> submenu =
+      tabs::MaybeAppendInitialUrlSubMenu(&parent, tab);
+  ASSERT_NE(nullptr, submenu);
+
+  // Resolve item indices by command id, not position.
+  size_t edit_index = submenu->GetItemCount();
+  size_t set_current_index = submenu->GetItemCount();
+  for (size_t i = 0; i < submenu->GetItemCount(); ++i) {
+    if (submenu->GetCommandIdAt(i) == tabs::kEditInitialUrlCommandId) {
+      edit_index = i;
+    } else if (submenu->GetCommandIdAt(i) ==
+               tabs::kSetInitialUrlToCurrentPageCommandId) {
+      set_current_index = i;
+    }
+  }
+  ASSERT_LT(edit_index, submenu->GetItemCount());
+  ASSERT_LT(set_current_index, submenu->GetItemCount());
+
+  // Live tab: both commands available.
+  ASSERT_TRUE(submenu->IsEnabledAt(edit_index));
+  ASSERT_TRUE(submenu->IsEnabledAt(set_current_index));
+
+  content::WebContentsDestroyedWatcher destroyed(tab);
+  browser()->tab_strip_model()->CloseWebContentsAt(
+      1, TabCloseTypes::CLOSE_USER_GESTURE);
+  destroyed.Wait();
+
+  // The lifetime property: a retained submenu whose tab died reports both
+  // commands disabled and executes them as no-ops.
+  EXPECT_FALSE(submenu->IsEnabledAt(edit_index));
+  EXPECT_FALSE(submenu->IsEnabledAt(set_current_index));
+  submenu->ActivatedAt(edit_index);         // No dialog, no helper.
+  submenu->ActivatedAt(set_current_index);  // No crash, no write.
+}
+
 class RoamuxInitialUrlEditFlagOffTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxInitialUrlEditFlagOffTest() {
