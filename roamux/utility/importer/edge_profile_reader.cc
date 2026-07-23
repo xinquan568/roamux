@@ -2,8 +2,8 @@
 #include "roamux/utility/importer/edge_profile_reader.h"
 
 #include <algorithm>
-#include <limits>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -12,9 +12,9 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
-#include "base/strings/string_util.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -143,8 +143,8 @@ void CollectRoot(const base::DictValue& root,
 // EdgeImportAdapter::CarrierAvailable applies to Login Data / Cookies.
 bool HasEdgeProfileData(const base::FilePath& dir) {
   static constexpr const base::FilePath::CharType* kFlatArtifacts[] = {
-      FILE_PATH_LITERAL("Bookmarks"),  FILE_PATH_LITERAL("History"),
-      FILE_PATH_LITERAL("Web Data"),   FILE_PATH_LITERAL("Login Data"),
+      FILE_PATH_LITERAL("Bookmarks"), FILE_PATH_LITERAL("History"),
+      FILE_PATH_LITERAL("Web Data"),  FILE_PATH_LITERAL("Login Data"),
       FILE_PATH_LITERAL("Cookies"),
   };
   for (const auto* artifact : kFlatArtifacts) {
@@ -157,13 +157,24 @@ bool HasEdgeProfileData(const base::FilePath& dir) {
          base::DirectoryExists(dir.Append(FILE_PATH_LITERAL("IndexedDB")));
 }
 
-// A Local State profile reference is usable only as a single well-formed path
-// component — the resolved directory must stay a direct child of the
-// user-data dir. Local State is external, user-controlled input.
+// A Local State profile reference is usable only as a single well-formed
+// path component — the resolved directory must stay a direct child of the
+// user-data dir. Local State is external, user-controlled input: reject
+// control bytes (FilePath truncates at NUL, so "..\0x" would otherwise
+// become ".."), require the conversion to round-trip losslessly, and refuse
+// separators and parent references.
 bool IsSafeProfileName(const std::string& name) {
-  return !name.empty() && name != "." && name != ".." &&
-         name.find('/') == std::string::npos &&
-         name.find('\\') == std::string::npos;
+  if (name.empty()) {
+    return false;
+  }
+  for (const char c : name) {
+    if (static_cast<unsigned char>(c) < 0x20) {
+      return false;
+    }
+  }
+  const base::FilePath component = base::FilePath::FromUTF8Unsafe(name);
+  return component.value() == name && component == component.BaseName() &&
+         !component.ReferencesParent();
 }
 
 // Size cap for the Local State read: profile metadata fits comfortably; an
@@ -183,18 +194,26 @@ std::optional<base::DictValue> ReadLocalState(
 
 // Scan comparator: "Profile N" sorts by N ascending; equal suffixes tie-break
 // by full-name lexicographic order; names without a parseable suffix sort
-// after all numeric ones.
-std::pair<int64_t, std::string> ProfileScanKey(const base::FilePath& dir) {
+// after all numeric ones (explicit discriminator — a sentinel value would
+// collide with a genuine INT64_MAX suffix).
+std::tuple<int, int64_t, std::string> ProfileScanKey(
+    const base::FilePath& dir) {
   const std::string name = dir.BaseName().AsUTF8Unsafe();
-  int64_t number = std::numeric_limits<int64_t>::max();
   constexpr std::string_view kPrefix = "Profile ";
   if (base::StartsWith(name, kPrefix)) {
     int64_t parsed = 0;
     if (base::StringToInt64(name.substr(kPrefix.size()), &parsed)) {
-      number = parsed;
+      return {0, parsed, name};
     }
   }
-  return {number, name};
+  return {1, 0, name};
+}
+
+// A candidate qualifies only as a real directory (a symlinked profile could
+// resolve outside the user-data root) holding recognizable data.
+bool CandidateUsable(const base::FilePath& dir) {
+  return base::DirectoryExists(dir) && !base::IsLink(dir) &&
+         HasEdgeProfileData(dir);
 }
 
 }  // namespace
@@ -206,7 +225,7 @@ base::FilePath ResolveEdgeProfileDir(const base::FilePath& user_data_dir) {
     }
     const base::FilePath dir =
         user_data_dir.Append(base::FilePath::FromUTF8Unsafe(name));
-    if (base::DirectoryExists(dir) && HasEdgeProfileData(dir)) {
+    if (CandidateUsable(dir)) {
       return dir;
     }
     return base::FilePath();
@@ -233,7 +252,7 @@ base::FilePath ResolveEdgeProfileDir(const base::FilePath& user_data_dir) {
   // (3) The historical Default layout.
   const base::FilePath default_dir =
       user_data_dir.Append(FILE_PATH_LITERAL("Default"));
-  if (base::DirectoryExists(default_dir) && HasEdgeProfileData(default_dir)) {
+  if (CandidateUsable(default_dir)) {
     return default_dir;
   }
 
@@ -250,7 +269,7 @@ base::FilePath ResolveEdgeProfileDir(const base::FilePath& user_data_dir) {
               return ProfileScanKey(a) < ProfileScanKey(b);
             });
   for (const base::FilePath& dir : candidates) {
-    if (HasEdgeProfileData(dir)) {
+    if (CandidateUsable(dir)) {
       return dir;
     }
   }
@@ -268,15 +287,14 @@ std::optional<user_data_importer::SourceProfile> DetectEdgeSourceProfile(
   edge.importer_name = u"Microsoft Edge";
   edge.importer_type = user_data_importer::TYPE_EDGE_CHROMIUM;
   edge.source_path = profile_dir;
-  edge.services_supported = user_data_importer::HISTORY |
-                            user_data_importer::FAVORITES |
-                            user_data_importer::SEARCH_ENGINES |
-                            user_data_importer::AUTOFILL_FORM_DATA |
-                            // roam-16: passwords/cookies now imported by the
-                            // browser-side secret stage (not the utility
-                            // importer).
-                            user_data_importer::PASSWORDS |
-                            user_data_importer::COOKIES;
+  edge.services_supported =
+      user_data_importer::HISTORY | user_data_importer::FAVORITES |
+      user_data_importer::SEARCH_ENGINES |
+      user_data_importer::AUTOFILL_FORM_DATA |
+      // roam-16: passwords/cookies now imported by the
+      // browser-side secret stage (not the utility
+      // importer).
+      user_data_importer::PASSWORDS | user_data_importer::COOKIES;
   return edge;
 }
 
@@ -306,14 +324,14 @@ std::vector<user_data_importer::ImporterURLRow> EdgeProfileReader::ReadHistory()
     }
     // roam-203: Edge stores last_visit_time = 0 for urls rows with no recorded
     // visit (and FromChromeTime nulls every non-positive value, not just zero).
-    // HistoryBackend::AddPagesWithDetails DCHECKs !last_visit.is_null() on every
-    // row, and with DCHECKs off it drops them anyway via IsExpiredVisitTime: a
-    // null base::Time's internal zero orders before the expiration cutoff.
-    // Skipping here therefore matches release history-storage behaviour while
-    // removing the dev-build abort. Do NOT synthesise a timestamp instead: for a
-    // non-synced source the backend "makes up a visit" and calls AddVisit(),
-    // fabricating a visit that never happened — the observed rows carry
-    // visit_count = 0.
+    // HistoryBackend::AddPagesWithDetails DCHECKs !last_visit.is_null() on
+    // every row, and with DCHECKs off it drops them anyway via
+    // IsExpiredVisitTime: a null base::Time's internal zero orders before the
+    // expiration cutoff. Skipping here therefore matches release
+    // history-storage behaviour while removing the dev-build abort. Do NOT
+    // synthesise a timestamp instead: for a non-synced source the backend
+    // "makes up a visit" and calls AddVisit(), fabricating a visit that never
+    // happened — the observed rows carry visit_count = 0.
     const base::Time last_visit = FromChromeTime(s.ColumnInt64(4));
     if (last_visit.is_null()) {
       continue;

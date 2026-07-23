@@ -22,12 +22,15 @@ std::optional<base::Version> DetectEdgeVersion(
     const base::FilePath& user_data_dir);
 
 // The versioned Edge import adapter (roam-19 / I-3.5). It resolves the Edge
-// User-Data / profile layout, detects the source version, decides whether that
-// version is within the milestone family this build supports (Edge 150.x), and
-// answers per-carrier source availability / schema-presence — the "schema
-// mismatch" signal. Constructing it never touches the destination and never
-// mutates the source. A single concrete adapter targets the 150.x family today;
-// the class is the seam a future Edge schema break plugs a new adapter into.
+// User-Data root and the SUPPLIED source profile directory (roam-202: the
+// profile is selected once, at detection, and propagated here — the adapter
+// never resolves the layout itself), detects the source version, decides
+// whether that version is within the milestone family this build supports
+// (Edge 150.x), and answers per-carrier source availability /
+// schema-presence — the "schema mismatch" signal. Constructing it never touches
+// the destination and never mutates the source. A single concrete adapter
+// targets the 150.x family today; the class is the seam a future Edge schema
+// break plugs a new adapter into.
 class EdgeImportAdapter {
  public:
   // The Edge major-milestone family this build's adapter targets.

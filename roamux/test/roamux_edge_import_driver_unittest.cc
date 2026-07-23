@@ -80,9 +80,14 @@ TEST(RoamuxEdgeImportDriverPlanTest, AppDataRootRoundTripsToProfileDir) {
           .Append(FILE_PATH_LITERAL("Profile 1"));
   const base::FilePath app_data_root =
       AppDataRootFromEdgeProfilePath(source_path);
-  // The selected profile propagates; the adapter never re-derives it.
+  EXPECT_EQ(
+      base::FilePath(FILE_PATH_LITERAL("/Users/x/Library/Application Support")),
+      app_data_root);
+  // The selected profile propagates; the adapter never re-derives it, and
+  // derives the user-data dir from the root it was given.
   auto adapter = EdgeImportAdapter::Detect(app_data_root, source_path);
   EXPECT_EQ(source_path, adapter->profile_dir());
+  EXPECT_EQ(source_path.DirName(), adapter->user_data_dir());
 }
 
 }  // namespace

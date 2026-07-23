@@ -18,9 +18,10 @@ namespace roamux {
 
 // Given a macOS Application-Support root (from DIR_APP_DATA — overridable in
 // tests), returns the SourceProfile for a Chromium-Edge profile if one
-// exists, advertising only the NON-SECRET items (passwords/cookies are
-// roam-16). Pure/hermetic: no flag check, no PathService — the caller
-// (importer_list.cc) owns the kEdgeImport gate. Returns nullopt if absent.
+// exists, advertising the full supported service set (secrets are imported
+// by the roam-16 browser-side stage, not the utility importer). Pure/
+// hermetic: no flag check, no PathService — the caller (importer_list.cc)
+// owns the kEdgeImport gate. Returns nullopt if absent.
 // The returned source_path is the SINGLE point of profile selection
 // (roam-202): downstream consumers must propagate it, never re-derive it.
 std::optional<user_data_importer::SourceProfile> DetectEdgeSourceProfile(
