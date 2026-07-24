@@ -12,6 +12,7 @@ namespace roamux::features {
 BASE_DECLARE_FEATURE(kTabStripPosition); // E1 — configurable tab-strip position
 BASE_DECLARE_FEATURE(kInitialUrl);       // E2 — per-tab initial URL
 BASE_DECLARE_FEATURE(kEdgeImport);       // E3 — Microsoft Edge import
+BASE_DECLARE_FEATURE(kBookmarkSubfolderGroups);  // roam-208 — bookmarks: subfolders as tab groups
                                          // (roam-190; SHIPS ENABLED,
                                          // kill-switch)
 BASE_DECLARE_FEATURE(kTabVisitNav);      // E4 — tab visit-order navigation

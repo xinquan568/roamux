@@ -1,0 +1,47 @@
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+index c7bd968..5874ff4 100644
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -4759,6 +4759,14 @@ const FeatureEntry kFeatureEntries[] = {
+      "right) in Appearance settings and the tab context menu.",
+      kOsMac | kOsWin | kOsLinux,
+      FEATURE_VALUE_TYPE(roamux::features::kTabStripPosition)},
++    // Roamux (roam-208): bookmark subfolders as tab groups (ships default
++    // OFF; flip-on is a post-verification follow-up).
++    {"roamux-bookmark-subfolder-groups",
++     "Roamux: open bookmark subfolders as tab groups",
++     "Adds a bookmark-folder context menu item that opens each qualifying "
++     "subfolder as its own named tab group in one new window.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kBookmarkSubfolderGroups)},
+     // Roamux (roam-187): the E2 per-tab initial URL, shipped default-on and
+     // user-toggleable here.
+     {"roamux-initial-url", "Roamux: per-tab initial URL",
+diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
+index 8b3d010..90ae40e 100644
+--- a/chrome/browser/flag-metadata.json
++++ b/chrome/browser/flag-metadata.json
+@@ -8395,6 +8395,11 @@
+     "owners": [ "eleanorlee@google.com", "lazzzis@google.com", "twellington@chromium.org" ],
+     "expiry_milestone": 150
+   },
++  {
++    "name": "roamux-bookmark-subfolder-groups",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
+   {
+     "name": "roamux-edge-import",
+     "owners": [ "xinquan568@users.noreply.github.com" ],
+diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-never-expire-list.json
+index ae5293c..a88fc5a 100644
+--- a/chrome/browser/flag-never-expire-list.json
++++ b/chrome/browser/flag-never-expire-list.json
+@@ -115,6 +115,7 @@
+   "related-website-sets-permission-grants",
+   "release-notes-notification-all-channels",
+   "release-notes-notification-always-eligible",
++  "roamux-bookmark-subfolder-groups",
+   "roamux-edge-import",
+   "roamux-initial-url",
+   "roamux-signin-opt-in",

@@ -177,6 +177,7 @@ test("roamux_browser_unittests") {
 test("roamux_browsertests") {
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
   sources = [
+    "test/roamux_bookmark_subfolder_groups_browsertest.cc",
     "test/roamux_chrome_urls_branding_browsertest.cc",
     "test/roamux_clear_browsing_data_browsertest.cc",
     "test/roamux_dark_logo_browsertest.cc",

@@ -1,0 +1,135 @@
+diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
+index 1444796..8f3a837 100644
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -494,6 +494,8 @@
+ #define IDC_BOOKMARK_BAR_TOGGLE_SHOW_TAB_GROUPS 51021
+ #define IDC_BOOKMARK_BAR_MOVE 51022
+ #define IDC_BOOKMARK_BAR_OPEN_SPLIT_VIEW 51023
++// Roamux (roam-208): bulk subfolders -> tab groups in a new window.
++#define IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS 51024
+ 
+ // Context menu items for Sharing
+ #define IDC_CONTENT_CONTEXT_SHARING_CLICK_TO_CALL_SINGLE_DEVICE 51030
+diff --git a/chrome/app/bookmarks_strings.grdp b/chrome/app/bookmarks_strings.grdp
+index 2f639ed..729cbee 100644
+--- a/chrome/app/bookmarks_strings.grdp
++++ b/chrome/app/bookmarks_strings.grdp
+@@ -100,6 +100,12 @@
+           =1 {Open in &amp;new tab group}
+           other {Open all ({COUNT}) in &amp;new tab group}}
+     </message>
++    <!-- Roamux (roam-208) -->
++    <message name="IDS_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS" desc="Menu label for opening each qualifying subfolder of a bookmark folder as its own tab group in one new window. COUNT is the number of qualifying subfolders.">
++      {COUNT, plural,
++        =1 {Open 1 subfolder as a tab group in new window}
++        other {Open {COUNT} subfolders as tab groups in new window}}
++    </message>
+     <message name="IDS_BOOKMARK_BAR_OPEN_IN_NEW_TAB" desc="Menu description for loading bookmark in a new tab">
+       &amp;Open in new tab
+     </message>
+@@ -164,6 +170,12 @@
+           =1 {Open in &amp;New Tab Group}
+           other {Open All ({COUNT}) in &amp;New Tab Group}}
+     </message>
++    <!-- Roamux (roam-208) -->
++    <message name="IDS_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS" desc="Menu label for opening each qualifying subfolder of a bookmark folder as its own tab group in one new window. COUNT is the number of qualifying subfolders.">
++      {COUNT, plural,
++        =1 {Open 1 subfolder as a tab group in new window}
++        other {Open {COUNT} subfolders as tab groups in new window}}
++    </message>
+     <message name="IDS_BOOKMARK_BAR_OPEN_IN_NEW_TAB" desc="In Title Case: Menu description for loading bookmark in a new tab">
+       &amp;Open in New Tab
+     </message>
+diff --git a/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc b/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
+index 56f0185..7001e19 100644
+--- a/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
++++ b/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
+@@ -4,6 +4,11 @@
+ 
+ #include "chrome/browser/ui/bookmarks/bookmark_context_menu_controller.h"
+ 
++#include "chrome/browser/prefs/incognito_mode_prefs.h"
++#include "components/policy/core/common/policy_pref_names.h"
++#include "roamux/browser/bookmarks/subfolder_tab_groups.h"
++#include "roamux/common/roamux_features.h"
++
+ #include <stddef.h>
+ 
+ #include <memory>
+@@ -252,6 +257,25 @@ void BookmarkContextMenuController::BuildMenu() {
+     AddItem(IDC_BOOKMARK_BAR_OPEN_ALL_NEW_TAB_GROUP,
+             l10n_util::GetPluralStringFUTF16(
+                 IDS_BOOKMARK_BAR_OPEN_ALL_COUNT_NEW_TAB_GROUP, count));
++
++    // Roamux (roam-208): bulk subfolders -> tab groups. Regular-profile,
++    // policy-normal, single-folder selections only; hidden when no subfolder
++    // qualifies (flag-gated, default off).
++    if (base::FeatureList::IsEnabled(
++            roamux::features::kBookmarkSubfolderGroups) &&
++        !profile_->IsOffTheRecord() &&
++        IncognitoModePrefs::GetAvailability(profile_->GetPrefs()) !=
++            policy::IncognitoModeAvailability::kForced &&
++        selection_.size() == 1 && selection_[0]->is_folder()) {
++      const size_t subfolder_count =
++          roamux::BuildSubfolderGroupPlans(*selection_[0]).size();
++      if (subfolder_count > 0) {
++        AddItem(IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS,
++                l10n_util::GetPluralStringFUTF16(
++                    IDS_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS,
++                    static_cast<int>(subfolder_count)));
++      }
++    }
+   }
+ 
+   AddSeparator();
+@@ -323,6 +347,14 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
+   base::WeakPtr<BookmarkContextMenuController> ref(weak_factory_.GetWeakPtr());
+ 
+   switch (id) {
++    case IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS: {
++      // Roamux (roam-208): snapshot plans, then open+group in one new window.
++      if (selection_.size() == 1 && selection_[0]->is_folder()) {
++        roamux::OpenSubfolderGroupsInNewWindow(
++            browser_, roamux::BuildSubfolderGroupPlans(*selection_[0]));
++      }
++      break;
++    }
+     case IDC_BOOKMARK_BAR_OPEN_ALL:
+     case IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO:
+     case IDC_BOOKMARK_BAR_OPEN_ALL_NEW_TAB_GROUP:
+diff --git a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
+index 2531c17..a7e9171 100644
+--- a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
++++ b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
+@@ -124,6 +124,14 @@ class BookmarksPageHandler::BookmarkContextMenu
+     if (bookmarks.size() == 1 && bookmarks.front()->is_url()) {
+       AddItem(IDC_BOOKMARK_BAR_OPEN_SPLIT_VIEW);
+     }
++    // Roamux (roam-208): copy only when the controller row exists (its
++    // AddItem dereferences the controller index unchecked).
++    if (controller_->menu_model()
++            ->GetIndexOfCommandId(
++                IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS)
++            .has_value()) {
++      AddItem(IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS);
++    }
+     AddSeparator(ui::NORMAL_SEPARATOR);
+ 
+     AddItem((bookmarks.size() == 1 && bookmarks.front()->is_folder()) ||
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 263f995..9c18c04 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -2483,6 +2483,11 @@ static_library("browser") {
+     ]
+ 
+     sources += [
++      # Roamux (roam-208): bookmark subfolders -> tab groups. Desktop-only
++      # (this is the !is_android branch); referenced by the patched bookmark
++      # context menu controller on every desktop platform.
++      "//roamux/browser/bookmarks/subfolder_tab_groups.cc",
++      "//roamux/browser/bookmarks/subfolder_tab_groups.h",
+       "apps/intent_helper/intent_chip_display_prefs.cc",
+       "apps/intent_helper/intent_chip_display_prefs.h",
+       "certificate_viewer.h",
