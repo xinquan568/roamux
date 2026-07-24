@@ -237,7 +237,7 @@ index 5d7790f07d..70d9f52c68 100644
  
  bool VerticalTabStripController::GetContextMenuAccelerator(
 diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc b/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
-index c338962ae1..312b7d65cd 100644
+index c338962ae1..7000b8b500 100644
 --- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
 +++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
 @@ -4,6 +4,8 @@
@@ -259,7 +259,17 @@ index c338962ae1..312b7d65cd 100644
      return true;
    }
  
-@@ -355,6 +360,15 @@ bool VerticalTabView::OnMousePressed(const ui::MouseEvent& event) {
+@@ -345,6 +350,9 @@ bool VerticalTabView::OnKeyReleased(const ui::KeyEvent& event) {
+   if (event.key_code() == ui::VKEY_SPACE && !selected_) {
+     collection_node_->GetController()->SelectTab(GetTabInterface(),
+                                                  GetGestureDetail(event));
++    // Roamux (roam-214): a handled Space activation — a D3 completion.
++    roamux::OnVerticalTabStripUserActivation(
++        GetTabInterface()->GetBrowserWindowInterface());
+     return true;
+   }
+   return false;
+@@ -355,6 +363,15 @@ bool VerticalTabView::OnMousePressed(const ui::MouseEvent& event) {
  
    auto* controller = collection_node_->GetController();
    shift_pressed_on_mouse_down_ = event.IsShiftDown();
@@ -275,3 +285,14 @@ index c338962ae1..312b7d65cd 100644
    RecordMousePressedInTab();
    UpdateHoverCard(nullptr, TabSlotController::HoverCardUpdateType::kEvent);
  
+@@ -393,6 +410,10 @@ void VerticalTabView::OnMouseReleased(const ui::MouseEvent& event) {
+   base::WeakPtr<VerticalTabView> self = weak_ptr_factory_.GetWeakPtr();
+   if (event.IsOnlyMiddleMouseButton()) {
+     if (HitTestPoint(event.location())) {
++      // Roamux (roam-214): a completed middle-click close — a D3 completion
++      // (release-on-tab; aborted middle presses never reach here).
++      roamux::OnVerticalTabStripUserActivation(
++          GetTabInterface()->GetBrowserWindowInterface());
+       controller->CloseTab(GetTabInterface());
+     }
+   } else if (event.IsOnlyLeftMouseButton() &&
