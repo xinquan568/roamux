@@ -9,6 +9,9 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+#include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
+#include "ui/base/base_window.h"
 #include "chrome/browser/ui/cocoa/accelerators_cocoa.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -18,6 +21,10 @@
 namespace roamux::tabs {
 
 namespace {
+
+// Keep in sync with chrome/app/chrome_command_ids.h (roam-214 patch 0053)
+// and shortcut_registry.cc.
+constexpr int kIdcToggleTabStrip = 33012;
 
 Chord ChordFromEvent(NSEvent* event) {
   const NSUInteger modifiers = [event modifierFlags];
@@ -61,8 +68,31 @@ int CommandForKeyEventOverride(NSEvent* event) {
   if (!browser) {
     return -1;
   }
-  return CommandForChord(browser->GetProfile()->GetPrefs(), AllShortcuts(),
-                         ChordFromEvent(event));
+  const int command_id = CommandForChord(browser->GetProfile()->GetPrefs(),
+                                         AllShortcuts(), ChordFromEvent(event));
+  // roam-214 (plan R1): availability filter, scoped to the toggle command
+  // ONLY — existing shortcuts keep their historical resolution behavior.
+  // Key-event resolution runs BEFORE per-window command enablement is
+  // consulted anywhere else, so the registry itself must decline the event
+  // when the command is unavailable in the browser owning the EVENT's
+  // window (not the last-active one; they can differ across profiles or
+  // redispatch). Unmappable window -> unclaimed.
+  if (command_id == kIdcToggleTabStrip) {
+    BrowserWindowInterface* target = nullptr;
+    NSWindow* event_window = [event window];
+    for (BrowserWindowInterface* candidate : GetAllBrowserWindowInterfaces()) {
+      if (candidate->GetWindow() &&
+          candidate->GetWindow()->GetNativeWindow().GetNativeNSWindow() ==
+              event_window) {
+        target = candidate;
+        break;
+      }
+    }
+    if (!target || !tabs_toggle::CanToggleTabStrip(target)) {
+      return -1;
+    }
+  }
+  return command_id;
 }
 
 std::vector<Chord> EnumerateReservedChords(int exclude_command_id) {
