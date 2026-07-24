@@ -22,5 +22,9 @@ BASE_FEATURE(kBraveStyleProfiles, "RoamuxBraveStyleProfiles",
 // is pinned at the browser level).
 BASE_FEATURE(kRoamuxSchemeAlias, "RoamuxSchemeAlias",
              base::FEATURE_ENABLED_BY_DEFAULT);
+// roam-213: ships default-OFF; flip-on is a post-verification follow-up.
+BASE_FEATURE(kRoamuxExternalOpenProfile,
+             "RoamuxExternalOpenProfile",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 } // namespace roamux::features

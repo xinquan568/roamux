@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "roamux/common/roamux_prefs.h"
 
+#include <string>
+
 #include "base/feature_list.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -25,6 +27,13 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
                                 false);  // default: sign-in surfaces suppressed
   registry->RegisterDictionaryPref(
       kShortcutBindings);  // §4.3: user rebinds; empty = defaults
+}
+
+void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+  registry->RegisterIntegerPref(kExternalOpenMode,
+                                0);  // 0 = active profile (current behavior)
+  registry->RegisterStringPref(kExternalOpenProfile,
+                               std::string());  // no designated profile
 }
 
 void MigrateProfilePrefs(PrefService* pref_service) {

@@ -1,0 +1,47 @@
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+index 5874ff47b6..ec88980bd8 100644
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -4789,6 +4789,14 @@ const FeatureEntry kFeatureEntries[] = {
+     {"roamux-edge-import", "Roamux: import from Microsoft Edge",
+      "Adds Microsoft Edge as a source in the import-data dialog on macOS.",
+      kOsMac, FEATURE_VALUE_TYPE(roamux::features::kEdgeImport)},
++    // Roamux (roam-213): designated profile for external opens.
++    {"roamux-external-open-profile",
++     "Roamux: default profile for external links and files",
++     "Files and links opened from other apps (Finder, Mail, ...) open in the "
++     "profile designated in that profile's settings, instead of the "
++     "last-active profile. External opens made while an Incognito window is "
++     "active land in the designated profile's regular window.",
++     kOsMac, FEATURE_VALUE_TYPE(roamux::features::kRoamuxExternalOpenProfile)},
+ // Include generated flags for flag unexpiry; see //docs/flag_expiry.md and
+ // //tools/flags/generate_unexpire_flags.py.
+ #include "build/chromeos_buildflags.h"
+diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
+index 90ae40e575..a273bbe5fa 100644
+--- a/chrome/browser/flag-metadata.json
++++ b/chrome/browser/flag-metadata.json
+@@ -8405,6 +8405,11 @@
+     "owners": [ "xinquan568@users.noreply.github.com" ],
+     "expiry_milestone": -1
+   },
++  {
++    "name": "roamux-external-open-profile",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
+   {
+     "name": "roamux-initial-url",
+     "owners": [ "xinquan568@users.noreply.github.com" ],
+diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-never-expire-list.json
+index a88fc5ad95..6c7778dac4 100644
+--- a/chrome/browser/flag-never-expire-list.json
++++ b/chrome/browser/flag-never-expire-list.json
+@@ -117,6 +117,7 @@
+   "release-notes-notification-always-eligible",
+   "roamux-bookmark-subfolder-groups",
+   "roamux-edge-import",
++  "roamux-external-open-profile",
+   "roamux-initial-url",
+   "roamux-signin-opt-in",
+   "roamux-tab-strip-position",

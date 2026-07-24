@@ -19,7 +19,23 @@ inline constexpr char kSigninOptionalEntryPoint[] =
 inline constexpr char kShortcutBindings[] =
     "roamux.shortcuts";  // E2/E4 (§4.3 rebinds; dict command-key -> chord)
 
+// roam-213: external-open routing. LOCAL STATE prefs (browser-global — they
+// select between profiles, so they cannot live in profile prefs). Mode enum:
+// 0 = active profile (current behavior, default), 1 = designated profile,
+// 2 = ask each time (RESERVED — kept in the enum for a later issue; not
+// implemented). The target is a profile directory BASE NAME (e.g.
+// "Profile 1"), mirroring how profile.last_used stores it (D3/D5).
+inline constexpr char kExternalOpenMode[] =
+    "roamux.profiles.external_open_mode";
+inline constexpr char kExternalOpenProfile[] =
+    "roamux.profiles.external_open_profile";
+
 void RegisterProfilePrefs(PrefRegistrySimple* registry);
+
+// roam-213: Local State registrar — invoked from upstream RegisterLocalState
+// via a minimal patch hook (the browser-global sibling of the roam-3 profile
+// hook).
+void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
 // roam-182: startup normalization of the upstream vertical-tabs pref onto the
 // roamux placement (sole-authority contract; maintainer-authorized to WRITE

@@ -47,6 +47,38 @@ TEST_F(RoamuxPrefsTest, SigninOptionalEntryPointRoundTrips) {
   EXPECT_TRUE(prefs_.GetBoolean(roamux::prefs::kSigninOptionalEntryPoint));
 }
 
+// roam-213: Local State prefs for external-open routing (TDD — RED against
+// the S1 no-op registrar stub). Browser-global by design (D3): they select
+// BETWEEN profiles, so they cannot live in profile prefs.
+class RoamuxLocalStatePrefsTest : public testing::Test {
+ protected:
+  RoamuxLocalStatePrefsTest() {
+    roamux::prefs::RegisterLocalStatePrefs(prefs_.registry());
+  }
+
+  TestingPrefServiceSimple prefs_;
+};
+
+TEST_F(RoamuxLocalStatePrefsTest, BothPrefsRegisterWithDefaults) {
+  ASSERT_NE(prefs_.FindPreference(roamux::prefs::kExternalOpenMode), nullptr);
+  ASSERT_NE(prefs_.FindPreference(roamux::prefs::kExternalOpenProfile),
+            nullptr);
+  EXPECT_EQ(prefs_.GetInteger(roamux::prefs::kExternalOpenMode),
+            0);  // active profile — current behavior
+  EXPECT_TRUE(prefs_.GetString(roamux::prefs::kExternalOpenProfile).empty());
+}
+
+TEST_F(RoamuxLocalStatePrefsTest, ModeRoundTrips) {
+  prefs_.SetInteger(roamux::prefs::kExternalOpenMode, 1);  // designated
+  EXPECT_EQ(prefs_.GetInteger(roamux::prefs::kExternalOpenMode), 1);
+}
+
+TEST_F(RoamuxLocalStatePrefsTest, ProfileBaseNameRoundTrips) {
+  prefs_.SetString(roamux::prefs::kExternalOpenProfile, "Profile 1");
+  EXPECT_EQ(prefs_.GetString(roamux::prefs::kExternalOpenProfile),
+            "Profile 1");
+}
+
 // roam-182: startup normalization of the upstream vertical-tabs pref onto the
 // roamux placement (sole-authority contract; TDD — RED against the S1 no-op
 // stub). Mirrored literal: the upstream pref is registered by //chrome, which

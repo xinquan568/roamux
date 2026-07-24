@@ -1,0 +1,150 @@
+diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+index 9f7356be69..f2479b7701 100644
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -211,6 +211,11 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)["roamux.tabs.strip_position"] =
+       settings_api::PrefType::kNumber;
++  // Roamux (roam-213): Local State external-open routing prefs.
++  (*s_allowlist)["roamux.profiles.external_open_mode"] =
++      settings_api::PrefType::kNumber;
++  (*s_allowlist)["roamux.profiles.external_open_profile"] =
++      settings_api::PrefType::kString;
+ 
+   // Miscellaneous
+   (*s_allowlist)[::embedder_support::kAlternateErrorPagesEnabled] =
+diff --git a/chrome/browser/resources/settings/people_page/manage_profile.html b/chrome/browser/resources/settings/people_page/manage_profile.html
+index b1caa27505..3d37a18fde 100644
+--- a/chrome/browser/resources/settings/people_page/manage_profile.html
++++ b/chrome/browser/resources/settings/people_page/manage_profile.html
+@@ -120,4 +120,23 @@
+   </div>
+   <div class="hr"></div>
+ </template>
++<!-- Roamux (roam-213): designate this profile for external opens. Stamped
++     only when the RoamuxExternalOpenProfile feature is enabled. -->
++<template is="dom-if" if="[[externalOpenProfileVisible_]]">
++  <div id="externalOpenRow" class="hr">
++    <div class="flex" id="externalOpenLabelWrapper">
++      <div>Use this profile for external links and files</div>
++      <div class="secondary">
++        Files and links opened from other apps always open in this profile
++      </div>
++    </div>
++    <cr-toggle id="externalOpenToggle"
++        checked="[[computeExternalOpenChecked_(
++            prefs.roamux.profiles.external_open_mode.value,
++            prefs.roamux.profiles.external_open_profile.value)]]"
++        on-change="onExternalOpenToggleChange_"
++        aria-labelledby="externalOpenLabelWrapper">
++    </cr-toggle>
++  </div>
++</template>
+ </settings-subpage>
+diff --git a/chrome/browser/resources/settings/people_page/manage_profile.ts b/chrome/browser/resources/settings/people_page/manage_profile.ts
+index 921e4fb41a..e1f75cb11b 100644
+--- a/chrome/browser/resources/settings/people_page/manage_profile.ts
++++ b/chrome/browser/resources/settings/people_page/manage_profile.ts
+@@ -17,6 +17,7 @@ import 'chrome://resources/cr_elements/cr_tooltip/cr_tooltip.js';
+ import '../settings_page/settings_subpage.js';
+ import '../settings_shared.css.js';
+ 
++import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+ import type {ProfileInfo} from '/shared/settings/people_page/profile_info_browser_proxy.js';
+ import {ProfileInfoBrowserProxyImpl} from '/shared/settings/people_page/profile_info_browser_proxy.js';
+ import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
+@@ -34,8 +35,8 @@ import {getTemplate} from './manage_profile.html.js';
+ import type {ManageProfileBrowserProxy} from './manage_profile_browser_proxy.js';
+ import {ManageProfileBrowserProxyImpl, ProfileShortcutStatus} from './manage_profile_browser_proxy.js';
+ 
+-const SettingsManageProfileElementBase =
+-    SettingsViewMixin(RouteObserverMixin(WebUiListenerMixin(PolymerElement)));
++const SettingsManageProfileElementBase = SettingsViewMixin(
++    RouteObserverMixin(WebUiListenerMixin(PrefsMixin(PolymerElement))));
+ 
+ export interface SettingsManageProfileElement {
+   $: {
+@@ -97,6 +98,15 @@ export class SettingsManageProfileElement extends
+         },
+       },
+ 
++      // Roamux (roam-213): the external-open toggle is stamped only when the
++      // RoamuxExternalOpenProfile feature is enabled.
++      externalOpenProfileVisible_: {
++        type: Boolean,
++        value() {
++          return loadTimeData.getBoolean('roamuxExternalOpenProfileEnabled');
++        },
++      },
++
+ 
+       /**
+        * TODO(dpapad): Move this back to the HTML file when the Polymer2 version
+@@ -117,6 +127,7 @@ export class SettingsManageProfileElement extends
+   declare availableIcons: AvatarIcon[];
+   declare private isProfileShortcutSettingVisible_: boolean;
+   declare private hasEnterpriseLabel_: boolean;
++  declare private externalOpenProfileVisible_: boolean;
+   declare private pattern_: string;
+   private browserProxy_: ManageProfileBrowserProxy =
+       ManageProfileBrowserProxyImpl.getInstance();
+@@ -137,6 +148,26 @@ export class SettingsManageProfileElement extends
+         'profile-info-changed', this.onProfileInfoChanged_.bind(this));
+   }
+ 
++  // Roamux (roam-213): checked iff mode says "designated" AND the designated
++  // base name is THIS profile's directory (single-owner semantics live in the
++  // Local State pref pair).
++  private computeExternalOpenChecked_(mode: number, baseName: string): boolean {
++    return mode === 1 &&
++        baseName === loadTimeData.getString('roamuxProfileDirBaseName');
++  }
++
++  private onExternalOpenToggleChange_(e: CustomEvent<boolean>) {
++    if (e.detail) {
++      this.setPrefValue('roamux.profiles.external_open_mode', 1);
++      this.setPrefValue(
++          'roamux.profiles.external_open_profile',
++          loadTimeData.getString('roamuxProfileDirBaseName'));
++    } else {
++      // Unchecking clears the mode only; the stored name is inert at mode 0.
++      this.setPrefValue('roamux.profiles.external_open_mode', 0);
++    }
++  }
++
+   override currentRouteChanged(newRoute: Route, oldRoute?: Route) {
+     super.currentRouteChanged(newRoute, oldRoute);
+ 
+diff --git a/chrome/browser/resources/settings/people_page/people_page_index.html b/chrome/browser/resources/settings/people_page/people_page_index.html
+index 1d5c5ddd8b..a5c383c8c1 100644
+--- a/chrome/browser/resources/settings/people_page/people_page_index.html
++++ b/chrome/browser/resources/settings/people_page/people_page_index.html
+@@ -23,6 +23,7 @@
+ <if expr="not is_chromeos">
+    <settings-manage-profile slot="view" id="manageProfile"
+        data-parent-view-id="parent" profile-name="[[profileName_]]"
++       prefs="{{prefs}}"
+        route-path$="[[routes_.MANAGE_PROFILE.path]]">
+    </settings-manage-profile>
+ 
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index 454d45ec1a..f1a9b5b416 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2254,6 +2254,15 @@ void AddPeopleStrings(content::WebUIDataSource* html_source, Profile* profile) {
+ #endif
+   AddBrowserSyncPageStrings(html_source);
+   AddSharedSyncPageStrings(html_source);
++
++  // Roamux (roam-213): the manageProfile external-open toggle needs the
++  // feature gate and the current profile's directory base name (the page has
++  // no other way to know which string to write to the Local State pref).
++  html_source->AddBoolean("roamuxExternalOpenProfileEnabled",
++                          base::FeatureList::IsEnabled(
++                              roamux::features::kRoamuxExternalOpenProfile));
++  html_source->AddString("roamuxProfileDirBaseName",
++                         profile->GetBaseName().MaybeAsASCII());
+ }
+ 
+ bool ShouldLinkSecureDnsOsSettings() {

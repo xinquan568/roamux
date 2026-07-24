@@ -12,6 +12,7 @@
 
 #include "base/files/file_path.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.h"
 #include "chrome/common/pref_names.h"
@@ -34,6 +35,26 @@ class RoamuxBrowserPrefsHookTest : public testing::Test {
   content::BrowserTaskEnvironment task_environment_;
   sync_preferences::TestingPrefServiceSyncable prefs_;
 };
+
+// roam-213 hook-level proof: Chromium's OWN Local State registration path
+// (RegisterLocalState — TestingBrowserProcess runs the real one on its
+// testing local state) registers the roamux.profiles.* pref pair. RED before
+// patches/0049-external-open-local-state-prefs.patch; GREEN after.
+TEST_F(RoamuxBrowserPrefsHookTest,
+       UpstreamLocalStateRegistrationIncludesRoamuxPrefs) {
+  PrefService* local_state = g_browser_process->local_state();
+  ASSERT_NE(local_state, nullptr);
+  EXPECT_NE(local_state->FindPreference(roamux::prefs::kExternalOpenMode),
+            nullptr)
+      << "upstream RegisterLocalState did not register "
+      << roamux::prefs::kExternalOpenMode
+      << " - is patches/0049-external-open-local-state-prefs.patch applied?";
+  EXPECT_NE(local_state->FindPreference(roamux::prefs::kExternalOpenProfile),
+            nullptr);
+  EXPECT_EQ(local_state->GetInteger(roamux::prefs::kExternalOpenMode), 0);
+  EXPECT_TRUE(
+      local_state->GetString(roamux::prefs::kExternalOpenProfile).empty());
+}
 
 TEST_F(RoamuxBrowserPrefsHookTest, UpstreamRegistrationIncludesRoamuxPrefs) {
   EXPECT_NE(prefs_.FindPreference(roamux::prefs::kTabStripPosition), nullptr)
