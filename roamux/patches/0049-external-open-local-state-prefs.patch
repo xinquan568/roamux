@@ -1,0 +1,12 @@
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index 7223c50487..50bce4f536 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1464,6 +1464,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
+   PushMessagingServiceImpl::RegisterPrefs(registry);
+ #endif
+   RegisterScreenshotPrefs(registry);
++  roamux::prefs::RegisterLocalStatePrefs(registry);  // Roamux (roam-213)
+   safe_browsing::RegisterLocalStatePrefs(registry);
+   search_engines::SearchEngineChoiceService::RegisterLocalStatePrefs(registry);
+   secure_origin_allowlist::RegisterPrefs(registry);

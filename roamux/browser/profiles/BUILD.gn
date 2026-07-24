@@ -5,9 +5,12 @@ source_set("profiles") {
   sources = [
     "brave_style_profiles.cc",
     "brave_style_profiles.h",
+    "external_open_profile.cc",
+    "external_open_profile.h",
   ]
   deps = [
     "//base",
+    "//components/prefs",
     "//roamux/common",
   ]
 }

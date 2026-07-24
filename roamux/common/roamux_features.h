@@ -21,6 +21,9 @@ BASE_DECLARE_FEATURE(
 BASE_DECLARE_FEATURE(
     kRoamuxSchemeAlias); // E8 — roamux:// scheme alias + display branding
                          // (roam-91/roam-179; SHIPS ENABLED, kill-switch)
+BASE_DECLARE_FEATURE(
+    kRoamuxExternalOpenProfile); // roam-213 — designated profile for external
+                                 // opens (Finder files / links from other apps)
 
 } // namespace roamux::features
 

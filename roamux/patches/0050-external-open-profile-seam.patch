@@ -1,0 +1,60 @@
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 9c18c048fd..8755fb75b9 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -651,6 +651,7 @@ static_library("browser") {
+ 
+   deps = [
+     "//roamux/app:app_buildflags",
++    "//roamux/browser/profiles",
+     "//roamux/browser/scheme",
+     "//roamux/common",
+     ":active_use_util",
+diff --git a/chrome/browser/app_controller_mac.mm b/chrome/browser/app_controller_mac.mm
+index 51cf1f9e2b..c4f0f9311b 100644
+--- a/chrome/browser/app_controller_mac.mm
++++ b/chrome/browser/app_controller_mac.mm
+@@ -137,6 +137,7 @@
+ #include "extensions/buildflags/buildflags.h"
+ #include "net/base/apple/url_conversions.h"
+ #include "net/base/filename_util.h"
++#include "roamux/browser/profiles/external_open_profile.h"
+ #import "ui/base/cocoa/nsmenu_additions.h"
+ #import "ui/base/cocoa/nsmenuitem_additions.h"
+ #include "ui/base/l10n/l10n_util.h"
+@@ -514,9 +515,32 @@ void OpenUrlsInBrowser(std::vector<GURL> urls) {
+   }
+ 
+   if (!regular_urls.empty()) {
+-    app_controller_mac::RunInLastProfileSafely(
+-        base::BindOnce(&OpenUrlsInBrowserWithProfile, regular_urls),
+-        app_controller_mac::kShowProfilePickerOnFailure);
++    // Roamux (roam-213): external opens route to the designated profile when
++    // the feature is enabled and the stored profile validates; nullopt means
++    // current behavior, bit-for-bit.
++    ProfileManager* roamux_profile_manager =
++        g_browser_process->profile_manager();
++    std::optional<base::FilePath> roamux_external_profile;
++    if (roamux_profile_manager) {
++      roamux_external_profile = roamux::ResolveExternalOpenProfile(
++          *base::CommandLine::ForCurrentProcess(),
++          g_browser_process->local_state(),
++          roamux_profile_manager->user_data_dir(),
++          [roamux_profile_manager](const base::FilePath& path) {
++            return roamux_profile_manager->GetProfileAttributesStorage()
++                       .GetProfileAttributesWithPath(path) != nullptr;
++          });
++    }
++    if (roamux_external_profile) {
++      app_controller_mac::RunInProfileSafely(
++          *roamux_external_profile,
++          base::BindOnce(&OpenUrlsInBrowserWithProfile, regular_urls),
++          app_controller_mac::kShowProfilePickerOnFailure);
++    } else {
++      app_controller_mac::RunInLastProfileSafely(
++          base::BindOnce(&OpenUrlsInBrowserWithProfile, regular_urls),
++          app_controller_mac::kShowProfilePickerOnFailure);
++    }
+   }
+ }
+ 
