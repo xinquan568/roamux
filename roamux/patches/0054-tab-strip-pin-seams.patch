@@ -1,3 +1,29 @@
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index 62063e275a..ec51178194 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -378,6 +378,7 @@ static_library("ui") {
+     "//chrome/browser/preloading/prefetch/no_state_prefetch",
+     "//chrome/browser/privacy_sandbox:headers",
+     "//chrome/browser/profiles",
++    "//roamux/browser/ui/views/tabs:pin_core",
+     "//roamux/common",
+     "//chrome/browser/profiles:misc",
+     "//chrome/browser/profiles:profile",
+@@ -5723,6 +5724,13 @@ static_library("ui") {
+     "//roamux/browser/ui/views/tabs/tab_strip_toggle_command.h",
+   ]
+ 
++  # Roamux (roam-214, patch 0054): the pin/peek views glue + the notify-only
++  # observer seam header the region view includes.
++  sources += [
++    "//roamux/browser/ui/views/tabs/tab_strip_pin_controller_views.cc",
++    "//roamux/browser/ui/views/tabs/tab_strip_pin_controller_views.h",
++    "//roamux/browser/ui/views/tabs/vertical_tab_strip_roamux_observer.h",
++  ]
+ 
+   # Roamux (roam-140): settings_ui.{h,cc} include the generated
+   # roamux/app/app_buildflags.h UNCONDITIONALLY (to test
 diff --git a/chrome/browser/ui/browser_window/internal/browser_window_features.cc b/chrome/browser/ui/browser_window/internal/browser_window_features.cc
 index 47b0b3ea1a..b5b6299717 100644
 --- a/chrome/browser/ui/browser_window/internal/browser_window_features.cc
@@ -28,7 +54,7 @@ index 47b0b3ea1a..b5b6299717 100644
  
      if (projects_panel::IsProjectsPanelVisibleForProfile(profile)) {
 diff --git a/chrome/browser/ui/browser_window/public/browser_window_features.h b/chrome/browser/ui/browser_window/public/browser_window_features.h
-index f1ee16da38..a89763d875 100644
+index f1ee16da38..8b88748787 100644
 --- a/chrome/browser/ui/browser_window/public/browser_window_features.h
 +++ b/chrome/browser/ui/browser_window/public/browser_window_features.h
 @@ -164,6 +164,10 @@ namespace tabs_api {
@@ -42,31 +68,38 @@ index f1ee16da38..a89763d875 100644
  namespace tabs {
  class VerticalTabStripStateController;
  }  // namespace tabs
-@@ -586,6 +590,10 @@ class BrowserWindowFeatures {
+@@ -586,6 +590,16 @@ class BrowserWindowFeatures {
  
    std::unique_ptr<tabs::VerticalTabStripStateController>
        vertical_tab_strip_state_controller_;
 +  // Roamux (roam-214): the pin/peek glue; created only when the
 +  // kTabStripToggleShortcut feature is on (patch 0054).
++ public:
++  roamux::TabStripPinControllerViews* roamux_tab_strip_pin_controller() {
++    return roamux_tab_strip_pin_controller_.get();
++  }
++
++ private:
 +  std::unique_ptr<roamux::TabStripPinControllerViews>
 +      roamux_tab_strip_pin_controller_;
  
    std::unique_ptr<ProjectsPanelStateController>
        projects_panel_state_controller_;
 diff --git a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
-index 25ffbdf18e..feb099c2d4 100644
+index 25ffbdf18e..56e846096e 100644
 --- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
 +++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
-@@ -4,6 +4,8 @@
+@@ -4,6 +4,9 @@
  
  #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
  
-+#include "roamux/browser/ui/views/tabs/tab_strip_pin_controller_views.h"
++#include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
++#include "roamux/browser/ui/views/tabs/vertical_tab_strip_roamux_observer.h"
 +
  #include <algorithm>
  #include <optional>
  #include <variant>
-@@ -192,6 +194,7 @@ VerticalTabStripRegionView::VerticalTabStripRegionView(
+@@ -192,6 +195,7 @@ VerticalTabStripRegionView::VerticalTabStripRegionView(
        hover_tab_selector_(
            std::make_unique<HoverTabSelector>(tab_strip_model_)) {
    SetNotifyEnterExitOnChild(true);
@@ -74,7 +107,7 @@ index 25ffbdf18e..feb099c2d4 100644
    // For z-ordering purposes this needs to be on a layer.
    SetPaintToLayer();
    // Because corners may be transparent, this must be set to false.
-@@ -286,6 +289,7 @@ VerticalTabStripRegionView::VerticalTabStripRegionView(
+@@ -286,6 +290,7 @@ VerticalTabStripRegionView::VerticalTabStripRegionView(
  }
  
  VerticalTabStripRegionView::~VerticalTabStripRegionView() {
@@ -82,7 +115,7 @@ index 25ffbdf18e..feb099c2d4 100644
    for (const auto& lock : hover_locks_) {
      lock->ClearRegionViewOnDestruction();
    }
-@@ -615,6 +619,9 @@ void VerticalTabStripRegionView::HandleMouseExited() {
+@@ -615,6 +620,9 @@ void VerticalTabStripRegionView::HandleMouseExited() {
      return;
    }
  #endif
@@ -92,7 +125,7 @@ index 25ffbdf18e..feb099c2d4 100644
    UpdateExpandOnHoverState(false);
  }
  
-@@ -1018,6 +1025,9 @@ void VerticalTabStripRegionView::RegionViewFocusListener::OnDidChangeFocus(
+@@ -1018,6 +1026,9 @@ void VerticalTabStripRegionView::RegionViewFocusListener::OnDidChangeFocus(
      views::View* focused_now) {
    if ((focused_before && region_view_->Contains(focused_before)) ||
        (focused_now && region_view_->Contains(focused_now))) {
@@ -102,7 +135,7 @@ index 25ffbdf18e..feb099c2d4 100644
      region_view_->UpdateExpandOnHoverState();
    }
  }
-@@ -1379,6 +1389,15 @@ void VerticalTabStripRegionView::AnimateExpandOnHover(bool expand) {
+@@ -1379,6 +1390,15 @@ void VerticalTabStripRegionView::AnimateExpandOnHover(bool expand) {
  
  void VerticalTabStripRegionView::RegisterExpandOnHoverLock(
      VerticalTabStripExpandOnHoverLock* lock) {
@@ -118,7 +151,7 @@ index 25ffbdf18e..feb099c2d4 100644
    hover_locks_.insert(lock);
    ExpandOnHoverLockType lock_type = lock->lock_type();
    switch (lock_type) {
-@@ -1400,6 +1419,15 @@ void VerticalTabStripRegionView::RegisterExpandOnHoverLock(
+@@ -1400,6 +1420,15 @@ void VerticalTabStripRegionView::RegisterExpandOnHoverLock(
  
  void VerticalTabStripRegionView::UnregisterExpandOnHoverLock(
      VerticalTabStripExpandOnHoverLock* lock) {
@@ -171,14 +204,14 @@ index 70c78e23c0..ff44c870e7 100644
    int keep_current_state_lock_count_ = 0;
    int keep_expanded_lock_count_ = 0;
 diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_controller.cc b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_controller.cc
-index 5d7790f07d..a475377983 100644
+index 5d7790f07d..70d9f52c68 100644
 --- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_controller.cc
 +++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_controller.cc
 @@ -4,6 +4,8 @@
  
  #include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_controller.h"
  
-+#include "roamux/browser/ui/views/tabs/tab_strip_pin_controller_views.h"
++#include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
 +
  #include <variant>
  
@@ -193,3 +226,39 @@ index 5d7790f07d..a475377983 100644
  }
  
  bool VerticalTabStripController::GetContextMenuAccelerator(
+diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc b/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
+index c338962ae1..f6e1de8c87 100644
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_tab_view.h"
+ 
++#include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
++
+ #include <optional>
+ #include <string>
+ 
+@@ -306,6 +308,9 @@ bool VerticalTabView::OnKeyPressed(const ui::KeyEvent& event) {
+   if (event.key_code() == ui::VKEY_RETURN && !selected_) {
+     collection_node_->GetController()->SelectTab(GetTabInterface(),
+                                                  GetGestureDetail(event));
++    // Roamux (roam-214): a handled keyboard activation — a D3 completion.
++    roamux::OnVerticalTabStripUserActivation(
++        GetTabInterface()->GetBrowserWindowInterface());
+     return true;
+   }
+ 
+@@ -355,6 +360,12 @@ bool VerticalTabView::OnMousePressed(const ui::MouseEvent& event) {
+ 
+   auto* controller = collection_node_->GetController();
+   shift_pressed_on_mouse_down_ = event.IsShiftDown();
++  // Roamux (roam-214): a real press on a tab — a D3 completed interaction
++  // (tabs act on press; whitespace/scroll/hover never reach here).
++  if (event.IsOnlyLeftMouseButton() || event.IsOnlyMiddleMouseButton()) {
++    roamux::OnVerticalTabStripUserActivation(
++        GetTabInterface()->GetBrowserWindowInterface());
++  }
+   RecordMousePressedInTab();
+   UpdateHoverCard(nullptr, TabSlotController::HoverCardUpdateType::kEvent);
+ 

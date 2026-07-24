@@ -169,6 +169,48 @@ TEST_F(TabStripPinControllerTest, PointerExitAloneDoesNotUnpinUnarmed) {
 
 // --- The D4 predicate: armed && !pointer && !focus && no external lock ---
 
+// The full 16-combination truth table (plan WB-2): the pin dissolves iff
+// armed AND pointer outside AND focus outside AND no external keep-open
+// lock; every other combination stays pinned.
+struct D4Row {
+  bool armed;
+  bool pointer_inside;
+  bool focus_inside;
+  bool external_lock;
+};
+
+class TabStripPinControllerD4Test : public testing::TestWithParam<int> {};
+
+TEST_P(TabStripPinControllerD4Test, TruthTable) {
+  const int bits = GetParam();
+  const D4Row row{(bits & 8) != 0, (bits & 4) != 0, (bits & 2) != 0,
+                  (bits & 1) != 0};
+  FakeDelegate fake;
+  TabStripPinController controller(&fake);
+  fake.pointer_inside_ = true;
+  controller.OnShortcut(TabStripPinController::Mode::kPinPeek);
+  ASSERT_TRUE(controller.pinned());
+  if (row.armed) {
+    controller.OnCompletedInteraction();
+  }
+  fake.pointer_inside_ = row.pointer_inside;
+  fake.focus_inside_ = row.focus_inside;
+  fake.external_locks_ = row.external_lock ? 1 : 0;
+  // Re-evaluate through every predicate trigger.
+  controller.OnPointerExit();
+  controller.OnFocusChanged();
+  controller.OnExternalLockReleased();
+  const bool should_unpin = row.armed && !row.pointer_inside &&
+                            !row.focus_inside && !row.external_lock;
+  EXPECT_EQ(controller.pinned(), !should_unpin)
+      << "armed=" << row.armed << " ptr=" << row.pointer_inside
+      << " focus=" << row.focus_inside << " lock=" << row.external_lock;
+}
+
+INSTANTIATE_TEST_SUITE_P(AllCombinations,
+                         TabStripPinControllerD4Test,
+                         testing::Range(0, 16));
+
 TEST_F(TabStripPinControllerTest, PredicateUnpinsOnPointerExit) {
   Pin();
   ArmAndLeave();

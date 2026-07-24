@@ -23,6 +23,12 @@ std::map<BrowserWindowInterface*, base::RepeatingClosure>& Handlers() {
   return *handlers;
 }
 
+std::map<Browser*, RoamuxTabStripSignalHooks>& Hooks() {
+  static base::NoDestructor<std::map<Browser*, RoamuxTabStripSignalHooks>>
+      hooks;
+  return *hooks;
+}
+
 }  // namespace
 
 bool CanToggleTabStrip(BrowserWindowInterface* browser) {
@@ -56,4 +62,60 @@ void ClearToggleHandler(BrowserWindowInterface* browser) {
   Handlers().erase(browser);
 }
 
+RoamuxTabStripSignalHooks::RoamuxTabStripSignalHooks() = default;
+RoamuxTabStripSignalHooks::RoamuxTabStripSignalHooks(
+    RoamuxTabStripSignalHooks&&) = default;
+RoamuxTabStripSignalHooks& RoamuxTabStripSignalHooks::operator=(
+    RoamuxTabStripSignalHooks&&) = default;
+RoamuxTabStripSignalHooks::~RoamuxTabStripSignalHooks() = default;
+
+void SetSignalHooks(Browser* browser, RoamuxTabStripSignalHooks hooks) {
+  Hooks()[browser] = std::move(hooks);
+}
+
+void ClearSignalHooks(Browser* browser) {
+  Hooks().erase(browser);
+}
+
 }  // namespace roamux::tabs_toggle
+
+namespace roamux {
+
+void OnVerticalTabStripRegionViewCreated(
+    Browser* browser,
+    VerticalTabStripRegionView* region_view) {
+  auto it = tabs_toggle::Hooks().find(browser);
+  if (it != tabs_toggle::Hooks().end() && it->second.region_created) {
+    it->second.region_created.Run(region_view);
+  }
+}
+
+void OnVerticalTabStripRegionViewDestroyed(
+    Browser* browser,
+    VerticalTabStripRegionView* region_view) {
+  auto it = tabs_toggle::Hooks().find(browser);
+  if (it != tabs_toggle::Hooks().end() && it->second.region_destroyed) {
+    it->second.region_destroyed.Run(region_view);
+  }
+}
+
+void OnVerticalTabStripMenuCommandExecuted(Browser* browser) {
+  auto it = tabs_toggle::Hooks().find(browser);
+  if (it != tabs_toggle::Hooks().end() && it->second.menu_executed) {
+    it->second.menu_executed.Run();
+  }
+}
+
+void OnVerticalTabStripUserActivation(const BrowserWindowInterface* browser) {
+  if (!browser) {
+    return;
+  }
+  Browser* key = const_cast<BrowserWindowInterface*>(browser)
+                     ->GetBrowserForMigrationOnly();
+  auto it = tabs_toggle::Hooks().find(key);
+  if (it != tabs_toggle::Hooks().end() && it->second.user_activation) {
+    it->second.user_activation.Run();
+  }
+}
+
+}  // namespace roamux

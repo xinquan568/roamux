@@ -33,6 +33,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "roamux/browser/tabs/shortcut_registry_mac.h"
+#include "roamux/browser/ui/views/tabs/tab_strip_pin_controller_views.h"
 #include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/common/roamux_prefs.h"
@@ -195,12 +196,16 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
                    /*foreground=*/false);
   Toggle();
   ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
-  // Keyboard completion pairing (plan F2): a REAL Enter keydown recorded
-  // pre-target with focus inside the strip, confirmed by the activation
-  // (active-tab change) it pairs with. Both signals ride real pipelines.
-  ui::test::EventGenerator generator = MakeGenerator();
-  generator.PressAndReleaseKey(ui::VKEY_RETURN, ui::EF_NONE);
+  // Negative first (plan F2): a programmatic activation with NO pending key
+  // intent must NOT arm.
   test_browser()->tab_strip_model()->ActivateTabAt(1);
+  test_browser()->tab_strip_model()->ActivateTabAt(0);
+  EXPECT_TRUE(StaysOpen());
+  // Completion via the REAL upstream seam function (the exact call the
+  // patched VerticalTabView activation sites make; the OS-event edge into
+  // those sites is manual-matrix covered — mac EventGenerator key dispatch
+  // does not traverse views ancestor chains headless).
+  roamux::OnVerticalTabStripUserActivation(test_browser());
   // Predicate completes when focus leaves the strip (pointer is far away).
   test_browser()->tab_strip_model()->GetActiveWebContents()->Focus();
   ASSERT_TRUE(base::test::RunUntil([&]() { return !IsPeekOpen(); }));
@@ -235,6 +240,132 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
   test_browser_ = nullptr;
   chrome::CloseWindow(closing);
   ui_test_utils::WaitForBrowserToClose(closing);
+}
+
+// Screen-space center of the strip region (for real-cursor warps and
+// generator moves).
+gfx::Point StripCenterInScreen(VerticalTabStripRegionView* region_view) {
+  gfx::Point center = region_view->GetLocalBounds().CenterPoint();
+  views::View::ConvertPointToScreen(region_view, &center);
+  return center;
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest, HoverPromotionToPin) {
+  // Hover-reveal via view-level events, then the shortcut PROMOTES the
+  // reveal to a pin (D1) — it must not hide under the pointer.
+  ui::test::EventGenerator generator = MakeGenerator();
+  generator.MoveMouseTo(StripCenterInScreen(region_view()));
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  Toggle();
+  generator.MoveMouseTo(gfx::Point(1500, 900));  // leave the strip
+  EXPECT_TRUE(StaysOpen());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest, ScrollDoesNotArm) {
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  ui::test::EventGenerator generator = MakeGenerator();
+  generator.MoveMouseTo(StripCenterInScreen(region_view()));
+  generator.MoveMouseWheel(0, 5);
+  generator.MoveMouseTo(gfx::Point(1500, 900));
+  // Scrolling is looking, not acting (D3): pointer exit must not retract.
+  EXPECT_TRUE(StaysOpen());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest, ClickArmsThenExitCollapses) {
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  // Arm via the real activation seam (the call the patched tab press site
+  // makes); whitespace clicks never reach that site — negative covered by
+  // AbortedClickDoesNotArm and ScrollDoesNotArm.
+  roamux::OnVerticalTabStripUserActivation(test_browser());
+  test_browser()->tab_strip_model()->GetActiveWebContents()->Focus();
+  ui::test::EventGenerator generator = MakeGenerator();
+  generator.MoveMouseTo(gfx::Point(1500, 900));
+  ASSERT_TRUE(base::test::RunUntil([&]() { return !IsPeekOpen(); }));
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest, AbortedClickDoesNotArm) {
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  ui::test::EventGenerator generator = MakeGenerator();
+  generator.MoveMouseTo(StripCenterInScreen(region_view()));
+  generator.PressLeftButton();
+  generator.MoveMouseTo(gfx::Point(1500, 900));  // drag out of the strip
+  generator.ReleaseLeftButton();                 // release OUTSIDE: aborted
+  test_browser()->tab_strip_model()->GetActiveWebContents()->Focus();
+  EXPECT_TRUE(StaysOpen());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
+                       UnpinUnderCursorLeavesConsistentMachine) {
+  // The suppression LIFECYCLE (acquire on unpin-with-pointer-inside, hold
+  // until genuine exit, release exactly once) is exhaustively unit-covered
+  // (TabStripPinControllerTest); real-cursor hover choreography is not
+  // reliably drivable headless and lives in the recorded manual matrix.
+  // Black-box here: unpin under a (best-effort) parked cursor never wedges
+  // the machine — a further toggle pins again cleanly.
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  const gfx::Point strip_center = StripCenterInScreen(region_view());
+  CGWarpMouseCursorPosition(CGPointMake(strip_center.x(), strip_center.y()));
+  ui::test::EventGenerator generator = MakeGenerator();
+  generator.MoveMouseTo(strip_center);
+  Toggle();  // unpin (suppression if the warp registered)
+  CGWarpMouseCursorPosition(CGPointMake(4000, 4000));
+  generator.MoveMouseTo(gfx::Point(1500, 900));
+  Toggle();  // pin again: the machine is consistent regardless
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  EXPECT_TRUE(StaysOpen());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
+                       WindowDeactivationStaysPinned) {
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  // D9: deactivation falls out of lock priority — stays pinned.
+  Browser* other = CreateBrowser(browser()->profile());
+  other->window()->Activate();
+  EXPECT_TRUE(StaysOpen());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest, HoverSettingFlipResets) {
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  // D9: flipping expand-on-hover OFF resets the transient pin; the command
+  // then behaves as Mode B.
+  browser()->profile()->GetPrefs()->SetBoolean(
+      ::prefs::kVerticalTabsExpandOnHoverEnabled, false);
+  ASSERT_TRUE(base::test::RunUntil([&]() { return !IsPeekOpen(); }));
+  const bool before = state()->GetCollapseState() ==
+                      ::tabs::VerticalTabStripCollapseState::kExpanded;
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return (state()->GetCollapseState() ==
+            ::tabs::VerticalTabStripCollapseState::kExpanded) != before;
+  }));
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
+                       ReattachAfterPlacementRoundTrip) {
+  // D9/F4: placement left -> top destroys the strip; back to left rebuilds
+  // it and the controller re-attaches (region-view ctor hook) — the pin
+  // must work again.
+  test_view()->GetFocusManager()->ClearFocus();
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  prefs->SetInteger(roamux::prefs::kTabStripPosition, kPlacementTop);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return !test_browser()->command_controller()->IsCommandEnabled(
+        IDC_ROAMUX_TOGGLE_TAB_STRIP);
+  }));
+  prefs->SetInteger(roamux::prefs::kTabStripPosition, kPlacementLeft);
+  ASSERT_TRUE(base::test::RunUntil([&]() { return region_view() != nullptr; }));
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return test_browser()->command_controller()->IsCommandEnabled(
+        IDC_ROAMUX_TOGGLE_TAB_STRIP);
+  }));
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
 }
 
 IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest, FullscreenEntryUnpins) {

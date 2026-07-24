@@ -13,18 +13,10 @@ index 8f3a837dca..4cc80a9870 100644
  // Window management commands
  #define IDC_NEW_WINDOW                  34000
 diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
-index 4d7a6b1091..ec51178194 100644
+index 4d7a6b1091..62063e275a 100644
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
-@@ -378,6 +378,7 @@ static_library("ui") {
-     "//chrome/browser/preloading/prefetch/no_state_prefetch",
-     "//chrome/browser/privacy_sandbox:headers",
-     "//chrome/browser/profiles",
-+    "//roamux/browser/ui/views/tabs:pin_core",
-     "//roamux/common",
-     "//chrome/browser/profiles:misc",
-     "//chrome/browser/profiles:profile",
-@@ -5716,6 +5717,21 @@ static_library("ui") {
+@@ -5716,6 +5716,14 @@ static_library("ui") {
      "//roamux/browser/tab_visit/tab_visit_command.h",
    ]
  
@@ -35,13 +27,6 @@ index 4d7a6b1091..ec51178194 100644
 +    "//roamux/browser/ui/views/tabs/tab_strip_toggle_command.h",
 +  ]
 +
-+  # Roamux (roam-214, patch 0054): the pin/peek views glue + the notify-only
-+  # observer seam header the region view includes.
-+  sources += [
-+    "//roamux/browser/ui/views/tabs/tab_strip_pin_controller_views.cc",
-+    "//roamux/browser/ui/views/tabs/tab_strip_pin_controller_views.h",
-+    "//roamux/browser/ui/views/tabs/vertical_tab_strip_roamux_observer.h",
-+  ]
 +
    # Roamux (roam-140): settings_ui.{h,cc} include the generated
    # roamux/app/app_buildflags.h UNCONDITIONALLY (to test

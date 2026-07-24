@@ -45,6 +45,21 @@ TabStripPinControllerViews::TabStripPinControllerViews(Browser* browser)
       browser_,
       base::BindRepeating(&TabStripPinControllerViews::OnToggleCommand,
                           base::Unretained(this)));
+  tabs_toggle::RoamuxTabStripSignalHooks hooks;
+  hooks.user_activation = base::BindRepeating(
+      [](TabStripPinControllerViews* self) {
+        self->core_.OnCompletedInteraction();
+      },
+      base::Unretained(this));
+  hooks.menu_executed = hooks.user_activation;
+  hooks.region_created = base::BindRepeating(
+      &TabStripPinControllerViews::AttachRegionView, base::Unretained(this));
+  hooks.region_destroyed = base::BindRepeating(
+      [](TabStripPinControllerViews* self, VerticalTabStripRegionView*) {
+        self->DetachRegionView();
+      },
+      base::Unretained(this));
+  tabs_toggle::SetSignalHooks(browser_, std::move(hooks));
   pref_registrar_.Init(browser_->profile()->GetPrefs());
   pref_registrar_.Add(
       prefs::kTabStripPosition,
@@ -74,6 +89,7 @@ TabStripPinControllerViews::TabStripPinControllerViews(Browser* browser)
 TabStripPinControllerViews::~TabStripPinControllerViews() {
   // F4: the region view (and its widget) is usually gone already.
   DetachRegionView();
+  tabs_toggle::ClearSignalHooks(browser_);
   tabs_toggle::ClearToggleHandler(browser_);
   GlueRegistry().erase(browser_);
 }
@@ -139,7 +155,10 @@ bool TabStripPinControllerViews::IsFocusInsideStrip() {
 
 void TabStripPinControllerViews::FocusStrip() {
   if (region_view_) {
-    region_view_->RequestFocus();
+    // Pane-focus mode: focuses the default child (the active tab) AND
+    // activates the pane's arrow-key traversal, so shortcut -> arrows ->
+    // Enter works hands-on-keyboard (issue D4 symmetry).
+    region_view_->SetPaneFocusAndFocusDefault();
   }
 }
 
@@ -196,6 +215,12 @@ void TabStripPinControllerViews::OnRoamuxStripMenuCommandExecuted() {
   core_.OnCompletedInteraction();
 }
 
+void TabStripPinControllerViews::OnRoamuxStripControlActivated() {
+  // A strip-owned control completed an activation (mouse or keyboard) — a
+  // D3 completion in its own right.
+  core_.OnCompletedInteraction();
+}
+
 // --- Pinned-lifetime handlers ---
 
 void TabStripPinControllerViews::InstallPinnedHandlers() {
@@ -203,7 +228,10 @@ void TabStripPinControllerViews::InstallPinnedHandlers() {
       !region_view_->GetWidget()) {
     return;
   }
-  region_view_->GetWidget()->GetRootView()->AddPreTargetHandler(this);
+  // Handlers ride the REGION VIEW's ancestor chain: every strip-targeted
+  // key/mouse event runs them pre/post target (root-view handlers do not see
+  // views key dispatch on mac).
+  region_view_->AddPreTargetHandler(this);
   if (!fullscreen_observation_.IsObserving()) {
     fullscreen_observation_.Observe(browser_->GetFeatures()
                                         .exclusive_access_manager()
@@ -223,7 +251,7 @@ void TabStripPinControllerViews::RemovePinnedHandlers() {
     return;
   }
   if (region_view_ && region_view_->GetWidget()) {
-    region_view_->GetWidget()->GetRootView()->RemovePreTargetHandler(this);
+    region_view_->RemovePreTargetHandler(this);
     views::FocusManager* focus_manager = region_view_->GetFocusManager();
     if (focus_manager) {
       focus_manager->UnregisterAccelerator(
@@ -232,37 +260,11 @@ void TabStripPinControllerViews::RemovePinnedHandlers() {
   }
   fullscreen_observation_.Reset();
   pinned_handlers_installed_ = false;
-  pending_press_target_ = nullptr;
-  pending_key_activation_ = false;
 }
 
 void TabStripPinControllerViews::OnMouseEvent(ui::MouseEvent* event) {
-  if (!region_view_ || !core_.pinned()) {
-    return;
-  }
-  if (!event->IsLeftMouseButton() && !event->IsMiddleMouseButton()) {
-    return;
-  }
-  const gfx::Point screen_point =
-      event->target() ? event->AsLocatedEvent()->root_location() : gfx::Point();
-  gfx::Point local = screen_point;
-  views::View::ConvertPointFromWidget(region_view_, &local);
-  const bool inside = region_view_->HitTestPoint(local);
-  if (event->type() == ui::EventType::kMousePressed) {
-    pending_press_target_ =
-        inside ? region_view_->GetEventHandlerForPoint(local) : nullptr;
-    return;
-  }
-  if (event->type() == ui::EventType::kMouseReleased) {
-    // Completed click: press began on a strip child and the release lands on
-    // the SAME child (aborted clicks, whitespace, and outside-press never
-    // arm — D3).
-    if (pending_press_target_ && inside &&
-        region_view_->GetEventHandlerForPoint(local) == pending_press_target_) {
-      core_.OnCompletedInteraction();
-    }
-    pending_press_target_ = nullptr;
-  }
+  // Mouse completions are reported by the upstream activation seams (tab
+  // press in VerticalTabView, control callbacks) — nothing to do here.
 }
 
 void TabStripPinControllerViews::OnKeyEvent(ui::KeyEvent* event) {
@@ -271,26 +273,14 @@ void TabStripPinControllerViews::OnKeyEvent(ui::KeyEvent* event) {
   }
   // D6: Esc with focus inside the strip pane unpins (pre-target, so it wins
   // over the pane's focus-restore Esc); Esc anywhere else is untouched.
+  // Keyboard/mouse activation completions come from the upstream seams in
+  // VerticalTabView (a handled Enter-activation / a tab press) and the
+  // strip-control callbacks — direct action-completion reporting, immune to
+  // the mac views key dispatch bypassing ancestor event-handler chains.
   if (event->key_code() == ui::VKEY_ESCAPE && IsFocusInsideStrip()) {
     core_.OnEscInStrip();
     event->SetHandled();
     return;
-  }
-  // Pre-target intent (a consumed key is invisible post-target): a pending
-  // Enter/Space whose focus target is inside the strip; confirmed by an
-  // activation signal within this dispatch scope (active-tab change).
-  if ((event->key_code() == ui::VKEY_RETURN ||
-       event->key_code() == ui::VKEY_SPACE) &&
-      IsFocusInsideStrip()) {
-    pending_key_activation_ = true;
-    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(
-                       [](base::WeakPtr<TabStripPinControllerViews> self) {
-                         if (self) {
-                           self->pending_key_activation_ = false;
-                         }
-                       },
-                       weak_factory_.GetWeakPtr()));
   }
 }
 
@@ -313,15 +303,8 @@ void TabStripPinControllerViews::OnTabStripModelChanged(
     TabStripModel* tab_strip_model,
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
-  if (!core_.pinned() || !selection.active_tab_changed()) {
-    return;
-  }
-  // Keyboard-activation completion: only a change with recorded key intent
-  // arms (programmatic switches never do — plan F2).
-  if (pending_key_activation_) {
-    pending_key_activation_ = false;
-    core_.OnCompletedInteraction();
-  }
+  // Completions come from the direct upstream activation seams; programmatic
+  // model changes never arm (plan F2).
 }
 
 void TabStripPinControllerViews::OnFullscreenStateChanged() {
@@ -355,33 +338,6 @@ void TabStripPinControllerViews::OnModeRelevantPrefChanged() {
   }
   core_.OnLifecycleReset();  // D9: placement / hover-setting change
   UpdateCommandEnablement();
-}
-
-// --- Region-view lifecycle free functions (patched ctor/dtor) ---
-
-void OnVerticalTabStripRegionViewCreated(
-    Browser* browser,
-    VerticalTabStripRegionView* region_view) {
-  auto it = GlueRegistry().find(browser);
-  if (it != GlueRegistry().end()) {
-    it->second->AttachRegionView(region_view);
-  }
-}
-
-void OnVerticalTabStripRegionViewDestroyed(
-    Browser* browser,
-    VerticalTabStripRegionView* region_view) {
-  auto it = GlueRegistry().find(browser);
-  if (it != GlueRegistry().end()) {
-    it->second->DetachRegionView();
-  }
-}
-
-void OnVerticalTabStripMenuCommandExecuted(Browser* browser) {
-  auto it = GlueRegistry().find(browser);
-  if (it != GlueRegistry().end()) {
-    it->second->OnRoamuxStripMenuCommandExecuted();
-  }
 }
 
 }  // namespace roamux

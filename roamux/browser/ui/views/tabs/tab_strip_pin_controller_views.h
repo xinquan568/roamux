@@ -70,8 +70,12 @@ class TabStripPinControllerViews : public TabStripPinController::Delegate,
   void OnRoamuxKeepOpenLocksChanged(int total_keep_open_count,
                                     bool released) override;
   void OnRoamuxStripMenuCommandExecuted() override;
+  void OnRoamuxStripControlActivated() override;
 
-  // ui::EventHandler (installed post-target on the widget while pinned):
+  // ui::EventHandler — the glue itself is the PRE-target handler while
+  // pinned (Esc scoping + key-intent recording); the nested PostHandler is
+  // the POST-target one (completion-aware mouse pairing + end-of-dispatch
+  // intent clearing).
   void OnMouseEvent(ui::MouseEvent* event) override;
   void OnKeyEvent(ui::KeyEvent* event) override;
 
@@ -106,8 +110,6 @@ class TabStripPinControllerViews : public TabStripPinController::Delegate,
   int total_keep_open_locks_ = 0;
 
   bool pinned_handlers_installed_ = false;
-  raw_ptr<views::View> pending_press_target_ = nullptr;
-  bool pending_key_activation_ = false;
 
   PrefChangeRegistrar pref_registrar_;
   base::ScopedObservation<FullscreenController, FullscreenObserver>
@@ -115,18 +117,6 @@ class TabStripPinControllerViews : public TabStripPinController::Delegate,
   base::CallbackListSubscription browser_close_subscription_;
   base::WeakPtrFactory<TabStripPinControllerViews> weak_factory_{this};
 };
-
-// Free functions the patched VerticalTabStripRegionView ctor/dtor call
-// (single-line upstream hunks). No-ops when no glue is installed for the
-// browser (flag off).
-void OnVerticalTabStripRegionViewCreated(
-    Browser* browser,
-    VerticalTabStripRegionView* region_view);
-void OnVerticalTabStripRegionViewDestroyed(
-    Browser* browser,
-    VerticalTabStripRegionView* region_view);
-// Called from the patched strip context-menu execute path (D3 arming).
-void OnVerticalTabStripMenuCommandExecuted(Browser* browser);
 
 }  // namespace roamux
 

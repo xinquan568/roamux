@@ -27,6 +27,10 @@ class VerticalTabStripRoamuxObserver {
   // (dismissal without choosing never reports — D3).
   virtual void OnRoamuxStripMenuCommandExecuted() = 0;
 
+  // A strip-owned control (e.g. the new-tab button) completed an activation
+  // — the non-tab keyboard/mouse completion signal (D3).
+  virtual void OnRoamuxStripControlActivated() = 0;
+
  protected:
   virtual ~VerticalTabStripRoamuxObserver() = default;
 };
