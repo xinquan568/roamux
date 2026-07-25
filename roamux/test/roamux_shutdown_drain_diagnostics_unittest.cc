@@ -19,9 +19,9 @@
 
 #include <atomic>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -109,6 +109,7 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, SequenceIdentityViaRealPostingPath) {
   const std::string queued =
       tracker->DescribeIncompleteBlockShutdownTaskSourcesForTesting();
   EXPECT_NE(queued.find(kThisFile), std::string::npos) << queued;
+  EXPECT_NE(queued.find("priority=USER_VISIBLE"), std::string::npos) << queued;
 
   pool->Start(
       base::ThreadPoolInstance::InitParams(/*max_num_foreground_threads=*/2),
@@ -176,19 +177,23 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, OutputIsBoundedAndDeterministic) {
   }
 }
 
-// T5 — snapshot lifetime: describing while another thread unregisters sources
-// must not touch freed memory (refcounted snapshot).
+// T5 — snapshot lifetime: while another thread unregisters and releases the
+// ONLY external ownership of each source, concurrent describes must never
+// touch freed memory — the refcounted snapshot is the sole lifetime holder
+// mid-render. (The race window is stochastic; sole ownership is what makes
+// the test load-bearing: without snapshot refs this is a use-after-free under
+// any iteration that overlaps an unregistration.)
 TEST(RoamuxShutdownDrainDiagnosticsTest, DescribeRacesUnregistrationSafely) {
   TaskTracker tracker;
   tracker.set_retain_block_shutdown_identity_for_testing(true);
 
+  // RegisteredTaskSource handles are the ONLY external refs: the scoped
+  // sequence refptr is released immediately after registration.
   std::vector<base::internal::RegisteredTaskSource> registered;
-  std::vector<scoped_refptr<base::internal::Sequence>> sequences;
   for (int i = 0; i < 16; ++i) {
     auto sequence = MakeBlockShutdownSequence();
     PushTask(sequence.get(), MakeTask(FROM_HERE));
-    registered.push_back(tracker.RegisterTaskSource(sequence));
-    sequences.push_back(std::move(sequence));
+    registered.push_back(tracker.RegisterTaskSource(std::move(sequence)));
   }
 
   class Unregisterer : public base::DelegateSimpleThread::Delegate {
@@ -198,6 +203,8 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, DescribeRacesUnregistrationSafely) {
         : sources_(sources) {}
     void Run() override {
       for (auto &source : *sources_) {
+        // Unregister() returns the last scoped_refptr; dropping it destroys
+        // the source unless a describe snapshot holds it.
         source.Unregister();
       }
     }
@@ -217,56 +224,71 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, DescribeRacesUnregistrationSafely) {
             std::string());
 }
 
-// T6 — job identity: a registered BLOCK_SHUTDOWN JobTaskSource renders its
-// construction from_here and clears on unregistration.
+// T6 — job identity through the real pool job path: a BLOCK_SHUTDOWN
+// JobTaskSource enqueued into an unstarted ThreadPoolImpl (whose tracker
+// retains identity) renders its construction from_here while queued, and the
+// entry clears once the pool drains the job.
 TEST(RoamuxShutdownDrainDiagnosticsTest, JobSourceRendersConstructionLocation) {
-  // JobTaskSource requires a real PooledTaskRunnerDelegate; an unstarted
-  // ThreadPoolImpl (with its own default tracker) serves as one.
+  auto owned_tracker = std::make_unique<TaskTracker>();
+  owned_tracker->set_retain_block_shutdown_identity_for_testing(true);
+  TaskTracker *tracker = owned_tracker.get();
   auto pool = std::make_unique<base::internal::ThreadPoolImpl>(
-      "RoamuxShutdownDrainJobTest");
-  TaskTracker tracker;
-  tracker.set_retain_block_shutdown_identity_for_testing(true);
+      "RoamuxShutdownDrainJobTest", std::move(owned_tracker));
 
+  std::atomic_size_t remaining{1};
   auto job = base::MakeRefCounted<base::internal::JobTaskSource>(
       FROM_HERE, base::TaskTraits{base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
       base::ThreadType::kDefault,
-      base::BindRepeating([](base::JobDelegate *) {}),
-      base::BindRepeating([](size_t) -> size_t { return 0; }), pool.get());
-  auto registered = tracker.RegisterTaskSource(job);
-  ASSERT_TRUE(registered);
-  EXPECT_NE(tracker.DescribeIncompleteBlockShutdownTaskSourcesForTesting().find(
-                kThisFile),
-            std::string::npos);
-  registered.Unregister();
-  EXPECT_EQ(tracker.DescribeIncompleteBlockShutdownTaskSourcesForTesting(),
-            std::string());
+      base::BindRepeating([](std::atomic_size_t *remaining,
+                             base::JobDelegate *) { remaining->store(0); },
+                          &remaining),
+      base::BindRepeating(
+          [](std::atomic_size_t *remaining, size_t /*worker_count*/) -> size_t {
+            return remaining->load();
+          },
+          &remaining),
+      pool.get());
+  ASSERT_TRUE(pool->EnqueueJobTaskSource(job));
 
-  // ThreadPoolImpl's destructor DCHECKs that JoinForTesting ran.
+  const std::string queued =
+      tracker->DescribeIncompleteBlockShutdownTaskSourcesForTesting();
+  EXPECT_NE(queued.find(kThisFile), std::string::npos) << queued;
+  EXPECT_NE(queued.find("job created from:"), std::string::npos) << queued;
+
   pool->Start(base::ThreadPoolInstance::InitParams(1),
               /*worker_thread_observer=*/nullptr);
+  pool->FlushForTesting();
+  EXPECT_EQ(tracker->DescribeIncompleteBlockShutdownTaskSourcesForTesting(),
+            std::string());
   pool->JoinForTesting();
 }
 
-// T7 — message composition: both sections combine verbatim, empty and
-// populated.
+// T7 — message composition: all four operand combinations compose cleanly
+// (no stray separators, sections verbatim).
 TEST(RoamuxShutdownDrainDiagnosticsTest, TimeoutMessageComposesBothSections) {
-  const std::string composed =
-      base::test::ComposeCompleteShutdownTimeoutMessage(
-          "ThreadPool currently running tasks: none.",
-          "Registered incomplete BLOCK_SHUTDOWN task sources:\n  sample entry");
-  EXPECT_NE(composed.find("running tasks: none."), std::string::npos);
-  EXPECT_NE(composed.find("sample entry"), std::string::npos);
+  const std::string running = "ThreadPool currently running tasks: none.";
+  const std::string sources =
+      "Registered incomplete BLOCK_SHUTDOWN task sources:\n  sample entry";
 
-  const std::string empty_sources =
-      base::test::ComposeCompleteShutdownTimeoutMessage(
-          "ThreadPool currently running tasks: none.", std::string());
-  EXPECT_NE(empty_sources.find("running tasks: none."), std::string::npos);
+  const std::string both =
+      base::test::ComposeCompleteShutdownTimeoutMessage(running, sources);
+  EXPECT_EQ(both, running + "\n" + sources);
+
+  EXPECT_EQ(
+      base::test::ComposeCompleteShutdownTimeoutMessage(running, std::string()),
+      running);
+  EXPECT_EQ(
+      base::test::ComposeCompleteShutdownTimeoutMessage(std::string(), sources),
+      sources);
+  EXPECT_EQ(base::test::ComposeCompleteShutdownTimeoutMessage(std::string(),
+                                                              std::string()),
+            std::string());
 }
 
 // T8 — the real timeout branch: with a genuinely queued BLOCK_SHUTDOWN task
 // behind a true scheduling fence, invoking the actual BeginCompleteShutdown
-// override (50 ms timeout, termination suppressed) emits BOTH sections into
-// the captured nonfatal failure.
+// override (50 ms timeout, termination suppressed) reports ONE nonfatal
+// failure whose message contains BOTH diagnostic sections.
 TEST(RoamuxShutdownDrainDiagnosticsTest, RealTimeoutBranchEmitsBothSections) {
   base::test::TaskEnvironment task_environment;
   task_environment.RunUntilIdle();
@@ -276,7 +298,6 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, RealTimeoutBranchEmitsBothSections) {
   base::test::TaskEnvironment::SetTerminateOnCompleteShutdownTimeoutForTesting(
       false);
 
-  std::string captured;
   {
     base::ScopedThreadPoolExecutionFence fence;
     base::ThreadPool::PostTask(
@@ -285,16 +306,26 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, RealTimeoutBranchEmitsBothSections) {
         base::DoNothing());
 
     base::WaitableEvent never_signaled;
-    EXPECT_NONFATAL_FAILURE(
-        {
-          captured =
-              task_environment.RunCompleteShutdownTimeoutBranchForTesting(
-                  never_signaled);
-        },
-        "CompleteShutdown took more than");
-    EXPECT_NE(captured.find("running tasks: none."), std::string::npos)
-        << captured;
-    EXPECT_NE(captured.find(kThisFile), std::string::npos) << captured;
+    testing::TestPartResultArray failures;
+    {
+      testing::ScopedFakeTestPartResultReporter reporter(
+          testing::ScopedFakeTestPartResultReporter::
+              INTERCEPT_ONLY_CURRENT_THREAD,
+          &failures);
+      task_environment.RunCompleteShutdownTimeoutBranchForTesting(
+          never_signaled);
+    }
+    ASSERT_EQ(failures.size(), 1);
+    const std::string message = failures.GetTestPartResult(0).message();
+    EXPECT_NE(message.find("CompleteShutdown took more than"),
+              std::string::npos)
+        << message;
+    EXPECT_NE(message.find("running tasks: none."), std::string::npos)
+        << message;
+    EXPECT_NE(message.find("Registered incomplete BLOCK_SHUTDOWN"),
+              std::string::npos)
+        << message;
+    EXPECT_NE(message.find(kThisFile), std::string::npos) << message;
   }
   task_environment.RunUntilIdle();
 

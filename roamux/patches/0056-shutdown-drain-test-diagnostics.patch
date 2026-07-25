@@ -53,7 +53,7 @@ index 1f99df186f..ebc3e2bf14 100644
    // PushImmediateTask()/PushDelayedTask() and when DidProcessTask() returns
    // false, guaranteeing it is safe to dereference this pointer. Otherwise, the
 diff --git a/base/task/thread_pool/task_tracker.cc b/base/task/thread_pool/task_tracker.cc
-index 70fb09ebc4..46da5cb0b9 100644
+index 70fb09ebc4..6a865e7a31 100644
 --- a/base/task/thread_pool/task_tracker.cc
 +++ b/base/task/thread_pool/task_tracker.cc
 @@ -21,12 +21,14 @@
@@ -84,7 +84,7 @@ index 70fb09ebc4..46da5cb0b9 100644
    return RegisteredTaskSource(std::move(task_source), this);
  }
  
-@@ -592,11 +600,74 @@ scoped_refptr<TaskSource> TaskTracker::UnregisterTaskSource(
+@@ -592,11 +600,78 @@ scoped_refptr<TaskSource> TaskTracker::UnregisterTaskSource(
    if (task_source->shutdown_behavior() ==
        TaskShutdownBehavior::BLOCK_SHUTDOWN) {
      DecrementNumItemsBlockingShutdown();
@@ -133,6 +133,9 @@ index 70fb09ebc4..46da5cb0b9 100644
 +  }
 +  std::string result = "Registered incomplete BLOCK_SHUTDOWN task sources:";
 +  for (const auto& [source, count] : snapshot) {
++    // Transaction-scoped traits copy (lock-safe at M149 via
++    // TaskSource::Transaction::traits()).
++    const TaskTraits traits = source->BeginTransaction().traits();
 +    std::string identity;
 +    if (source->execution_mode() == TaskSourceExecutionMode::kJob) {
 +      identity =
@@ -147,8 +150,9 @@ index 70fb09ebc4..46da5cb0b9 100644
 +                     ? "task posted from: " + posted_from->ToString()
 +                     : "[no queued task - task popped or in flight]";
 +    }
-+    result +=
-+        base::StringPrintf("\n  registrations=%d %s", count, identity.c_str());
++    result += base::StringPrintf("\n  registrations=%d priority=%s %s", count,
++                                 TaskPriorityToString(traits.priority()),
++                                 identity.c_str());
 +  }
 +  if (total > snapshot.size()) {
 +    result += base::StringPrintf("\n  (+%zu more)", total - snapshot.size());
@@ -160,7 +164,7 @@ index 70fb09ebc4..46da5cb0b9 100644
    const bool shutdown_started_and_no_items_block_shutdown =
        state_->DecrementNumItemsBlockingShutdown();
 diff --git a/base/task/thread_pool/task_tracker.h b/base/task/thread_pool/task_tracker.h
-index 22420439a0..a14f24f040 100644
+index 22420439a0..0a07633301 100644
 --- a/base/task/thread_pool/task_tracker.h
 +++ b/base/task/thread_pool/task_tracker.h
 @@ -15,6 +15,7 @@
@@ -184,10 +188,10 @@ index 22420439a0..a14f24f040 100644
 +  // load per (un)registration.
 +  void set_retain_block_shutdown_identity_for_testing(bool retain);
 +  // Renders the registry: at most 32 entries ordered by source pointer, each
-+  // with its registration count, traits and identity (a sequence's front-task
-+  // posted_from, a job's construction site, or an explicit "no queued task"
-+  // fallback), plus an omitted-entry count. Empty string when nothing is
-+  // retained.
++  // with its registration count, priority (transaction-scoped traits copy) and
++  // identity (a sequence's front-task posted_from, a job's construction site,
++  // or an explicit "no queued task" fallback), plus an omitted-entry count.
++  // Empty string when nothing is retained.
 +  std::string DescribeIncompleteBlockShutdownTaskSourcesForTesting() const;
 +
   protected:
@@ -212,10 +216,21 @@ index 22420439a0..a14f24f040 100644
    // destroying the TaskTracker (e.g. in test environments).
    // Ref. https://crbug.com/827615.
 diff --git a/base/test/task_environment.cc b/base/test/task_environment.cc
-index d7a1923b59..f1b53be1ea 100644
+index d7a1923b59..4111749957 100644
 --- a/base/test/task_environment.cc
 +++ b/base/test/task_environment.cc
-@@ -123,8 +123,23 @@ class TickClockBasedClock : public Clock {
+@@ -5,8 +5,10 @@
+ #include "base/test/task_environment.h"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <memory>
+ #include <ostream>
++#include <string>
+ #include <type_traits>
+ 
+ #include "base/check.h"
+@@ -123,8 +125,25 @@ class TickClockBasedClock : public Clock {
    const Time start_time_;
  };
  
@@ -229,41 +244,19 @@ index d7a1923b59..f1b53be1ea 100644
 +std::string ComposeCompleteShutdownTimeoutMessage(
 +    const std::string& running_tasks,
 +    const std::string& incomplete_block_shutdown_sources) {
-+  std::string message = running_tasks;
-+  if (!incomplete_block_shutdown_sources.empty()) {
-+    message += "\n" + incomplete_block_shutdown_sources;
++  if (running_tasks.empty()) {
++    return incomplete_block_shutdown_sources;
 +  }
-+  return message;
++  if (incomplete_block_shutdown_sources.empty()) {
++    return running_tasks;
++  }
++  return running_tasks + "\n" + incomplete_block_shutdown_sources;
 +}
 +
  class TaskEnvironment::TestTaskTracker
      : public internal::ThreadPoolImpl::TaskTrackerImpl {
   public:
-@@ -153,6 +168,13 @@ class TaskEnvironment::TestTaskTracker
-   // currently running tasks on the thread pool.
-   std::string DescribeRunningTasks() const;
- 
-+  // Roamux (roam-201, patch 0056): the failure message composed by the last
-+  // executed CompleteShutdown timeout branch (empty if none fired).
-+  std::string TakeLastCompleteShutdownTimeoutMessage() {
-+    AutoLock auto_lock(lock_);
-+    return std::exchange(last_complete_shutdown_timeout_message_, {});
-+  }
-+
-   // Returns true if this is invoked on this TaskTracker's owning thread
-   // (i.e. test main thread).
-   bool OnControllerThread() const {
-@@ -190,6 +212,9 @@ class TaskEnvironment::TestTaskTracker
- 
-   // Used to implement OnControllerThread().
-   ThreadCheckerImpl controller_thread_checker_;
-+
-+  // Roamux (roam-201, patch 0056).
-+  std::string last_complete_shutdown_timeout_message_ GUARDED_BY(lock_);
- };
- 
- class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
-@@ -707,6 +732,25 @@ void TaskEnvironment::RunUntilQuit() {
+@@ -707,6 +726,24 @@ void TaskEnvironment::RunUntilQuit() {
    }
  }
  
@@ -279,17 +272,16 @@ index d7a1923b59..f1b53be1ea 100644
 +                                                 std::memory_order_relaxed);
 +}
 +
-+std::string TaskEnvironment::RunCompleteShutdownTimeoutBranchForTesting(
++void TaskEnvironment::RunCompleteShutdownTimeoutBranchForTesting(
 +    WaitableEvent& shutdown_event) {
 +  CHECK(task_tracker_);
 +  task_tracker_->BeginCompleteShutdown(shutdown_event);
-+  return task_tracker_->TakeLastCompleteShutdownTimeoutMessage();
 +}
 +
  void TaskEnvironment::RunUntilIdle() {
    DCHECK_CALLED_ON_VALID_THREAD(main_thread_checker_);
  
-@@ -976,6 +1020,10 @@ TaskEnvironment::ParallelExecutionFence::~ParallelExecutionFence() {
+@@ -976,6 +1013,10 @@ TaskEnvironment::ParallelExecutionFence::~ParallelExecutionFence() {
  
  TaskEnvironment::TestTaskTracker::TestTaskTracker()
      : can_run_tasks_cv_(&lock_), task_completed_cv_(&lock_) {
@@ -300,7 +292,7 @@ index d7a1923b59..f1b53be1ea 100644
    // Consider threads blocked on these as idle (avoids instantiating
    // ScopedBlockingCalls and confusing some //base internals tests).
    can_run_tasks_cv_.declare_only_used_while_idle();
-@@ -1085,19 +1133,35 @@ std::string TaskEnvironment::TestTaskTracker::DescribeRunningTasks() const {
+@@ -1085,19 +1126,31 @@ std::string TaskEnvironment::TestTaskTracker::DescribeRunningTasks() const {
  
  void TaskEnvironment::TestTaskTracker::BeginCompleteShutdown(
      base::WaitableEvent& shutdown_event) {
@@ -325,10 +317,6 @@ index d7a1923b59..f1b53be1ea 100644
 +      DescribeRunningTasks(),
 +      DescribeIncompleteBlockShutdownTaskSourcesForTesting());
  
-+  {
-+    AutoLock auto_lock(lock_);
-+    last_complete_shutdown_timeout_message_ = failure_tasks;
-+  }
    ADD_FAILURE() << "TaskEnvironment: CompleteShutdown took more than "
                  << kTimeout.InSeconds() << " seconds.\n"
                  << failure_tasks;
@@ -341,7 +329,7 @@ index d7a1923b59..f1b53be1ea 100644
  
  void TaskEnvironment::TestTaskTracker::AssertFlushForTestingAllowed() {
 diff --git a/base/test/task_environment.h b/base/test/task_environment.h
-index fd7f33af55..65df951b00 100644
+index fd7f33af55..940837dd45 100644
 --- a/base/test/task_environment.h
 +++ b/base/test/task_environment.h
 @@ -7,6 +7,7 @@
@@ -390,10 +378,10 @@ index fd7f33af55..65df951b00 100644
 +  static void SetTerminateOnCompleteShutdownTimeoutForTesting(bool terminate);
 +  // Invokes the REAL BeginCompleteShutdown override on the live test task
 +  // tracker with |shutdown_event| (typically never-signaled, so the timeout
-+  // branch executes). Returns the composed failure message the branch
-+  // reported, empty if the wait succeeded. The branch also reports through
-+  // ADD_FAILURE, so wrap calls in EXPECT_NONFATAL_FAILURE.
-+  std::string RunCompleteShutdownTimeoutBranchForTesting(
++  // branch executes). The branch reports through ADD_FAILURE — capture it
++  // with gtest-spi (ScopedFakeTestPartResultReporter) and assert on the
++  // recorded TestPartResult message.
++  void RunCompleteShutdownTimeoutBranchForTesting(
 +      WaitableEvent& shutdown_event);
 +
    // Only valid for instances using |TimeSource::MOCK_TIME|. Fast-forwards
