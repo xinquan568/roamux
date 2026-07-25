@@ -210,7 +210,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxStripAnimationReentrancyTest,
     time.IncrementTime(base::Milliseconds(50));
     base::RunLoop().RunUntilIdle();
   }
-  EXPECT_GE(ended_events, 2);
+  EXPECT_EQ(ended_events, 2);
   EXPECT_TRUE(replacement_started);
   EXPECT_TRUE(replacement_progressed);
   EXPECT_FALSE(animation_controller()->IsAnimating(
