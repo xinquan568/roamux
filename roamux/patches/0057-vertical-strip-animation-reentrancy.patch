@@ -1,0 +1,78 @@
+diff --git a/chrome/browser/ui/animation/browser_animation_controller.cc b/chrome/browser/ui/animation/browser_animation_controller.cc
+--- a/chrome/browser/ui/animation/browser_animation_controller.cc
++++ b/chrome/browser/ui/animation/browser_animation_controller.cc
+@@ -124,6 +124,10 @@
+     // TODO(dfried): figure out how to redirect animations.
+     Cancel();
+     MaybeCreateAnimator();
++    // Roamux (roam-221, patch 0057): a Start during an in-flight
++    // notification installs a replacement motion; the generation lets
++    // AnimationEnded detect it and leave the new state untouched.
++    ++start_generation_;
+     current_motion_ = motion;
+     current_motion_spec_ = std::move(motion_spec);
+     for (const auto& [sequence, sequence_spec] :
+@@ -166,6 +170,9 @@
+ 
+   bool has_animator() const { return animator_ != nullptr; }
+ 
++  // Roamux (roam-221, patch 0057): see AnimationEnded.
++  uint64_t start_generation_ = 0;
++
+   BrowserAnimationMotion current_motion() const { return current_motion_; }
+ 
+   base::CallbackListSubscription Subscribe(BrowserAnimationCallback callback) {
+@@ -192,9 +199,17 @@
+   // gfx::AnimationDelegate:
+   void AnimationEnded(const gfx::Animation*) override {
+     UpdateValues(current_duration_, 1.0);
++    // Roamux (roam-221, patch 0057): observers may re-enter Start() during
++    // this notification (e.g. a keep-expanded re-expansion fired by the
++    // collapse-completed state propagation). Clear the finished motion's
++    // state only if no replacement was installed, so a re-entrant motion
++    // keeps ownership of the animator and its values.
++    const uint64_t generation_before_notify = start_generation_;
+     Notify(BrowserAnimationUpdate::kEnded);
+-    current_motion_ = BrowserAnimationMotion();
+-    current_values_.clear();
++    if (start_generation_ == generation_before_notify) {
++      current_motion_ = BrowserAnimationMotion();
++      current_values_.clear();
++    }
+   }
+ 
+   void AnimationProgressed(const gfx::Animation* animation) override {
+diff --git a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+--- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
++++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+@@ -351,8 +351,12 @@
+       InvalidateLayout();
+       break;
+     case BrowserAnimationUpdate::kEnded: {
+-      animation_perf_reporter_->SetCompletionStatus(status);
+-      animation_perf_reporter_.reset();
++      // Roamux (roam-221, patch 0057): a re-entrant or double-completion
++      // notification can arrive after the reporter was consumed.
++      if (animation_perf_reporter_) {
++        animation_perf_reporter_->SetCompletionStatus(status);
++        animation_perf_reporter_.reset();
++      }
+       hover_card_animation_lock_.reset();
+       if (tab_strip_view_) {
+         tab_strip_view_->SetIsAnimatingSize(false);
+@@ -371,8 +375,13 @@
+       break;
+     }
+     case BrowserAnimationUpdate::kCanceled:
+-      animation_perf_reporter_->SetCompletionStatus(status);
+-      animation_perf_reporter_.reset();
++      // Roamux (roam-221, patch 0057): the crash path — a spurious kCanceled
++      // emitted while the kEnded handler (which already consumed the
++      // reporter) is still on the stack.
++      if (animation_perf_reporter_) {
++        animation_perf_reporter_->SetCompletionStatus(status);
++        animation_perf_reporter_.reset();
++      }
+       hover_card_animation_lock_.reset();
+       if (tab_strip_view_) {
+         tab_strip_view_->SetIsAnimatingSize(false);
