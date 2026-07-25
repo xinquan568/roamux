@@ -102,14 +102,17 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, SequenceIdentityViaRealPostingPath) {
   auto pool = std::make_unique<base::internal::ThreadPoolImpl>(
       "RoamuxShutdownDrainTest", std::move(owned_tracker));
 
+  // Priority is EXPLICIT: unspecified-priority traits inherit the posting
+  // thread's ambient priority, which differs between local and CI launchers.
   auto task_runner = pool->CreateSequencedTaskRunner(
-      {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+       base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
   task_runner->PostTask(FROM_HERE, base::DoNothing());
 
   const std::string queued =
       tracker->DescribeIncompleteBlockShutdownTaskSourcesForTesting();
   EXPECT_NE(queued.find(kThisFile), std::string::npos) << queued;
-  EXPECT_NE(queued.find("priority=USER_VISIBLE"), std::string::npos) << queued;
+  EXPECT_NE(queued.find("priority=BEST_EFFORT"), std::string::npos) << queued;
 
   pool->Start(
       base::ThreadPoolInstance::InitParams(/*max_num_foreground_threads=*/2),
