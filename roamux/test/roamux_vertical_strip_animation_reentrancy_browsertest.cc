@@ -15,12 +15,13 @@
 #include <memory>
 #include <string_view>
 
-#include "base/logging.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/animation/browser_animation_controller.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
 #include "chrome/browser/ui/views/animations/tab_strip_animations.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
@@ -33,7 +34,6 @@
 #include "roamux/common/roamux_prefs.h"
 #include "roamux/test/support/roamux_browser_test.h"
 #include "ui/gfx/animation/animation.h"
-#include "base/memory/scoped_refptr.h"
 #include "ui/gfx/animation/animation_container.h"
 #include "ui/gfx/animation/animation_test_api.h"
 #include "ui/views/view.h"
@@ -115,6 +115,11 @@ IN_PROC_BROWSER_TEST_F(RoamuxStripAnimationReentrancyTest,
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(animation_controller()->IsAnimating(
       TabStripAnimations::kVerticalTabStrip));
+  // Final-state semantics: the collapse propagated to the state controller,
+  // and the held keep-expanded lock re-expanded the strip on hover terms.
+  EXPECT_TRUE(
+      tabs::VerticalTabStripStateController::From(browser())->IsCollapsed());
+  EXPECT_TRUE(strip->is_expanded_on_hover());
 }
 
 // T2 — nested-motion ownership under RICH animations: the replacement
@@ -170,8 +175,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxStripAnimationReentrancyTest,
                     controller->GetCurrentMotion(
                         TabStripAnimations::kVerticalTabStrip);
                 const bool is_replacement =
-                    motion == TabStripAnimations::kExpandOnHover ||
-                    motion == TabStripAnimations::kExpand;
+                    motion == TabStripAnimations::kExpandOnHover;
                 switch (update) {
                   case BrowserAnimationUpdate::kEnded:
                     ++(*ended_events);
@@ -211,6 +215,9 @@ IN_PROC_BROWSER_TEST_F(RoamuxStripAnimationReentrancyTest,
   EXPECT_TRUE(replacement_progressed);
   EXPECT_FALSE(animation_controller()->IsAnimating(
       TabStripAnimations::kVerticalTabStrip));
+  EXPECT_TRUE(
+      tabs::VerticalTabStripStateController::From(browser())->IsCollapsed());
+  EXPECT_TRUE(strip->is_expanded_on_hover());
 }
 
 }  // namespace
