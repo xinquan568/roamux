@@ -78,6 +78,7 @@ test("roamux_unittests") {
     "test/roamux_prefs_unittest.cc",
     "test/roamux_scheme_display_unittest.cc",
     "test/roamux_scheme_rewrite_unittest.cc",
+    "test/roamux_shutdown_drain_diagnostics_unittest.cc",
     "test/roamux_signin_build_state_unittest.cc",
     "test/roamux_signin_inert_unittest.cc",
     "test/roamux_signin_surfaces_unittest.cc",

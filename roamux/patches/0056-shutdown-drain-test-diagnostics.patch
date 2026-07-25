@@ -1,0 +1,412 @@
+diff --git a/base/task/thread_pool/job_task_source.h b/base/task/thread_pool/job_task_source.h
+index 6a5e4c0ad4..64d63e60ac 100644
+--- a/base/task/thread_pool/job_task_source.h
++++ b/base/task/thread_pool/job_task_source.h
+@@ -237,6 +237,14 @@ class BASE_EXPORT JobTaskSource : public TaskSource {
+ 
+   TaskMetadata task_metadata_;
+ 
++ public:
++  // Roamux (roam-201, patch 0056): identity for the shutdown-drain
++  // diagnostics — the job's construction site.
++  const Location& posted_from_for_testing() const {
++    return task_metadata_.posted_from;
++  }
++
++ private:
+   const TimeTicks ready_time_;
+   raw_ptr<PooledTaskRunnerDelegate, LeakedDanglingUntriaged> delegate_;
+ };
+diff --git a/base/task/thread_pool/sequence.cc b/base/task/thread_pool/sequence.cc
+index 507a2f6c30..ff85f3250b 100644
+--- a/base/task/thread_pool/sequence.cc
++++ b/base/task/thread_pool/sequence.cc
+@@ -366,4 +366,13 @@ bool Sequence::IsEmpty() const {
+   return queue_.empty() && delayed_queue_.empty();
+ }
+ 
++std::optional<Location> Sequence::PeekFrontTaskPostedFromForTesting() const {
++  // Roamux (roam-201, patch 0056): shutdown-drain diagnostics identity.
++  CheckedAutoLock auto_lock(lock_);
++  if (queue_.empty()) {
++    return std::nullopt;
++  }
++  return queue_.front().posted_from;
++}
++
+ }  // namespace base::internal
+diff --git a/base/task/thread_pool/sequence.h b/base/task/thread_pool/sequence.h
+index 1f99df186f..ebc3e2bf14 100644
+--- a/base/task/thread_pool/sequence.h
++++ b/base/task/thread_pool/sequence.h
+@@ -117,6 +117,12 @@ class BASE_EXPORT Sequence : public TaskSource {
+   bool is_immediate_for_testing() const { return is_immediate_; }
+   bool IsEmptyForTesting() const NO_THREAD_SAFETY_ANALYSIS { return IsEmpty(); }
+ 
++  // Roamux (roam-201, patch 0056): identity for the shutdown-drain
++  // diagnostics. Returns the posted_from of the front immediate task, or
++  // nullopt when the queue is empty (e.g. the task was popped by a worker but
++  // has not completed). Acquires this sequence's lock.
++  std::optional<Location> PeekFrontTaskPostedFromForTesting() const;
++
+   // A reference to TaskRunner is only retained between
+   // PushImmediateTask()/PushDelayedTask() and when DidProcessTask() returns
+   // false, guaranteeing it is safe to dereference this pointer. Otherwise, the
+diff --git a/base/task/thread_pool/task_tracker.cc b/base/task/thread_pool/task_tracker.cc
+index 70fb09ebc4..7b68249aee 100644
+--- a/base/task/thread_pool/task_tracker.cc
++++ b/base/task/thread_pool/task_tracker.cc
+@@ -8,6 +8,7 @@
+ #include <optional>
+ #include <string>
+ #include <utility>
++#include <vector>
+ 
+ #include "base/base_switches.h"
+ #include "base/command_line.h"
+@@ -21,12 +22,14 @@
+ #include "base/notreached.h"
+ #include "base/sequence_token.h"
+ #include "base/strings/string_util.h"
++#include "base/strings/stringprintf.h"
+ #include "base/synchronization/condition_variable.h"
+ #include "base/synchronization/waitable_event.h"
+ #include "base/task/scoped_set_task_priority_for_current_thread.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "base/task/thread_pool/job_task_source.h"
++#include "base/task/thread_pool/sequence.h"
+ #include "base/task/thread_pool/task_source.h"
+ #include "base/threading/sequence_local_storage_map.h"
+ #include "base/threading/thread_restrictions.h"
+@@ -347,6 +350,12 @@ RegisteredTaskSource TaskTracker::RegisterTaskSource(
+   }
+ 
+   num_incomplete_task_sources_.fetch_add(1, std::memory_order_relaxed);
++  // Roamux (roam-201, patch 0056): counted diagnostics registry, test-only.
++  if (shutdown_behavior == TaskShutdownBehavior::BLOCK_SHUTDOWN &&
++      retain_block_shutdown_identity_.load(std::memory_order_relaxed)) {
++    CheckedAutoLock auto_lock(diagnostics_lock_);
++    ++incomplete_block_shutdown_sources_[task_source];
++  }
+   return RegisteredTaskSource(std::move(task_source), this);
+ }
+ 
+@@ -592,11 +601,86 @@ scoped_refptr<TaskSource> TaskTracker::UnregisterTaskSource(
+   if (task_source->shutdown_behavior() ==
+       TaskShutdownBehavior::BLOCK_SHUTDOWN) {
+     DecrementNumItemsBlockingShutdown();
++    // Roamux (roam-201, patch 0056): counted decrement, erase only at zero.
++    if (retain_block_shutdown_identity_.load(std::memory_order_relaxed)) {
++      CheckedAutoLock auto_lock(diagnostics_lock_);
++      auto it = incomplete_block_shutdown_sources_.find(task_source);
++      if (it != incomplete_block_shutdown_sources_.end() && --it->second == 0) {
++        incomplete_block_shutdown_sources_.erase(it);
++      }
++    }
+   }
+   DecrementNumIncompleteTaskSources();
+   return task_source;
+ }
+ 
++void TaskTracker::SetDescribeSnapshotTakenClosureForTesting(
++    RepeatingClosure closure) {
++  describe_snapshot_taken_closure_for_testing_ = std::move(closure);
++}
++
++void TaskTracker::set_retain_block_shutdown_identity_for_testing(bool retain) {
++  // Must be configured before any task source is registered so the registry
++  // mirrors the tracker's accounting exactly.
++  {
++    CheckedAutoLock auto_lock(diagnostics_lock_);
++    DCHECK(incomplete_block_shutdown_sources_.empty());
++  }
++  retain_block_shutdown_identity_.store(retain, std::memory_order_relaxed);
++}
++
++std::string TaskTracker::DescribeIncompleteBlockShutdownTaskSourcesForTesting()
++    const {
++  // Snapshot under the leaf lock (refcounted keys keep sources alive), then
++  // release it before reading identity through each source's own lock.
++  constexpr size_t kMaxEntries = 32;
++  std::vector<std::pair<scoped_refptr<TaskSource>, int>> snapshot;
++  size_t total = 0;
++  {
++    CheckedAutoLock auto_lock(diagnostics_lock_);
++    total = incomplete_block_shutdown_sources_.size();
++    for (const auto& entry : incomplete_block_shutdown_sources_) {
++      snapshot.emplace_back(entry.first, entry.second);
++      if (snapshot.size() == kMaxEntries) {
++        break;
++      }
++    }
++  }
++  if (describe_snapshot_taken_closure_for_testing_) {
++    describe_snapshot_taken_closure_for_testing_.Run();
++  }
++  if (total == 0) {
++    return std::string();
++  }
++  std::string result = "Registered incomplete BLOCK_SHUTDOWN task sources:";
++  for (const auto& [source, count] : snapshot) {
++    // Transaction-scoped traits copy (lock-safe at M149 via
++    // TaskSource::Transaction::traits()).
++    const TaskTraits traits = source->BeginTransaction().traits();
++    std::string identity;
++    if (source->execution_mode() == TaskSourceExecutionMode::kJob) {
++      identity =
++          "job created from: " + static_cast<const JobTaskSource*>(source.get())
++                                     ->posted_from_for_testing()
++                                     .ToString();
++    } else {
++      std::optional<Location> posted_from =
++          static_cast<Sequence*>(source.get())
++              ->PeekFrontTaskPostedFromForTesting();
++      identity = posted_from.has_value()
++                     ? "task posted from: " + posted_from->ToString()
++                     : "[no queued task - task popped or in flight]";
++    }
++    result += base::StringPrintf("\n  registrations=%d priority=%s %s", count,
++                                 TaskPriorityToString(traits.priority()),
++                                 identity.c_str());
++  }
++  if (total > snapshot.size()) {
++    result += base::StringPrintf("\n  (+%zu more)", total - snapshot.size());
++  }
++  return result;
++}
++
+ void TaskTracker::DecrementNumItemsBlockingShutdown() {
+   const bool shutdown_started_and_no_items_block_shutdown =
+       state_->DecrementNumItemsBlockingShutdown();
+diff --git a/base/task/thread_pool/task_tracker.h b/base/task/thread_pool/task_tracker.h
+index 22420439a0..e43347cc85 100644
+--- a/base/task/thread_pool/task_tracker.h
++++ b/base/task/thread_pool/task_tracker.h
+@@ -15,7 +15,8 @@
+ #include "base/atomic_sequence_num.h"
+ #include "base/base_export.h"
+ #include "base/containers/circular_deque.h"
+-#include "base/functional/callback_forward.h"
++#include "base/containers/flat_map.h"
++#include "base/functional/callback.h"
+ #include "base/sequence_checker.h"
+ #include "base/synchronization/waitable_event.h"
+ #include "base/task/common/checked_lock.h"
+@@ -150,6 +151,25 @@ class BASE_EXPORT TaskTracker {
+   // effects of all completed tasks are guaranteed to be visible to the caller.
+   bool HasIncompleteTaskSourcesForTesting() const;
+ 
++  // Roamux (roam-201, patch 0056): shutdown-drain diagnostics. When retention
++  // is enabled, this tracker keeps a counted registry of registered-incomplete
++  // BLOCK_SHUTDOWN task sources so a stalled CompleteShutdown can name what
++  // failed to drain (the stock watchdog only describes *running* tasks).
++  // Retention must be enabled before any task is posted (enforced) and is off
++  // by default: production trackers retain nothing and pay one relaxed atomic
++  // load per (un)registration.
++  void set_retain_block_shutdown_identity_for_testing(bool retain);
++  // Renders the registry: at most 32 entries ordered by source pointer, each
++  // with its registration count, priority (transaction-scoped traits copy) and
++  // identity (a sequence's front-task posted_from, a job's construction site,
++  // or an explicit "no queued task" fallback), plus an omitted-entry count.
++  // Empty string when nothing is retained.
++  std::string DescribeIncompleteBlockShutdownTaskSourcesForTesting() const;
++  // Test seam: run after a describe snapshot is taken (diagnostics lock
++  // released) and before rendering — lets lifetime tests unregister sources
++  // deterministically mid-describe.
++  void SetDescribeSnapshotTakenClosureForTesting(RepeatingClosure closure);
++
+  protected:
+   // Runs and deletes `task`. `task` is deleted in the environment where it
+   // runs. `task_source` is the task source from which `task` was extracted. The
+@@ -284,6 +304,18 @@ class BASE_EXPORT TaskTracker {
+   // Used to generate unique |PendingTask::sequence_num| when posting tasks.
+   AtomicSequenceNumber sequence_nums_;
+ 
++  // Roamux (roam-201, patch 0056): counted registry of registered-incomplete
++  // BLOCK_SHUTDOWN task sources, populated only when
++  // |retain_block_shutdown_identity_| is set (test trackers). The lock is a
++  // universal-successor leaf: registration paths may already hold sequence or
++  // thread-group locks, and it is never held while acquiring any other lock or
++  // calling out.
++  std::atomic_bool retain_block_shutdown_identity_{false};
++  RepeatingClosure describe_snapshot_taken_closure_for_testing_;
++  mutable CheckedLock diagnostics_lock_{UniversalSuccessor()};
++  base::flat_map<scoped_refptr<TaskSource>, int>
++      incomplete_block_shutdown_sources_ GUARDED_BY(diagnostics_lock_);
++
+   // Ensures all state (e.g. dangling cleaned up workers) is coalesced before
+   // destroying the TaskTracker (e.g. in test environments).
+   // Ref. https://crbug.com/827615.
+diff --git a/base/test/task_environment.cc b/base/test/task_environment.cc
+index d7a1923b59..4111749957 100644
+--- a/base/test/task_environment.cc
++++ b/base/test/task_environment.cc
+@@ -5,8 +5,10 @@
+ #include "base/test/task_environment.h"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <memory>
+ #include <ostream>
++#include <string>
+ #include <type_traits>
+ 
+ #include "base/check.h"
+@@ -123,8 +125,25 @@ class TickClockBasedClock : public Clock {
+   const Time start_time_;
+ };
+ 
++// Roamux (roam-201, patch 0056): CompleteShutdown-watchdog test knobs.
++// Zero timeout means "use TestTimeouts::action_max_timeout()".
++TimeDelta g_complete_shutdown_timeout_for_testing;
++std::atomic_bool g_terminate_on_complete_shutdown_timeout{true};
++
+ }  // namespace
+ 
++std::string ComposeCompleteShutdownTimeoutMessage(
++    const std::string& running_tasks,
++    const std::string& incomplete_block_shutdown_sources) {
++  if (running_tasks.empty()) {
++    return incomplete_block_shutdown_sources;
++  }
++  if (incomplete_block_shutdown_sources.empty()) {
++    return running_tasks;
++  }
++  return running_tasks + "\n" + incomplete_block_shutdown_sources;
++}
++
+ class TaskEnvironment::TestTaskTracker
+     : public internal::ThreadPoolImpl::TaskTrackerImpl {
+  public:
+@@ -707,6 +726,24 @@ void TaskEnvironment::RunUntilQuit() {
+   }
+ }
+ 
++// static
++void TaskEnvironment::SetCompleteShutdownTimeoutForTesting(TimeDelta timeout) {
++  g_complete_shutdown_timeout_for_testing = timeout;
++}
++
++// static
++void TaskEnvironment::SetTerminateOnCompleteShutdownTimeoutForTesting(
++    bool terminate) {
++  g_terminate_on_complete_shutdown_timeout.store(terminate,
++                                                 std::memory_order_relaxed);
++}
++
++void TaskEnvironment::RunCompleteShutdownTimeoutBranchForTesting(
++    WaitableEvent& shutdown_event) {
++  CHECK(task_tracker_);
++  task_tracker_->BeginCompleteShutdown(shutdown_event);
++}
++
+ void TaskEnvironment::RunUntilIdle() {
+   DCHECK_CALLED_ON_VALID_THREAD(main_thread_checker_);
+ 
+@@ -976,6 +1013,10 @@ TaskEnvironment::ParallelExecutionFence::~ParallelExecutionFence() {
+ 
+ TaskEnvironment::TestTaskTracker::TestTaskTracker()
+     : can_run_tasks_cv_(&lock_), task_completed_cv_(&lock_) {
++  // Roamux (roam-201, patch 0056): test trackers retain identity for
++  // registered-incomplete BLOCK_SHUTDOWN sources so a stalled shutdown can
++  // name what failed to drain.
++  set_retain_block_shutdown_identity_for_testing(true);
+   // Consider threads blocked on these as idle (avoids instantiating
+   // ScopedBlockingCalls and confusing some //base internals tests).
+   can_run_tasks_cv_.declare_only_used_while_idle();
+@@ -1085,19 +1126,31 @@ std::string TaskEnvironment::TestTaskTracker::DescribeRunningTasks() const {
+ 
+ void TaskEnvironment::TestTaskTracker::BeginCompleteShutdown(
+     base::WaitableEvent& shutdown_event) {
+-  const TimeDelta kTimeout = TestTimeouts::action_max_timeout();
++  // Roamux (roam-201, patch 0056): timeout override + termination suppression
++  // exist so tests can execute this branch; defaults preserve stock behavior.
++  const TimeDelta kTimeout = g_complete_shutdown_timeout_for_testing.is_zero()
++                                 ? TestTimeouts::action_max_timeout()
++                                 : g_complete_shutdown_timeout_for_testing;
+   if (shutdown_event.TimedWait(kTimeout)) {
+     return;  // All tasks completed in time, yay! Yield back to shutdown.
+   }
+ 
+   // If we had to wait too long for the shutdown tasks to complete, then we
+-  // should fail the test and report which tasks are currently running.
+-  std::string failure_tasks = DescribeRunningTasks();
++  // should fail the test and report which tasks are currently running — and
++  // (roam-201) which registered-incomplete BLOCK_SHUTDOWN sources are still
++  // holding shutdown while not running (the stalled-teardown signature is
++  // "running tasks: none").
++  std::string failure_tasks = ComposeCompleteShutdownTimeoutMessage(
++      DescribeRunningTasks(),
++      DescribeIncompleteBlockShutdownTaskSourcesForTesting());
+ 
+   ADD_FAILURE() << "TaskEnvironment: CompleteShutdown took more than "
+                 << kTimeout.InSeconds() << " seconds.\n"
+                 << failure_tasks;
+-  base::Process::TerminateCurrentProcessImmediately(-1);
++  if (g_terminate_on_complete_shutdown_timeout.load(
++          std::memory_order_relaxed)) {
++    base::Process::TerminateCurrentProcessImmediately(-1);
++  }
+ }
+ 
+ void TaskEnvironment::TestTaskTracker::AssertFlushForTestingAllowed() {
+diff --git a/base/test/task_environment.h b/base/test/task_environment.h
+index fd7f33af55..940837dd45 100644
+--- a/base/test/task_environment.h
++++ b/base/test/task_environment.h
+@@ -7,6 +7,7 @@
+ 
+ #include <array>
+ #include <memory>
++#include <string>
+ 
+ #include "base/compiler_specific.h"
+ #include "base/functional/callback_forward.h"
+@@ -27,6 +28,8 @@
+ 
+ namespace base {
+ 
++class WaitableEvent;
++
+ class Clock;
+ class FileDescriptorWatcher;
+ class TickClock;
+@@ -89,6 +92,14 @@ namespace test {
+ //
+ //     // Other members go here (or further below in private section.)
+ //   };
++// Roamux (roam-201, patch 0056): composes the CompleteShutdown-watchdog
++// failure message from the running-tasks section and the registered-incomplete
++// BLOCK_SHUTDOWN sources section (either may be empty). Pure; exposed so the
++// composition is unit-testable without a real 30s stall.
++std::string ComposeCompleteShutdownTimeoutMessage(
++    const std::string& running_tasks,
++    const std::string& incomplete_block_shutdown_sources);
++
+ class TaskEnvironment {
+  protected:
+   // This enables a two-phase initialization for sub classes such as
+@@ -266,6 +277,22 @@ class TaskEnvironment {
+   // possible.
+   void RunUntilIdle();
+ 
++  // Roamux (roam-201, patch 0056): shutdown-drain diagnostics test seams.
++  // Overrides the CompleteShutdown watchdog timeout (zero restores the
++  // TestTimeouts::action_max_timeout() default) and whether the timeout branch
++  // terminates the process (suppressed only in tests of the branch itself).
++  // Both apply to the current process's test task tracker; callers scope-reset
++  // them.
++  static void SetCompleteShutdownTimeoutForTesting(TimeDelta timeout);
++  static void SetTerminateOnCompleteShutdownTimeoutForTesting(bool terminate);
++  // Invokes the REAL BeginCompleteShutdown override on the live test task
++  // tracker with |shutdown_event| (typically never-signaled, so the timeout
++  // branch executes). The branch reports through ADD_FAILURE — capture it
++  // with gtest-spi (ScopedFakeTestPartResultReporter) and assert on the
++  // recorded TestPartResult message.
++  void RunCompleteShutdownTimeoutBranchForTesting(
++      WaitableEvent& shutdown_event);
++
+   // Only valid for instances using |TimeSource::MOCK_TIME|. Fast-forwards
+   // virtual time by |delta|, causing all tasks on the main thread and thread
+   // pool with a remaining delay less than or equal to |delta| to be executed
