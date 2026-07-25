@@ -177,18 +177,15 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, OutputIsBoundedAndDeterministic) {
   }
 }
 
-// T5 — snapshot lifetime: while another thread unregisters and releases the
-// ONLY external ownership of each source, concurrent describes must never
-// touch freed memory — the refcounted snapshot is the sole lifetime holder
-// mid-render. (The race window is stochastic; sole ownership is what makes
-// the test load-bearing: without snapshot refs this is a use-after-free under
-// any iteration that overlaps an unregistration.)
+// T5 — snapshot lifetime, deterministic: the describe-snapshot seam pauses a
+// describe (on a helper thread) right after its refcounted snapshot is taken;
+// the main thread then unregisters every source and drops the only other
+// refs; rendering resumes against sources whose sole owner is the snapshot.
+// Without snapshot refs this is a deterministic use-after-free.
 TEST(RoamuxShutdownDrainDiagnosticsTest, DescribeRacesUnregistrationSafely) {
   TaskTracker tracker;
   tracker.set_retain_block_shutdown_identity_for_testing(true);
 
-  // RegisteredTaskSource handles are the ONLY external refs: the scoped
-  // sequence refptr is released immediately after registration.
   std::vector<base::internal::RegisteredTaskSource> registered;
   for (int i = 0; i < 16; ++i) {
     auto sequence = MakeBlockShutdownSequence();
@@ -196,30 +193,45 @@ TEST(RoamuxShutdownDrainDiagnosticsTest, DescribeRacesUnregistrationSafely) {
     registered.push_back(tracker.RegisterTaskSource(std::move(sequence)));
   }
 
-  class Unregisterer : public base::DelegateSimpleThread::Delegate {
+  base::WaitableEvent snapshot_taken;
+  base::WaitableEvent resume_render;
+  tracker.SetDescribeSnapshotTakenClosureForTesting(base::BindRepeating(
+      [](base::WaitableEvent *taken, base::WaitableEvent *resume) {
+        taken->Signal();
+        resume->Wait();
+      },
+      &snapshot_taken, &resume_render));
+
+  class Describer : public base::DelegateSimpleThread::Delegate {
   public:
-    explicit Unregisterer(
-        std::vector<base::internal::RegisteredTaskSource> &sources)
-        : sources_(sources) {}
+    explicit Describer(TaskTracker &tracker) : tracker_(tracker) {}
     void Run() override {
-      for (auto &source : *sources_) {
-        // Unregister() returns the last scoped_refptr; dropping it destroys
-        // the source unless a describe snapshot holds it.
-        source.Unregister();
-      }
+      dump_ = tracker_->DescribeIncompleteBlockShutdownTaskSourcesForTesting();
     }
+    const std::string &dump() const { return dump_; }
 
   private:
-    const raw_ref<std::vector<base::internal::RegisteredTaskSource>> sources_;
+    const raw_ref<TaskTracker> tracker_;
+    std::string dump_;
   };
 
-  Unregisterer unregisterer(registered);
-  base::DelegateSimpleThread thread(&unregisterer, "RoamuxUnregisterer");
+  Describer describer(tracker);
+  base::DelegateSimpleThread thread(&describer, "RoamuxDescriber");
   thread.Start();
-  for (int i = 0; i < 100; ++i) {
-    tracker.DescribeIncompleteBlockShutdownTaskSourcesForTesting();
+
+  snapshot_taken.Wait();
+  // The snapshot exists; destroy every other owner.
+  for (auto &source : registered) {
+    source.Unregister();
   }
+  registered.clear();
+  resume_render.Signal();
   thread.Join();
+
+  // Rendering completed against snapshot-owned sources: full dump, no UAF.
+  EXPECT_NE(describer.dump().find(kThisFile), std::string::npos)
+      << describer.dump();
+  tracker.SetDescribeSnapshotTakenClosureForTesting(base::RepeatingClosure());
   EXPECT_EQ(tracker.DescribeIncompleteBlockShutdownTaskSourcesForTesting(),
             std::string());
 }

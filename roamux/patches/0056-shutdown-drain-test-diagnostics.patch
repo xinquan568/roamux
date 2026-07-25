@@ -53,10 +53,18 @@ index 1f99df186f..ebc3e2bf14 100644
    // PushImmediateTask()/PushDelayedTask() and when DidProcessTask() returns
    // false, guaranteeing it is safe to dereference this pointer. Otherwise, the
 diff --git a/base/task/thread_pool/task_tracker.cc b/base/task/thread_pool/task_tracker.cc
-index 70fb09ebc4..6a865e7a31 100644
+index 70fb09ebc4..7b68249aee 100644
 --- a/base/task/thread_pool/task_tracker.cc
 +++ b/base/task/thread_pool/task_tracker.cc
-@@ -21,12 +21,14 @@
+@@ -8,6 +8,7 @@
+ #include <optional>
+ #include <string>
+ #include <utility>
++#include <vector>
+ 
+ #include "base/base_switches.h"
+ #include "base/command_line.h"
+@@ -21,12 +22,14 @@
  #include "base/notreached.h"
  #include "base/sequence_token.h"
  #include "base/strings/string_util.h"
@@ -71,7 +79,7 @@ index 70fb09ebc4..6a865e7a31 100644
  #include "base/task/thread_pool/task_source.h"
  #include "base/threading/sequence_local_storage_map.h"
  #include "base/threading/thread_restrictions.h"
-@@ -347,6 +349,12 @@ RegisteredTaskSource TaskTracker::RegisterTaskSource(
+@@ -347,6 +350,12 @@ RegisteredTaskSource TaskTracker::RegisterTaskSource(
    }
  
    num_incomplete_task_sources_.fetch_add(1, std::memory_order_relaxed);
@@ -84,7 +92,7 @@ index 70fb09ebc4..6a865e7a31 100644
    return RegisteredTaskSource(std::move(task_source), this);
  }
  
-@@ -592,11 +600,78 @@ scoped_refptr<TaskSource> TaskTracker::UnregisterTaskSource(
+@@ -592,11 +601,86 @@ scoped_refptr<TaskSource> TaskTracker::UnregisterTaskSource(
    if (task_source->shutdown_behavior() ==
        TaskShutdownBehavior::BLOCK_SHUTDOWN) {
      DecrementNumItemsBlockingShutdown();
@@ -101,6 +109,11 @@ index 70fb09ebc4..6a865e7a31 100644
    return task_source;
  }
  
++void TaskTracker::SetDescribeSnapshotTakenClosureForTesting(
++    RepeatingClosure closure) {
++  describe_snapshot_taken_closure_for_testing_ = std::move(closure);
++}
++
 +void TaskTracker::set_retain_block_shutdown_identity_for_testing(bool retain) {
 +  // Must be configured before any task source is registered so the registry
 +  // mirrors the tracker's accounting exactly.
@@ -127,6 +140,9 @@ index 70fb09ebc4..6a865e7a31 100644
 +        break;
 +      }
 +    }
++  }
++  if (describe_snapshot_taken_closure_for_testing_) {
++    describe_snapshot_taken_closure_for_testing_.Run();
 +  }
 +  if (total == 0) {
 +    return std::string();
@@ -164,18 +180,20 @@ index 70fb09ebc4..6a865e7a31 100644
    const bool shutdown_started_and_no_items_block_shutdown =
        state_->DecrementNumItemsBlockingShutdown();
 diff --git a/base/task/thread_pool/task_tracker.h b/base/task/thread_pool/task_tracker.h
-index 22420439a0..0a07633301 100644
+index 22420439a0..e43347cc85 100644
 --- a/base/task/thread_pool/task_tracker.h
 +++ b/base/task/thread_pool/task_tracker.h
-@@ -15,6 +15,7 @@
+@@ -15,7 +15,8 @@
  #include "base/atomic_sequence_num.h"
  #include "base/base_export.h"
  #include "base/containers/circular_deque.h"
+-#include "base/functional/callback_forward.h"
 +#include "base/containers/flat_map.h"
- #include "base/functional/callback_forward.h"
++#include "base/functional/callback.h"
  #include "base/sequence_checker.h"
  #include "base/synchronization/waitable_event.h"
-@@ -150,6 +151,21 @@ class BASE_EXPORT TaskTracker {
+ #include "base/task/common/checked_lock.h"
+@@ -150,6 +151,25 @@ class BASE_EXPORT TaskTracker {
    // effects of all completed tasks are guaranteed to be visible to the caller.
    bool HasIncompleteTaskSourcesForTesting() const;
  
@@ -193,11 +211,15 @@ index 22420439a0..0a07633301 100644
 +  // or an explicit "no queued task" fallback), plus an omitted-entry count.
 +  // Empty string when nothing is retained.
 +  std::string DescribeIncompleteBlockShutdownTaskSourcesForTesting() const;
++  // Test seam: run after a describe snapshot is taken (diagnostics lock
++  // released) and before rendering — lets lifetime tests unregister sources
++  // deterministically mid-describe.
++  void SetDescribeSnapshotTakenClosureForTesting(RepeatingClosure closure);
 +
   protected:
    // Runs and deletes `task`. `task` is deleted in the environment where it
    // runs. `task_source` is the task source from which `task` was extracted. The
-@@ -284,6 +300,17 @@ class BASE_EXPORT TaskTracker {
+@@ -284,6 +304,18 @@ class BASE_EXPORT TaskTracker {
    // Used to generate unique |PendingTask::sequence_num| when posting tasks.
    AtomicSequenceNumber sequence_nums_;
  
@@ -208,6 +230,7 @@ index 22420439a0..0a07633301 100644
 +  // thread-group locks, and it is never held while acquiring any other lock or
 +  // calling out.
 +  std::atomic_bool retain_block_shutdown_identity_{false};
++  RepeatingClosure describe_snapshot_taken_closure_for_testing_;
 +  mutable CheckedLock diagnostics_lock_{UniversalSuccessor()};
 +  base::flat_map<scoped_refptr<TaskSource>, int>
 +      incomplete_block_shutdown_sources_ GUARDED_BY(diagnostics_lock_);
