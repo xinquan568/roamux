@@ -10,14 +10,22 @@ namespace {
 // disabled by default until their epic completes and graduates the flag.
 // Graduated to default-ON (user-toggleable via chrome://flags): roam-185 (E1,
 // kTabStripPosition), roam-187 (E2, kInitialUrl), roam-189 (E4, kTabVisitNav),
-// roam-190 (E3, kEdgeImport). The still-in-progress epics keep their disabled
-// default.
+// roam-190 (E3, kEdgeImport), and — as of v0.0.1-alpha.8 — roam-208
+// (kBookmarkSubfolderGroups), roam-213 (kRoamuxExternalOpenProfile), roam-214
+// (kTabStripToggleShortcut). kBraveStyleProfiles (E5, incomplete) is the only
+// flag left on its disabled default.
 TEST(RoamuxSmokeTest, FeatureFlagsDefaultDisabled) {
   EXPECT_TRUE(
       base::FeatureList::IsEnabled(roamux::features::kTabStripPosition));
   EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kInitialUrl));
   EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kTabVisitNav));
   EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kEdgeImport));
+  EXPECT_TRUE(
+      base::FeatureList::IsEnabled(roamux::features::kBookmarkSubfolderGroups));
+  EXPECT_TRUE(base::FeatureList::IsEnabled(
+      roamux::features::kRoamuxExternalOpenProfile));
+  EXPECT_TRUE(
+      base::FeatureList::IsEnabled(roamux::features::kTabStripToggleShortcut));
   EXPECT_FALSE(
       base::FeatureList::IsEnabled(roamux::features::kBraveStyleProfiles));
 }

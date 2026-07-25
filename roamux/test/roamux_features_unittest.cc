@@ -47,11 +47,28 @@ TEST(RoamuxFeaturesTest, EdgeImportEnabledByDefault) {
   EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kEdgeImport));
 }
 
-TEST(RoamuxFeaturesTest, TabStripToggleShortcutDisabledByDefault) {
-  // roam-214: ships OFF (kill-switch convention); flip-on is a
-  // post-verification follow-up.
-  EXPECT_FALSE(
+TEST(RoamuxFeaturesTest, TabStripToggleShortcutEnabledByDefault) {
+  // roam-214: the tab-strip pin/peek toggle ships enabled by default in
+  // v0.0.1-alpha.8 (chrome://flags/#roamux-tab-strip-toggle-shortcut lets
+  // users opt out).
+  EXPECT_TRUE(
       base::FeatureList::IsEnabled(roamux::features::kTabStripToggleShortcut));
+}
+
+TEST(RoamuxFeaturesTest, BookmarkSubfolderGroupsEnabledByDefault) {
+  // roam-208: opening bookmark subfolders as tab groups ships enabled by
+  // default in v0.0.1-alpha.8
+  // (chrome://flags/#roamux-bookmark-subfolder-groups lets users opt out).
+  EXPECT_TRUE(
+      base::FeatureList::IsEnabled(roamux::features::kBookmarkSubfolderGroups));
+}
+
+TEST(RoamuxFeaturesTest, ExternalOpenProfileEnabledByDefault) {
+  // roam-213: the designated external-open profile ships enabled by default in
+  // v0.0.1-alpha.8 (chrome://flags/#roamux-external-open-profile lets users
+  // opt out). Enabled is inert until a profile is actually designated.
+  EXPECT_TRUE(base::FeatureList::IsEnabled(
+      roamux::features::kRoamuxExternalOpenProfile));
 }
 
 }  // namespace
