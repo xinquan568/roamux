@@ -118,7 +118,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxStripAnimationReentrancyTest,
   // Final-state semantics: the collapse propagated to the state controller,
   // and the held keep-expanded lock re-expanded the strip on hover terms.
   EXPECT_TRUE(
-      tabs::VerticalTabStripStateController::From(browser())->IsCollapsed());
+      ::tabs::VerticalTabStripStateController::From(browser())->IsCollapsed());
   EXPECT_TRUE(strip->is_expanded_on_hover());
 }
 
@@ -216,7 +216,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxStripAnimationReentrancyTest,
   EXPECT_FALSE(animation_controller()->IsAnimating(
       TabStripAnimations::kVerticalTabStrip));
   EXPECT_TRUE(
-      tabs::VerticalTabStripStateController::From(browser())->IsCollapsed());
+      ::tabs::VerticalTabStripStateController::From(browser())->IsCollapsed());
   EXPECT_TRUE(strip->is_expanded_on_hover());
 }
 
