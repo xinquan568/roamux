@@ -41,82 +41,6 @@ index 2f639ed..729cbee 100644
      <message name="IDS_BOOKMARK_BAR_OPEN_IN_NEW_TAB" desc="In Title Case: Menu description for loading bookmark in a new tab">
        &amp;Open in New Tab
      </message>
-diff --git a/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc b/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
-index 56f0185..7001e19 100644
---- a/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
-+++ b/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
-@@ -4,6 +4,11 @@
- 
- #include "chrome/browser/ui/bookmarks/bookmark_context_menu_controller.h"
- 
-+#include "chrome/browser/prefs/incognito_mode_prefs.h"
-+#include "components/policy/core/common/policy_pref_names.h"
-+#include "roamux/browser/bookmarks/subfolder_tab_groups.h"
-+#include "roamux/common/roamux_features.h"
-+
- #include <stddef.h>
- 
- #include <memory>
-@@ -252,6 +257,25 @@ void BookmarkContextMenuController::BuildMenu() {
-     AddItem(IDC_BOOKMARK_BAR_OPEN_ALL_NEW_TAB_GROUP,
-             l10n_util::GetPluralStringFUTF16(
-                 IDS_BOOKMARK_BAR_OPEN_ALL_COUNT_NEW_TAB_GROUP, count));
-+
-+    // Roamux (roam-208): bulk subfolders -> tab groups. Regular-profile,
-+    // policy-normal, single-folder selections only; hidden when no subfolder
-+    // qualifies (flag-gated, default off).
-+    if (base::FeatureList::IsEnabled(
-+            roamux::features::kBookmarkSubfolderGroups) &&
-+        !profile_->IsOffTheRecord() &&
-+        IncognitoModePrefs::GetAvailability(profile_->GetPrefs()) !=
-+            policy::IncognitoModeAvailability::kForced &&
-+        selection_.size() == 1 && selection_[0]->is_folder()) {
-+      const size_t subfolder_count =
-+          roamux::BuildSubfolderGroupPlans(*selection_[0]).size();
-+      if (subfolder_count > 0) {
-+        AddItem(IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS,
-+                l10n_util::GetPluralStringFUTF16(
-+                    IDS_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS,
-+                    static_cast<int>(subfolder_count)));
-+      }
-+    }
-   }
- 
-   AddSeparator();
-@@ -323,6 +347,14 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
-   base::WeakPtr<BookmarkContextMenuController> ref(weak_factory_.GetWeakPtr());
- 
-   switch (id) {
-+    case IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS: {
-+      // Roamux (roam-208): snapshot plans, then open+group in one new window.
-+      if (selection_.size() == 1 && selection_[0]->is_folder()) {
-+        roamux::OpenSubfolderGroupsInNewWindow(
-+            browser_, roamux::BuildSubfolderGroupPlans(*selection_[0]));
-+      }
-+      break;
-+    }
-     case IDC_BOOKMARK_BAR_OPEN_ALL:
-     case IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO:
-     case IDC_BOOKMARK_BAR_OPEN_ALL_NEW_TAB_GROUP:
-diff --git a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
-index 2531c17..a7e9171 100644
---- a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
-+++ b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
-@@ -124,6 +124,14 @@ class BookmarksPageHandler::BookmarkContextMenu
-     if (bookmarks.size() == 1 && bookmarks.front()->is_url()) {
-       AddItem(IDC_BOOKMARK_BAR_OPEN_SPLIT_VIEW);
-     }
-+    // Roamux (roam-208): copy only when the controller row exists (its
-+    // AddItem dereferences the controller index unchecked).
-+    if (controller_->menu_model()
-+            ->GetIndexOfCommandId(
-+                IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS)
-+            .has_value()) {
-+      AddItem(IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS);
-+    }
-     AddSeparator(ui::NORMAL_SEPARATOR);
- 
-     AddItem((bookmarks.size() == 1 && bookmarks.front()->is_folder()) ||
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
 index 263f995..9c18c04 100644
 --- a/chrome/browser/BUILD.gn
@@ -133,3 +57,386 @@ index 263f995..9c18c04 100644
        "apps/intent_helper/intent_chip_display_prefs.cc",
        "apps/intent_helper/intent_chip_display_prefs.h",
        "certificate_viewer.h",
+diff --git a/chrome/browser/resources/side_panel/bookmarks/bookmarks_api_proxy.ts b/chrome/browser/resources/side_panel/bookmarks/bookmarks_api_proxy.ts
+index 4dd5547439..c0bcb508d7 100644
+--- a/chrome/browser/resources/side_panel/bookmarks/bookmarks_api_proxy.ts
++++ b/chrome/browser/resources/side_panel/bookmarks/bookmarks_api_proxy.ts
+@@ -42,6 +42,9 @@ export interface BookmarksApiProxy {
+ 
+   // Context menu.
+   showContextMenu(id: string, x: number, y: number, source: ActionSource): void;
++  // Roamux (roam-220): side-panel row data + execute for subfolder tab groups.
++  getRoamuxSubfolderGroupCount(folderId: string): Promise<{count: number}>;
++  executeRoamuxOpenSubfolderGroups(folderId: string): void;
+   contextMenuOpenBookmarkInNewTab(ids: string[], source: ActionSource): void;
+   contextMenuOpenBookmarkInNewWindow(ids: string[], source: ActionSource): void;
+   contextMenuOpenBookmarkInIncognitoWindow(ids: string[], source: ActionSource):
+@@ -196,6 +199,14 @@ export class BookmarksApiProxyImpl implements BookmarksApiProxy {
+     this.handler.showContextMenu(id, {x, y}, source);
+   }
+ 
++  getRoamuxSubfolderGroupCount(folderId: string): Promise<{count: number}> {
++    return this.handler.getRoamuxSubfolderGroupCount(folderId);
++  }
++
++  executeRoamuxOpenSubfolderGroups(folderId: string) {
++    this.handler.executeRoamuxOpenSubfolderGroups(folderId);
++  }
++
+   showUi() {
+     this.handler.showUI();
+   }
+diff --git a/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_context_menu.ts b/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_context_menu.ts
+index e10bb56870..09dc84b48a 100644
+--- a/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_context_menu.ts
++++ b/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_context_menu.ts
+@@ -42,6 +42,9 @@ export enum MenuItemId {
+   DELETE = 9,
+   DIVIDER = 10,
+   OPEN_SPLIT_VIEW = 11,
++  // Roamux (roam-220): open qualifying subfolders as tab groups in one new
++  // window. Rendered only when the browser reports a nonzero count.
++  ROAMUX_OPEN_SUBFOLDER_GROUPS = 12,
+ }
+ 
+ export interface MenuItem {
+@@ -70,6 +73,8 @@ export class PowerBookmarksContextMenuElement extends CrLitElement {
+       priceTrackingEligible_: {type: Boolean},
+       isInSplitView_: {type: Boolean},
+       incognitoCount_: {type: Number},
++      roamuxSubfolderCount_: {type: Number},
++      roamuxSubfolderLabel_: {type: String},
+     };
+   }
+ 
+@@ -82,6 +87,14 @@ export class PowerBookmarksContextMenuElement extends CrLitElement {
+   private accessor priceTrackingEligible_: boolean = false;
+   private accessor isInSplitView_: boolean = false;
+   private accessor incognitoCount_: number = 0;
++  private accessor roamuxSubfolderCount_: number = 0;
++  private accessor roamuxSubfolderLabel_: string = '';
++
++  // Roamux (roam-220): set by the list before every show (0 hides the row).
++  setRoamuxSubfolderGroups(count: number, label: string) {
++    this.roamuxSubfolderCount_ = count;
++    this.roamuxSubfolderLabel_ = label;
++  }
+ 
+   showAt(
+       target: HTMLElement, bookmarks: BookmarksTreeNode[],
+@@ -197,6 +210,16 @@ export class PowerBookmarksContextMenuElement extends CrLitElement {
+       });
+     }
+ 
++    // Roamux (roam-220): single-folder selections with a browser-confirmed
++    // qualifying-subfolder count get the tab-groups row.
++    if (this.bookmarks_.length === 1 && !this.bookmarks_[0].url &&
++        this.roamuxSubfolderCount_ > 0 && this.roamuxSubfolderLabel_) {
++      menuItems.push({
++        id: MenuItemId.ROAMUX_OPEN_SUBFOLDER_GROUPS,
++        label: this.roamuxSubfolderLabel_,
++      });
++    }
++
+     if (this.bookmarks_.length !== 1) {
+       menuItems.push(
+           {id: MenuItemId.DIVIDER},
+@@ -346,6 +369,12 @@ export class PowerBookmarksContextMenuElement extends CrLitElement {
+             this.bookmarks_.map(bookmark => bookmark.id),
+             ActionSource.kBookmark);
+         break;
++      case MenuItemId.ROAMUX_OPEN_SUBFOLDER_GROUPS:
++        // Roamux (roam-220): browser-side revalidation makes stale sends
++        // safe no-ops.
++        this.bookmarksApi_.executeRoamuxOpenSubfolderGroups(
++            this.bookmarks_[0].id);
++        break;
+       case MenuItemId.ADD_TO_BOOKMARKS_BAR:
+         assert(this.bookmarks_.length === 1);
+         if (editingDisabledByPolicy(this.bookmarks_)) {
+diff --git a/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_list.ts b/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_list.ts
+index 6121d387fc..86c3617737 100644
+--- a/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_list.ts
++++ b/chrome/browser/resources/side_panel/bookmarks/power_bookmarks_list.ts
+@@ -1143,8 +1143,11 @@ export class PowerBookmarksListElement extends PolymerElement implements
+         .all([
+           this.bookmarksApi_.isActiveTabInSplit(),
+           this.bookmarksApi_.getIncognitoAvailableCount([bookmark.id]),
++          this.getRoamuxSubfolderGroups_(bookmark),
+         ])
+-        .then(([isSplit, incognito]) => {
++        .then(([isSplit, incognito, roamuxSubfolders]) => {
++          this.$.contextMenu.setRoamuxSubfolderGroups(
++              roamuxSubfolders.count, roamuxSubfolders.label);
+           if (event.detail.event.button === 0) {
+             this.$.contextMenu.showAt(
+                 target, [bookmark], priceTracked, priceTrackingEligible,
+@@ -1159,6 +1162,24 @@ export class PowerBookmarksListElement extends PolymerElement implements
+         });
+   }
+ 
++  // Roamux (roam-220): browser-confirmed qualifying-subfolder count + the
++  // plural row label for a single-folder context menu target; {0, ''} for
++  // URLs (row hidden).
++  private async getRoamuxSubfolderGroups_(bookmark: BookmarksTreeNode):
++      Promise<{count: number, label: string}> {
++    if (bookmark.url) {
++      return {count: 0, label: ''};
++    }
++    const {count} =
++        await this.bookmarksApi_.getRoamuxSubfolderGroupCount(bookmark.id);
++    if (count <= 0) {
++      return {count: 0, label: ''};
++    }
++    const label = await PluralStringProxyImpl.getInstance().getPluralString(
++        'roamuxOpenSubfolderGroups', count);
++    return {count, label};
++  }
++
+   private getParentFolder_(): BookmarksTreeNode {
+     return this.getActiveFolder_() ||
+         this.bookmarksService_.findBookmarkWithId(
+diff --git a/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc b/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
+index 56f01850c0..34d0ce11a2 100644
+--- a/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
++++ b/chrome/browser/ui/bookmarks/bookmark_context_menu_controller.cc
+@@ -4,6 +4,11 @@
+ 
+ #include "chrome/browser/ui/bookmarks/bookmark_context_menu_controller.h"
+ 
++#include "chrome/browser/prefs/incognito_mode_prefs.h"
++#include "components/policy/core/common/policy_pref_names.h"
++#include "roamux/browser/bookmarks/subfolder_tab_groups.h"
++#include "roamux/common/roamux_features.h"
++
+ #include <stddef.h>
+ 
+ #include <memory>
+@@ -252,6 +257,21 @@ void BookmarkContextMenuController::BuildMenu() {
+     AddItem(IDC_BOOKMARK_BAR_OPEN_ALL_NEW_TAB_GROUP,
+             l10n_util::GetPluralStringFUTF16(
+                 IDS_BOOKMARK_BAR_OPEN_ALL_COUNT_NEW_TAB_GROUP, count));
++
++    // Roamux (roam-208/roam-220): bulk subfolders -> tab groups. Every gate
++    // (flag, regular profile, Incognito-not-forced, non-permanent folder)
++    // lives in the shared seam so this menu and the side-panel WebUI menu can
++    // never disagree.
++    if (selection_.size() == 1) {
++      const int subfolder_count = roamux::GetQualifyingSubfolderCountForMenus(
++          profile_, selection_[0]);
++      if (subfolder_count > 0) {
++        AddItem(IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS,
++                l10n_util::GetPluralStringFUTF16(
++                    IDS_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS,
++                    subfolder_count));
++      }
++    }
+   }
+ 
+   AddSeparator();
+@@ -323,6 +343,13 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
+   base::WeakPtr<BookmarkContextMenuController> ref(weak_factory_.GetWeakPtr());
+ 
+   switch (id) {
++    case IDC_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS: {
++      // Roamux (roam-208/roam-220): the shared revalidating execute seam.
++      if (selection_.size() == 1) {
++        roamux::ValidateAndOpenSubfolderGroups(browser_, selection_[0]);
++      }
++      break;
++    }
+     case IDC_BOOKMARK_BAR_OPEN_ALL:
+     case IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO:
+     case IDC_BOOKMARK_BAR_OPEN_ALL_NEW_TAB_GROUP:
+diff --git a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks.mojom b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks.mojom
+index a9a1f6ebe5..51a72a0401 100644
+--- a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks.mojom
++++ b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks.mojom
+@@ -193,6 +193,17 @@ interface BookmarksPageHandler {
+   // the context menu is triggered.
+   ShowContextMenu(string id, gfx.mojom.Point point, ActionSource source);
+ 
++  // Roamux (roam-220, patch 0047): qualifying-subfolder count for the
++  // side-panel context menu row. 0 hides the row; every gate (feature flag,
++  // profile kind, Incognito policy, node kind) is enforced browser-side.
++  GetRoamuxSubfolderGroupCount(string folder_id) => (int32 count);
++
++  // Roamux (roam-220, patch 0047): open one new window with one named tab
++  // group per qualifying subfolder. The browser re-resolves the folder and
++  // revalidates every gate immediately before acting; stale or
++  // non-qualifying requests are safe no-ops.
++  ExecuteRoamuxOpenSubfolderGroups(string folder_id);
++
+   // Notify the backend that the UI is ready to be shown.
+   ShowUI();
+ 
+diff --git a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
+index 2531c17307..bcec014c67 100644
+--- a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
++++ b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.cc
+@@ -63,6 +63,7 @@
+ #include "components/strings/grit/components_strings.h"
+ #include "components/undo/bookmark_undo_service.h"
+ #include "mojo/public/cpp/bindings/message.h"
++#include "roamux/browser/bookmarks/subfolder_tab_groups.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/mojom/window_open_disposition.mojom.h"
+ #include "ui/base/window_open_disposition.h"
+@@ -745,6 +746,30 @@ void BookmarksPageHandler::SetViewType(side_panel::mojom::ViewType view_type) {
+   }
+ }
+ 
++void BookmarksPageHandler::GetRoamuxSubfolderGroupCount(
++    const std::string& folder_id,
++    GetRoamuxSubfolderGroupCountCallback callback) {
++  // Roamux (roam-220, patch 0047): renderer-supplied id — checked resolution
++  // (the stock side-panel resolver CHECKs on stale/non-folder int64 ids),
++  // then every gate in roamux::GetQualifyingSubfolderCountForMenus.
++  const bookmarks::BookmarkNode* folder =
++      roamux::ResolveSidePanelFolderForMenus(
++          bookmark_merged_surface_->bookmark_model(), folder_id);
++  Browser* browser = browser_window_interface_->GetBrowserForMigrationOnly();
++  std::move(callback).Run(roamux::GetQualifyingSubfolderCountForMenus(
++      browser ? browser->profile() : nullptr, folder));
++}
++
++void BookmarksPageHandler::ExecuteRoamuxOpenSubfolderGroups(
++    const std::string& folder_id) {
++  // Roamux (roam-220, patch 0047): untrusted renderer input — checked
++  // resolution + full browser-side revalidation immediately before acting.
++  roamux::ValidateAndOpenSubfolderGroups(
++      browser_window_interface_->GetBrowserForMigrationOnly(),
++      roamux::ResolveSidePanelFolderForMenus(
++          bookmark_merged_surface_->bookmark_model(), folder_id));
++}
++
+ void BookmarksPageHandler::ShowContextMenu(
+     const std::string& id_string,
+     const gfx::Point& point,
+diff --git a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.h b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.h
+index 972f14bf54..6c5920eaed 100644
+--- a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.h
++++ b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_page_handler.h
+@@ -87,6 +87,12 @@ class BookmarksPageHandler : public side_panel::mojom::BookmarksPageHandler,
+                        RemoveBookmarksCallback callback) override;
+   void SetSortOrder(side_panel::mojom::SortOrder sort_order) override;
+   void SetViewType(side_panel::mojom::ViewType view_type) override;
++  // Roamux (roam-220, patch 0047): the side-panel WebUI menu row's data and
++  // execute paths; both delegate to roamux/browser/bookmarks.
++  void GetRoamuxSubfolderGroupCount(
++      const std::string& folder_id,
++      GetRoamuxSubfolderGroupCountCallback callback) override;
++  void ExecuteRoamuxOpenSubfolderGroups(const std::string& folder_id) override;
+   void ShowContextMenu(const std::string& id,
+                        const gfx::Point& point,
+                        side_panel::mojom::ActionSource source) override;
+diff --git a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_side_panel_ui.cc b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_side_panel_ui.cc
+index 3123155853..7dda334fae 100644
+--- a/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_side_panel_ui.cc
++++ b/chrome/browser/ui/webui/side_panel/bookmarks/bookmarks_side_panel_ui.cc
+@@ -233,6 +233,10 @@ BookmarksSidePanelUI::BookmarksSidePanelUI(content::WebUI* web_ui)
+ 
+   // Add a handler to provide pluralized strings.
+   auto plural_string_handler = std::make_unique<PluralStringHandler>();
++  // Roamux (roam-220, patch 0047): the side-panel menu row's plural label.
++  plural_string_handler->AddLocalizedString(
++      "roamuxOpenSubfolderGroups",
++      IDS_ROAMUX_BOOKMARK_BAR_OPEN_SUBFOLDERS_AS_TAB_GROUPS);
+   plural_string_handler->AddLocalizedString("bookmarkDeletionCount",
+                                             IDS_BOOKMARK_DELETION_COUNT);
+   web_ui->AddMessageHandler(std::move(plural_string_handler));
+diff --git a/chrome/test/data/webui/side_panel/bookmarks/power_bookmarks_context_menu_test.ts b/chrome/test/data/webui/side_panel/bookmarks/power_bookmarks_context_menu_test.ts
+index 1532ac6bf4..1038384b78 100644
+--- a/chrome/test/data/webui/side_panel/bookmarks/power_bookmarks_context_menu_test.ts
++++ b/chrome/test/data/webui/side_panel/bookmarks/power_bookmarks_context_menu_test.ts
+@@ -151,6 +151,47 @@ suite('SidePanelPowerBookmarksContextMenuTest', () => {
+             loadTimeData.getString('tooltipDelete')));
+   });
+ 
++  // Roamux (roam-220): the subfolder-tab-groups row renders exactly when the
++  // browser-supplied count is nonzero, and its click dispatches the execute
++  // mojo call for the folder.
++  test('RoamuxSubfolderGroupsRowShownWhenQualifying', async () => {
++    const selection = [service.findBookmarkWithId('5')!];
++    powerBookmarksContextMenu.setRoamuxSubfolderGroups(
++        2, 'Open 2 subfolders as tab groups in new window');
++    powerBookmarksContextMenu.showAtPosition(
++        new MouseEvent('click'), selection, false, false, false, 1);
++
++    await waitAfterNextRender(powerBookmarksContextMenu);
++
++    const menuItems = Array.from(
++        powerBookmarksContextMenu.shadowRoot.querySelectorAll<HTMLElement>(
++            '.dropdown-item'));
++    const roamuxItem = menuItems.find(
++        item => item.textContent.includes(
++            'Open 2 subfolders as tab groups in new window'));
++    assertTrue(!!roamuxItem);
++
++    roamuxItem.click();
++    const folderId =
++        await bookmarksApi.whenCalled('executeRoamuxOpenSubfolderGroups');
++    assertEquals(folderId, '5');
++  });
++
++  test('RoamuxSubfolderGroupsRowHiddenAtZeroCount', async () => {
++    const selection = [service.findBookmarkWithId('5')!];
++    powerBookmarksContextMenu.setRoamuxSubfolderGroups(0, '');
++    powerBookmarksContextMenu.showAtPosition(
++        new MouseEvent('click'), selection, false, false, false, 1);
++
++    await waitAfterNextRender(powerBookmarksContextMenu);
++
++    const menuItems = Array.from(
++        powerBookmarksContextMenu.shadowRoot.querySelectorAll<HTMLElement>(
++            '.dropdown-item'));
++    assertTrue(menuItems.every(
++        item => !item.textContent.includes('subfolders as tab groups')));
++  });
++
+   test('ShowsMenuItemsForSingleSelectFolder', async () => {
+     const selection = [service.findBookmarkWithId('5')!];
+     powerBookmarksContextMenu.showAtPosition(
+diff --git a/chrome/test/data/webui/side_panel/bookmarks/test_bookmarks_api_proxy.ts b/chrome/test/data/webui/side_panel/bookmarks/test_bookmarks_api_proxy.ts
+index 19bf52f4fb..91170a6b26 100644
+--- a/chrome/test/data/webui/side_panel/bookmarks/test_bookmarks_api_proxy.ts
++++ b/chrome/test/data/webui/side_panel/bookmarks/test_bookmarks_api_proxy.ts
+@@ -20,6 +20,8 @@ export class TestBookmarksApiProxy extends TestBrowserProxy implements
+     onTabUpdated: FakeChromeEvent,
+   };
+ 
++  private roamuxSubfolderGroupCount_: number = 0;
++
+   constructor() {
+     super([
+       'getActiveUrl',
+@@ -45,6 +47,8 @@ export class TestBookmarksApiProxy extends TestBrowserProxy implements
+       'setSortOrder',
+       'setViewType',
+       'showContextMenu',
++      'getRoamuxSubfolderGroupCount',
++      'executeRoamuxOpenSubfolderGroups',
+       'showUi',
+       'undo',
+       'getAllBookmarks',
+@@ -178,6 +182,20 @@ export class TestBookmarksApiProxy extends TestBrowserProxy implements
+     this.methodCalled('showContextMenu', id, x, y, source);
+   }
+ 
++  // Roamux (roam-220): side-panel subfolder tab-groups seams.
++  setRoamuxSubfolderGroupCount(count: number) {
++    this.roamuxSubfolderGroupCount_ = count;
++  }
++
++  getRoamuxSubfolderGroupCount(folderId: string): Promise<{count: number}> {
++    this.methodCalled('getRoamuxSubfolderGroupCount', folderId);
++    return Promise.resolve({count: this.roamuxSubfolderGroupCount_});
++  }
++
++  executeRoamuxOpenSubfolderGroups(folderId: string) {
++    this.methodCalled('executeRoamuxOpenSubfolderGroups', folderId);
++  }
++
+   showUi() {
+     this.methodCalled('showUi');
+   }

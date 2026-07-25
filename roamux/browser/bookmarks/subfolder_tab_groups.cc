@@ -3,8 +3,10 @@
 
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
+#include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 #include "chrome/browser/ui/browser.h"
@@ -16,9 +18,14 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node.h"
+#include "components/bookmarks/browser/bookmark_utils.h"
+#include "components/policy/core/common/policy_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/tab_groups/tab_group_visual_data.h"
 #include "components/tabs/public/tab_group.h"
+#include "roamux/common/roamux_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/page_transition_types.h"
 
@@ -149,6 +156,45 @@ BulkOpenPromptCallback SetBulkOpenPromptCallbackForTesting(
   BulkOpenPromptCallback previous = g_bulk_prompt_for_testing;
   g_bulk_prompt_for_testing = callback;
   return previous;
+}
+
+const bookmarks::BookmarkNode* ResolveSidePanelFolderForMenus(
+    bookmarks::BookmarkModel* model,
+    const std::string& side_panel_id) {
+  int64_t folder_id = 0;
+  // Permanent folders use non-numeric string ids; they are never qualifying
+  // anchors, so the numeric-parse failure path covers them too.
+  if (!model || !base::StringToInt64(side_panel_id, &folder_id)) {
+    return nullptr;
+  }
+  const bookmarks::BookmarkNode* node =
+      bookmarks::GetBookmarkNodeByID(model, folder_id);
+  if (!node || !node->is_folder() || node->is_permanent_node()) {
+    return nullptr;
+  }
+  return node;
+}
+
+int GetQualifyingSubfolderCountForMenus(Profile* profile,
+                                        const bookmarks::BookmarkNode* folder) {
+  if (!base::FeatureList::IsEnabled(features::kBookmarkSubfolderGroups) ||
+      !profile || profile->IsOffTheRecord() ||
+      IncognitoModePrefs::GetAvailability(profile->GetPrefs()) ==
+          policy::IncognitoModeAvailability::kForced ||
+      !folder || !folder->is_folder() || folder->is_permanent_node()) {
+    return 0;
+  }
+  return static_cast<int>(BuildSubfolderGroupPlans(*folder).size());
+}
+
+bool ValidateAndOpenSubfolderGroups(Browser* source,
+                                    const bookmarks::BookmarkNode* folder) {
+  if (!source ||
+      GetQualifyingSubfolderCountForMenus(source->profile(), folder) == 0) {
+    return false;
+  }
+  OpenSubfolderGroupsInNewWindow(source, BuildSubfolderGroupPlans(*folder));
+  return true;
 }
 
 }  // namespace roamux
