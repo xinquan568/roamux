@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -36,24 +37,24 @@ using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
 
 class RoamuxSubfolderSidePanelTest : public InProcessBrowserTest {
-public:
+ public:
   RoamuxSubfolderSidePanelTest() {
     features_.InitAndEnableFeature(features::kBookmarkSubfolderGroups);
   }
 
-protected:
-  BookmarkModel *model() {
+ protected:
+  BookmarkModel* model() {
     return BookmarkModelFactory::GetForBrowserContext(browser()->profile());
   }
 
   // other_bookmarks/Parent/{Sub1/{a}, Sub2/{b,c}, Empty/, direct-link}
-  const BookmarkNode *BuildQualifyingTree() {
-    BookmarkModel *m = model();
+  const BookmarkNode* BuildQualifyingTree() {
+    BookmarkModel* m = model();
     bookmarks::test::WaitForBookmarkModelToLoad(m);
-    const BookmarkNode *parent = m->AddFolder(m->other_node(), 0, u"Parent");
-    const BookmarkNode *sub1 = m->AddFolder(parent, 0, u"Sub1");
+    const BookmarkNode* parent = m->AddFolder(m->other_node(), 0, u"Parent");
+    const BookmarkNode* sub1 = m->AddFolder(parent, 0, u"Sub1");
     m->AddURL(sub1, 0, u"a", GURL("https://a.example/"));
-    const BookmarkNode *sub2 = m->AddFolder(parent, 1, u"Sub2");
+    const BookmarkNode* sub2 = m->AddFolder(parent, 1, u"Sub2");
     m->AddURL(sub2, 0, u"b", GURL("https://b.example/"));
     m->AddURL(sub2, 1, u"c", GURL("https://c.example/"));
     m->AddFolder(parent, 2, u"Empty");
@@ -66,7 +67,7 @@ protected:
 
 class RoamuxSubfolderSidePanelFlagOffTest
     : public RoamuxSubfolderSidePanelTest {
-public:
+ public:
   RoamuxSubfolderSidePanelFlagOffTest() {
     features_.Reset();
     features_.InitAndDisableFeature(features::kBookmarkSubfolderGroups);
@@ -75,28 +76,28 @@ public:
 
 // Count: a qualifying tree reports one plan per non-empty immediate subfolder.
 IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, CountQualifyingTree) {
-  const BookmarkNode *parent = BuildQualifyingTree();
+  const BookmarkNode* parent = BuildQualifyingTree();
   EXPECT_EQ(GetQualifyingSubfolderCountForMenus(browser()->profile(), parent),
             2);
 }
 
 // Count gates: flag off → 0 even for a qualifying tree.
 IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelFlagOffTest, CountZeroFlagOff) {
-  const BookmarkNode *parent = BuildQualifyingTree();
+  const BookmarkNode* parent = BuildQualifyingTree();
   EXPECT_EQ(GetQualifyingSubfolderCountForMenus(browser()->profile(), parent),
             0);
 }
 
 // Count gates: OTR profile → 0.
 IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, CountZeroOffTheRecord) {
-  const BookmarkNode *parent = BuildQualifyingTree();
-  Browser *otr = CreateIncognitoBrowser();
+  const BookmarkNode* parent = BuildQualifyingTree();
+  Browser* otr = CreateIncognitoBrowser();
   EXPECT_EQ(GetQualifyingSubfolderCountForMenus(otr->profile(), parent), 0);
 }
 
 // Count gates: Incognito mode FORCED → 0 (window/group spray is confined).
 IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, CountZeroIncognitoForced) {
-  const BookmarkNode *parent = BuildQualifyingTree();
+  const BookmarkNode* parent = BuildQualifyingTree();
   browser()->profile()->GetPrefs()->SetInteger(
       policy::policy_prefs::kIncognitoModeAvailability,
       static_cast<int>(policy::IncognitoModeAvailability::kForced));
@@ -106,9 +107,9 @@ IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, CountZeroIncognitoForced) {
 
 // Count gates: permanent folders and URL nodes are never qualifying anchors.
 IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, CountZeroWrongNodeKinds) {
-  BookmarkModel *m = model();
+  BookmarkModel* m = model();
   bookmarks::test::WaitForBookmarkModelToLoad(m);
-  const BookmarkNode *url_node =
+  const BookmarkNode* url_node =
       m->AddURL(m->other_node(), 0, u"leaf", GURL("https://l.example/"));
   EXPECT_EQ(GetQualifyingSubfolderCountForMenus(browser()->profile(),
                                                 m->other_node()),
@@ -121,12 +122,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, CountZeroWrongNodeKinds) {
 
 // Execute: opens one new window with one named group per qualifying subfolder.
 IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, ExecuteOpensGroups) {
-  const BookmarkNode *parent = BuildQualifyingTree();
+  const BookmarkNode* parent = BuildQualifyingTree();
   const size_t browsers_before = chrome::GetTotalBrowserCount();
 
   ui_test_utils::BrowserCreatedObserver observer;
   EXPECT_TRUE(ValidateAndOpenSubfolderGroups(browser(), parent));
-  Browser *opened = observer.Wait();
+  Browser* opened = observer.Wait();
 
   EXPECT_EQ(chrome::GetTotalBrowserCount(), browsers_before + 1);
   ASSERT_NE(opened, browser());
@@ -137,8 +138,8 @@ IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, ExecuteOpensGroups) {
 // Execute hardening: gates rechecked at execute time — a request that stopped
 // qualifying between query and execute is a safe no-op.
 IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, ExecuteRevalidates) {
-  BookmarkModel *m = model();
-  const BookmarkNode *parent = BuildQualifyingTree();
+  BookmarkModel* m = model();
+  const BookmarkNode* parent = BuildQualifyingTree();
   // The renderer saw count==2, then the user emptied the folder.
   while (!parent->children().empty()) {
     m->Remove(parent->children()[0].get(),
@@ -152,5 +153,67 @@ IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, ExecuteRevalidates) {
   EXPECT_FALSE(ValidateAndOpenSubfolderGroups(browser(), nullptr));
 }
 
-} // namespace
-} // namespace roamux
+// R8-001: renderer-supplied side-panel ids resolve through the CHECKED
+// roamux resolver - stale, non-numeric, permanent-string, permanent-int64,
+// and URL-node ids all yield nullptr (never the upstream CHECK-crash path);
+// a live non-permanent folder resolves to its node.
+IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, ResolveSidePanelIdMatrix) {
+  BookmarkModel* m = model();
+  const BookmarkNode* parent = BuildQualifyingTree();
+  const BookmarkNode* url_node = parent->children()[3].get();
+
+  EXPECT_EQ(
+      ResolveSidePanelFolderForMenus(m, base::NumberToString(parent->id())),
+      parent);
+  EXPECT_EQ(ResolveSidePanelFolderForMenus(m, "999999"), nullptr);
+  EXPECT_EQ(ResolveSidePanelFolderForMenus(m, "not-a-number"), nullptr);
+  EXPECT_EQ(ResolveSidePanelFolderForMenus(m, "SIDE_PANEL_OTHER_BOOKMARKS_ID"),
+            nullptr);
+  EXPECT_EQ(ResolveSidePanelFolderForMenus(
+                m, base::NumberToString(m->other_node()->id())),
+            nullptr);
+  EXPECT_EQ(
+      ResolveSidePanelFolderForMenus(m, base::NumberToString(url_node->id())),
+      nullptr);
+  EXPECT_EQ(ResolveSidePanelFolderForMenus(nullptr, "1"), nullptr);
+}
+
+// R8-003: the execute seam's own gate matrix - every count gate also fails
+// execute with no window spray.
+IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelFlagOffTest,
+                       ExecuteFalseFlagOff) {
+  const BookmarkNode* parent = BuildQualifyingTree();
+  const size_t before = chrome::GetTotalBrowserCount();
+  EXPECT_FALSE(ValidateAndOpenSubfolderGroups(browser(), parent));
+  EXPECT_EQ(chrome::GetTotalBrowserCount(), before);
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, ExecuteFalseOffTheRecord) {
+  const BookmarkNode* parent = BuildQualifyingTree();
+  Browser* otr = CreateIncognitoBrowser();
+  const size_t before = chrome::GetTotalBrowserCount();
+  EXPECT_FALSE(ValidateAndOpenSubfolderGroups(otr, parent));
+  EXPECT_EQ(chrome::GetTotalBrowserCount(), before);
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest,
+                       ExecuteFalseIncognitoForced) {
+  const BookmarkNode* parent = BuildQualifyingTree();
+  browser()->profile()->GetPrefs()->SetInteger(
+      policy::policy_prefs::kIncognitoModeAvailability,
+      static_cast<int>(policy::IncognitoModeAvailability::kForced));
+  const size_t before = chrome::GetTotalBrowserCount();
+  EXPECT_FALSE(ValidateAndOpenSubfolderGroups(browser(), parent));
+  EXPECT_EQ(chrome::GetTotalBrowserCount(), before);
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxSubfolderSidePanelTest, ExecuteFalseUrlNode) {
+  const BookmarkNode* parent = BuildQualifyingTree();
+  const BookmarkNode* url_node = parent->children()[3].get();
+  const size_t before = chrome::GetTotalBrowserCount();
+  EXPECT_FALSE(ValidateAndOpenSubfolderGroups(browser(), url_node));
+  EXPECT_EQ(chrome::GetTotalBrowserCount(), before);
+}
+
+}  // namespace
+}  // namespace roamux

@@ -18,7 +18,9 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node.h"
+#include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/tab_groups/tab_group_visual_data.h"
@@ -31,29 +33,29 @@ namespace roamux {
 
 namespace {
 BulkOpenPromptCallback g_bulk_prompt_for_testing = nullptr;
-} // namespace
+}  // namespace
 
 SubfolderGroupPlan::SubfolderGroupPlan() = default;
 SubfolderGroupPlan::SubfolderGroupPlan(std::u16string title,
                                        std::vector<GURL> urls)
     : title(std::move(title)), urls(std::move(urls)) {}
-SubfolderGroupPlan::SubfolderGroupPlan(const SubfolderGroupPlan &) = default;
-SubfolderGroupPlan::SubfolderGroupPlan(SubfolderGroupPlan &&) = default;
-SubfolderGroupPlan &
-SubfolderGroupPlan::operator=(const SubfolderGroupPlan &) = default;
-SubfolderGroupPlan &
-SubfolderGroupPlan::operator=(SubfolderGroupPlan &&) = default;
+SubfolderGroupPlan::SubfolderGroupPlan(const SubfolderGroupPlan&) = default;
+SubfolderGroupPlan::SubfolderGroupPlan(SubfolderGroupPlan&&) = default;
+SubfolderGroupPlan& SubfolderGroupPlan::operator=(const SubfolderGroupPlan&) =
+    default;
+SubfolderGroupPlan& SubfolderGroupPlan::operator=(SubfolderGroupPlan&&) =
+    default;
 SubfolderGroupPlan::~SubfolderGroupPlan() = default;
 
-std::vector<SubfolderGroupPlan>
-BuildSubfolderGroupPlans(const bookmarks::BookmarkNode &folder) {
+std::vector<SubfolderGroupPlan> BuildSubfolderGroupPlans(
+    const bookmarks::BookmarkNode& folder) {
   std::vector<SubfolderGroupPlan> plans;
-  for (const auto &child : folder.children()) {
+  for (const auto& child : folder.children()) {
     if (!child->is_folder()) {
       continue;
     }
     std::vector<GURL> urls;
-    for (const auto &grandchild : child->children()) {
+    for (const auto& grandchild : child->children()) {
       if (grandchild->is_url()) {
         urls.push_back(grandchild->url());
       }
@@ -70,13 +72,13 @@ namespace {
 // Decision 3: one new window in the invoking profile; groups in bookmark
 // order. Decision 8: direct group creation — the bookmark-connected
 // open-in-group flow (and its conversion dialog) is never involved.
-void DoOpenSubfolderGroups(Profile *profile,
+void DoOpenSubfolderGroups(Profile* profile,
                            std::vector<SubfolderGroupPlan> plans) {
-  Browser *opened = Browser::Create(Browser::CreateParams(profile, true));
-  TabStripModel *tabs = opened->tab_strip_model();
-  for (const SubfolderGroupPlan &plan : plans) {
+  Browser* opened = Browser::Create(Browser::CreateParams(profile, true));
+  TabStripModel* tabs = opened->tab_strip_model();
+  for (const SubfolderGroupPlan& plan : plans) {
     const int start = tabs->count();
-    for (const GURL &url : plan.urls) {
+    for (const GURL& url : plan.urls) {
       NavigateParams params(opened, url, ui::PAGE_TRANSITION_AUTO_BOOKMARK);
       params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
       Navigate(&params);
@@ -91,7 +93,7 @@ void DoOpenSubfolderGroups(Profile *profile,
     const tab_groups::TabGroupId group_id = tabs->AddToNewGroup(indices);
     // Decisions 5+6: exact subfolder title; keep the internally assigned
     // color (never SuggestUniqueTabGroupName, never an explicit color).
-    const tab_groups::TabGroupVisualData *assigned =
+    const tab_groups::TabGroupVisualData* assigned =
         tabs->group_model()->GetTabGroup(group_id)->visual_data();
     tabs->ChangeTabGroupVisuals(
         group_id, tab_groups::TabGroupVisualData(plan.title, assigned->color()),
@@ -106,7 +108,7 @@ void DoOpenSubfolderGroups(Profile *profile,
   opened->window()->Show();
 }
 
-void OnBulkOpenPromptAnswered(Profile *profile,
+void OnBulkOpenPromptAnswered(Profile* profile,
                               std::vector<SubfolderGroupPlan> plans,
                               chrome::MessageBoxResult result) {
   if (result == chrome::MESSAGE_BOX_RESULT_YES) {
@@ -114,16 +116,16 @@ void OnBulkOpenPromptAnswered(Profile *profile,
   }
 }
 
-} // namespace
+}  // namespace
 
-void OpenSubfolderGroupsInNewWindow(Browser *source,
+void OpenSubfolderGroupsInNewWindow(Browser* source,
                                     std::vector<SubfolderGroupPlan> plans) {
   if (!source || plans.empty()) {
     return;
   }
 
   size_t total = 0;
-  for (const SubfolderGroupPlan &plan : plans) {
+  for (const SubfolderGroupPlan& plan : plans) {
     total += plan.urls.size();
   }
 
@@ -149,15 +151,32 @@ void OpenSubfolderGroupsInNewWindow(Browser *source,
   DoOpenSubfolderGroups(source->profile(), std::move(plans));
 }
 
-BulkOpenPromptCallback
-SetBulkOpenPromptCallbackForTesting(BulkOpenPromptCallback callback) {
+BulkOpenPromptCallback SetBulkOpenPromptCallbackForTesting(
+    BulkOpenPromptCallback callback) {
   BulkOpenPromptCallback previous = g_bulk_prompt_for_testing;
   g_bulk_prompt_for_testing = callback;
   return previous;
 }
 
-int GetQualifyingSubfolderCountForMenus(Profile *profile,
-                                        const bookmarks::BookmarkNode *folder) {
+const bookmarks::BookmarkNode* ResolveSidePanelFolderForMenus(
+    bookmarks::BookmarkModel* model,
+    const std::string& side_panel_id) {
+  int64_t folder_id = 0;
+  // Permanent folders use non-numeric string ids; they are never qualifying
+  // anchors, so the numeric-parse failure path covers them too.
+  if (!model || !base::StringToInt64(side_panel_id, &folder_id)) {
+    return nullptr;
+  }
+  const bookmarks::BookmarkNode* node =
+      bookmarks::GetBookmarkNodeByID(model, folder_id);
+  if (!node || !node->is_folder() || node->is_permanent_node()) {
+    return nullptr;
+  }
+  return node;
+}
+
+int GetQualifyingSubfolderCountForMenus(Profile* profile,
+                                        const bookmarks::BookmarkNode* folder) {
   if (!base::FeatureList::IsEnabled(features::kBookmarkSubfolderGroups) ||
       !profile || profile->IsOffTheRecord() ||
       IncognitoModePrefs::GetAvailability(profile->GetPrefs()) ==
@@ -168,8 +187,8 @@ int GetQualifyingSubfolderCountForMenus(Profile *profile,
   return static_cast<int>(BuildSubfolderGroupPlans(*folder).size());
 }
 
-bool ValidateAndOpenSubfolderGroups(Browser *source,
-                                    const bookmarks::BookmarkNode *folder) {
+bool ValidateAndOpenSubfolderGroups(Browser* source,
+                                    const bookmarks::BookmarkNode* folder) {
   if (!source ||
       GetQualifyingSubfolderCountForMenus(source->profile(), folder) == 0) {
     return false;
@@ -178,4 +197,4 @@ bool ValidateAndOpenSubfolderGroups(Browser *source,
   return true;
 }
 
-} // namespace roamux
+}  // namespace roamux
