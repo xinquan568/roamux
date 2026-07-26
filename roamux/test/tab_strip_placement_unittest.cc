@@ -186,5 +186,62 @@ TEST_F(VerticalPlacementPredicateTest,
   EXPECT_TRUE(ShouldDockVerticalTabStripRight(&bare));
 }
 
+// roam-228: the LOGICAL dock side = physical placement XOR RTL. The physical
+// predicates above are RTL-invariant by contract (roam-9 D1); this one is the
+// deliberate translation for views' logical coordinate space and for
+// views::ResizeArea's already-RTL-normalised delta. (TDD: RED first.)
+TEST_F(VerticalPlacementPredicateTest, LogicalTrailingEdgeTruthTable) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+
+  // kTop/kBottom never drive a vertical strip: no logical dock side at all.
+  for (const auto placement :
+       {TabStripPlacement::kTop, TabStripPlacement::kBottom}) {
+    SetTabStripPlacement(&pref_service_, placement);
+    EXPECT_FALSE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                         /*is_rtl=*/false));
+    EXPECT_FALSE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                         /*is_rtl=*/true));
+  }
+
+  // Physical LEFT: logical leading in LTR, logical TRAILING in RTL.
+  SetTabStripPlacement(&pref_service_, TabStripPlacement::kLeft);
+  EXPECT_FALSE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                       /*is_rtl=*/false));
+  EXPECT_TRUE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                      /*is_rtl=*/true));
+
+  // Physical RIGHT: logical TRAILING in LTR, logical leading in RTL.
+  SetTabStripPlacement(&pref_service_, TabStripPlacement::kRight);
+  EXPECT_TRUE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                      /*is_rtl=*/false));
+  EXPECT_FALSE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                       /*is_rtl=*/true));
+}
+
+TEST_F(VerticalPlacementPredicateTest, LogicalTrailingEdgeFalseWhenFlagOff) {
+  base::test::ScopedFeatureList features;
+  features.InitAndDisableFeature(features::kTabStripPosition);
+  for (const auto placement :
+       {TabStripPlacement::kTop, TabStripPlacement::kBottom,
+        TabStripPlacement::kLeft, TabStripPlacement::kRight}) {
+    SetTabStripPlacement(&pref_service_, placement);
+    EXPECT_FALSE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                         /*is_rtl=*/false));
+    EXPECT_FALSE(IsVerticalTabStripOnLogicalTrailingEdge(&pref_service_,
+                                                         /*is_rtl=*/true));
+  }
+}
+
+TEST_F(VerticalPlacementPredicateTest,
+       LogicalTrailingEdgeNullPrefServiceIsFalse) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  EXPECT_FALSE(
+      IsVerticalTabStripOnLogicalTrailingEdge(nullptr, /*is_rtl=*/false));
+  EXPECT_FALSE(
+      IsVerticalTabStripOnLogicalTrailingEdge(nullptr, /*is_rtl=*/true));
+}
+
 }  // namespace
 }  // namespace roamux
