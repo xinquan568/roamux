@@ -1,0 +1,139 @@
+diff --git a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h
+--- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h
++++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h
+@@ -121,6 +121,11 @@
+   void AddedToWidget() override;
+   void RemovedFromWidget() override;
+   void Layout(PassKey) override;
++  // Roamux (roam-228, patch 0058): a left<->right dock flip moves this view
++  // without resizing it, and SetBoundsRect only re-runs Layout on a SIZE
++  // change — so the resize handle would keep the stale edge. Invalidate on an
++  // x-only move so the handle is repositioned.
++  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
+   views::View* GetDefaultFocusableChild() override;
+   gfx::Size GetMinimumSize() const override;
+   gfx::Size CalculatePreferredSize(
+diff --git a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+--- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
++++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+@@ -6,6 +6,7 @@
+ 
+ #include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
+ #include "roamux/browser/ui/views/tabs/vertical_tab_strip_roamux_observer.h"
++#include "roamux/common/tab_strip_placement.h"
+ 
+ #include <algorithm>
+ #include <optional>
+@@ -21,6 +22,7 @@
+ #include "base/metrics/user_metrics_action.h"
+ #include "base/notimplemented.h"
+ #include "base/time/time.h"
++#include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/actions/chrome_action_id.h"
+ #include "chrome/browser/ui/animation/browser_animation_controller.h"
+ #include "chrome/browser/ui/animation/browser_animation_types.h"
+@@ -90,6 +92,18 @@
+ constexpr int kCollapsedResizeAreaWidth = 2;
+ constexpr int kKeyboardResizeWidth = 50;
+ constexpr int kSnapDistance = 15;
++
++// Roamux (roam-228, patch 0058): true when the strip is docked on the LOGICAL
++// trailing edge. Both resize sites below work in logical space — child bounds
++// are stored logically and mirrored by views (View::GetMirroredX), and
++// views::ResizeArea hands its delegate an already-RTL-normalised delta — so the
++// physical placement pref has to be combined with the UI direction. False for
++// upstream's leading dock and whenever the roamux flag is off, which keeps the
++// stock behaviour bit-for-bit.
++bool RoamuxOnLogicalTrailingEdge(const BrowserView* browser_view) {
++  return roamux::IsVerticalTabStripOnLogicalTrailingEdge(
++      browser_view->browser()->profile()->GetPrefs(), base::i18n::IsRTL());
++}
+ 
+ // Shadow is used in expand-on-hover mode. Shadow radius and opacity are dynamic
+ // and set by the layout.
+@@ -506,15 +520,41 @@
+ 
+   // Manually position the resize area as it overlaps views handled by the flex
+   // layout.
+-  resize_area_->SetBoundsRect(gfx::Rect(bounds().right() - resize_area_width_,
+-                                        0, resize_area_width_,
+-                                        bounds().height()));
++  // Roamux (roam-228, patch 0058): the grab handle belongs on the edge FACING
++  // THE WEB CONTENT — the strip's logical right edge for a leading dock, and
++  // logical x = 0 for a trailing one. These bounds are LOCAL to this view, so
++  // they use width()/height(); upstream's bounds().right() is a parent-space
++  // value that only coincides with width() while the strip sits at x = 0, which
++  // is why a right-docked handle landed outside the strip entirely.
++  resize_area_->SetBoundsRect(
++      gfx::Rect(RoamuxOnLogicalTrailingEdge(browser_view_)
++                    ? 0
++                    : width() - resize_area_width_,
++                0, resize_area_width_, height()));
+   shadow_frame_->SetBoundsRect(GetLocalBounds());
+ 
+   // Ensure that we update the drop arrow position so that it does not render in
+   // the collapsed state when expand on hover is active.
+   if (drop_arrow_) {
+     drop_arrow_->SetIndex(drop_arrow_->index());
++  }
++}
++
++void VerticalTabStripRegionView::OnBoundsChanged(
++    const gfx::Rect& previous_bounds) {
++  TabStripRegionView::OnBoundsChanged(previous_bounds);
++
++  // Roamux (roam-228, patch 0058): a dock-side flip at unchanged width moves
++  // this view in x only. SetBoundsRect runs Layout on a size change or a
++  // pending invalidation, and the roamux placement observer invalidates
++  // BrowserView alone (invalidation propagates up, never down) — so without
++  // this the resize handle would stay on the previous content-facing edge.
++  // OnBoundsChanged runs BEFORE SetBoundsRect's relayout check, so marking the
++  // view dirty here lays it out within the same call. The
++  // avoid_propagate_during_layout overload keeps this from invalidating a
++  // parent that is mid-layout.
++  if (previous_bounds.x() != x()) {
++    InvalidateLayout(/*avoid_propagate_during_layout=*/true);
+   }
+ }
+ 
+@@ -944,6 +984,16 @@
+     starting_width_on_resize_ = width();
+   }
+   bool previously_collapsed = target_collapse_state_.collapsed;
++  // Roamux (roam-228, patch 0058): `resize_amount` is a LOGICAL delta (positive
++  // = toward the logical trailing edge; views::ResizeArea already applied the
++  // RTL flip, and OnKeyPressed produces the same convention). Growing a
++  // leading-docked strip means moving toward trailing, so positive widens; a
++  // trailing-docked strip grows toward leading, so the sign inverts. Only the
++  // incoming delta is negated — the captured start width is left alone so a
++  // mid-drag continuation still measures from the original press.
++  if (RoamuxOnLogicalTrailingEdge(browser_view_)) {
++    resize_amount = -resize_amount;
++  }
+   const int proposed_width = starting_width_on_resize_.value() + resize_amount;
+   if (done_resizing) {
+     starting_width_on_resize_ = std::nullopt;
+diff --git a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+--- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+@@ -96,14 +96,13 @@
+ // XOR RTL — shared by the horizontal geometry (roam-8/9) and the collapsed
+ // vertical offset. False whenever the roamux placement does not drive the
+ // display (upstream leading dock).
++// Roamux (roam-228, patch 0058): the rule itself now lives in //roamux/common
++// so the resize handle and delta (which work in the same logical space) share
++// one definition — three consecutive bugs came from a new consumer forgetting
++// the dock side.
+ bool RoamuxDockRight(const Browser* browser) {
+-  const PrefService* const prefs = browser->profile()->GetPrefs();
+-  const bool physical_right = roamux::ShouldDockVerticalTabStripRight(prefs);
+-  const bool physical_left = roamux::ShouldDockVerticalTabStripLeft(prefs);
+-  if (!physical_right && !physical_left) {
+-    return false;
+-  }
+-  return physical_right != base::i18n::IsRTL();
++  return roamux::IsVerticalTabStripOnLogicalTrailingEdge(
++      browser->profile()->GetPrefs(), base::i18n::IsRTL());
+ }
+ 
+ // Gets the sum of leading and trailing exclusions in `params` for minimum-size

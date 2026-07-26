@@ -62,6 +62,26 @@ bool ShouldDockVerticalTabStripRight(const PrefService* pref_service);
 // (D1); layout code flips to logical coordinates at the call site.
 bool ShouldDockVerticalTabStripLeft(const PrefService* pref_service);
 
+// roam-228: the strip's LOGICAL dock side — the physical placement XOR the UI
+// direction. This is the translation the two predicates above deliberately do
+// NOT do: placements are physical and RTL-invariant (roam-9 D1), but views
+// stores child bounds LOGICALLY and mirrors them to physical at paint/hit-test
+// time (View::GetMirroredX), and views::ResizeArea hands its delegate an
+// already-RTL-normalised delta. Consumers working in either of those logical
+// spaces — the browser-layout geometry (roam-205) and the resize handle/delta
+// (roam-228) — need this; consumers expressing a physical rule (e.g. roam-206's
+// collapse arrow) must keep using the physical predicates.
+//
+// False whenever the roamux placement does not drive the vertical display
+// (kTop/kBottom, or the flag off), so a flag-off build reduces exactly to
+// upstream's logical-leading dock.
+//
+// `is_rtl` is a parameter rather than a base::i18n::IsRTL() call so this stays
+// a pure function and //roamux/common stays free of //base/i18n; call sites
+// pass base::i18n::IsRTL().
+bool IsVerticalTabStripOnLogicalTrailingEdge(const PrefService* pref_service,
+                                             bool is_rtl);
+
 }  // namespace roamux
 
 #endif  // ROAMUX_COMMON_TAB_STRIP_PLACEMENT_H_

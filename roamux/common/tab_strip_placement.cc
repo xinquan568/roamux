@@ -50,6 +50,19 @@ bool ShouldDockVerticalTabStripLeft(const PrefService* pref_service) {
   return GetTabStripPlacement(pref_service) == TabStripPlacement::kLeft;
 }
 
+bool IsVerticalTabStripOnLogicalTrailingEdge(const PrefService* pref_service,
+                                             bool is_rtl) {
+  // roam-228: physical placement XOR RTL. When the roamux placement does not
+  // drive a vertical strip there is no roamux dock side to translate, so the
+  // answer is false and consumers keep upstream's logical-leading behaviour.
+  const bool physical_right = ShouldDockVerticalTabStripRight(pref_service);
+  const bool physical_left = ShouldDockVerticalTabStripLeft(pref_service);
+  if (!physical_right && !physical_left) {
+    return false;
+  }
+  return physical_right != is_rtl;
+}
+
 BottomStripLayout ComputeBottomStripLayout(const gfx::Rect& client_area,
                                            int strip_height) {
   const int height = std::clamp(strip_height, 0, client_area.height());
