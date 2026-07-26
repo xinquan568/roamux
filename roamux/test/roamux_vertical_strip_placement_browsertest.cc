@@ -658,12 +658,14 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
   EXPECT_EQ(region()->width(), handle()->bounds().right());
 }
 
-// Right dock, LTR: dragging the inner edge AWAY from the content widens.
-// `starting_width_on_resize_` is captured on the first OnResize and cleared
-// only when done_resizing is true, and ResizeArea reports displacement from
-// the original press — so BOTH deltas below are relative to the same W.
+// Right dock, LTR: the content sits to the LEFT of the strip, so dragging the
+// inner edge TOWARD the content (leftward) widens and dragging it AWAY
+// (rightward) narrows. `starting_width_on_resize_` is captured on the first
+// OnResize and cleared only when done_resizing is true, and ResizeArea reports
+// displacement from the original press — so BOTH deltas below are relative to
+// the same W.
 IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
-                       RightDockDragTowardContentNarrows) {
+                       RightDockDragAwayFromContentNarrows) {
   SetPlacementAndLayout(3);  // kRight
   ASSERT_NE(nullptr, region());
   const int kW = ::tabs::kVerticalTabStripDefaultUncollapsedWidth;
@@ -673,7 +675,17 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripPlacementTest,
   region()->OnResize(-40, /*done_resizing=*/false);
   EXPECT_EQ(kW + 40, region()->GetPreferredSize().width());
 
-  // Completed, relative to the SAME kW (the mid-drag call did not clear it).
+  // Apply the mid-drag width for real, so the LIVE width is no longer kW. This
+  // is what makes the next assertion load-bearing: an implementation that
+  // wrongly re-captured starting_width_on_resize_ on every update would now
+  // measure from kW + 40 and land on kW, not kW - 40.
+  browser_view()->DeprecatedLayoutImmediately();
+  ASSERT_TRUE(base::test::RunUntil(
+      [&]() { return region()->width() == kW + 40; }))
+      << "the mid-drag width must be laid out before the completed delta";
+
+  // Completed, still relative to the ORIGINAL press (the mid-drag call did not
+  // clear the captured start width).
   region()->OnResize(+40, /*done_resizing=*/true);
   EXPECT_EQ(kW - 40, region()->uncollapsed_width());
   EXPECT_EQ(kW - 40, state_controller()->GetUncollapsedWidth());
