@@ -12,6 +12,9 @@
 // IsWebUIToolbarEnabled().
 
 #include "base/feature_list.h"
+#include "chrome/browser/feedback/feedback_uploader_factory_chrome.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "content/public/test/browser_test.h"
@@ -33,6 +36,35 @@ IN_PROC_BROWSER_TEST_F(RoamuxTestEnvBrowserTest,
   // The independent wait trigger honored by webui_test_utils.cc.
   EXPECT_FALSE(base::FeatureList::IsEnabled(
       features::kWebUIToolbarProcessOverheadExperiment));
+}
+
+// roam-223 env-guard (TDD: born RED — see the RED commit): the overlay suite
+// must never instantiate FeedbackUploaderChrome. Its constructor posts
+// FeedbackReport::LoadReportsAndQueue on a
+// {MayBlock, BEST_EFFORT, BLOCK_SHUTDOWN} runner
+// (feedback_uploader_chrome.cc:69-75, feedback_uploader.cc:76-80); a
+// BEST_EFFORT task may never get a background worker during a short test, and
+// at shutdown it can sit queued-but-not-running while CompleteShutdown waits —
+// the attributed cause of the roam-201/roam-223 teardown stall
+// ("running tasks: none" + a BEST_EFFORT registration from
+// feedback_uploader_chrome.cc:70).
+//
+// Upstream intends this service to be absent in tests
+// (ServiceIsNULLWhileTesting() == true) but that only applies to the
+// CreateBrowserContextServicesForTest() path used by TestingProfile; browser
+// tests build a real ProfileImpl through the production path, so the service
+// is created eagerly for every browser-test profile
+// (ServiceIsCreatedWithBrowserContext() == true). GREEN via
+// RoamuxBrowserTest::SetUpBrowserContextKeyedServices installing an empty
+// testing factory.
+//
+// Also pins drift at uprevs: if the suppression hook moves or the factory is
+// reshaped, this fails loudly instead of silently no-op'ing.
+IN_PROC_BROWSER_TEST_F(RoamuxTestEnvBrowserTest,
+                       FeedbackUploaderIsNotInstantiatedInOverlayTests) {
+  EXPECT_EQ(nullptr,
+            feedback::FeedbackUploaderFactoryChrome::GetForBrowserContext(
+                browser()->profile()));
 }
 
 }  // namespace
