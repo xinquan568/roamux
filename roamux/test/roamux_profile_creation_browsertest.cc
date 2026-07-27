@@ -12,6 +12,7 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/feedback/feedback_uploader_factory_chrome.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
@@ -58,6 +59,16 @@ class RoamuxProfileCreationBrowserTestBase : public ProfilePickerTestBase {
   RoamuxProfileCreationBrowserTestBase() {
     // roam-99: foreign hierarchy — cannot re-base onto RoamuxBrowserTest.
     roamux::test::DisableWebUIToolbarFeatures(webui_toolbar_disables_);
+  }
+
+  // roam-223: foreign hierarchy — cannot inherit RoamuxBrowserTest's
+  // suppression, so install it here. Dispatched immediately before each
+  // profile's keyed services are created, so it covers profiles the picker
+  // creates mid-test, not just the startup profile.
+  void SetUpBrowserContextKeyedServices(
+      content::BrowserContext* context) override {
+    ProfilePickerTestBase::SetUpBrowserContextKeyedServices(context);
+    roamux::test::SuppressFeedbackUploaderForTesting(context);
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -149,6 +160,41 @@ IN_PROC_BROWSER_TEST_F(RoamuxProfileCreationFlagOnBrowserTest,
   EXPECT_NE(new_profile, original_profile);
   EXPECT_NE(new_profile->GetPath(), original_profile->GetPath());
   EXPECT_NE(new_profile->GetPrefs(), original_profile->GetPrefs());
+}
+
+// roam-223 env-guard (TDD: born RED — see the RED commit). These fixtures sit
+// on the foreign ProfilePickerTestBase hierarchy and so cannot inherit
+// RoamuxBrowserTest's feedback-uploader suppression; they call
+// SuppressFeedbackUploaderForTesting() from their own
+// SetUpBrowserContextKeyedServices override instead. This guard is what proves
+// that override is present and effective — the shared-base guard in
+// roamux_test_env_browsertest.cc structurally cannot see this path.
+//
+// It asserts on a *newly created* profile as well as the initial one, because
+// the suppression is installed per-BrowserContext by a hook dispatched at each
+// profile's keyed-service creation: a gate that covered only the startup
+// profile would still leak a BEST_EFFORT + BLOCK_SHUTDOWN task for every
+// profile a test creates.
+IN_PROC_BROWSER_TEST_F(RoamuxProfileCreationFlagOnBrowserTest,
+                       FeedbackUploaderIsNotInstantiatedForCreatedProfiles) {
+  Profile* original_profile = browser()->profile();
+  EXPECT_EQ(nullptr,
+            feedback::FeedbackUploaderFactoryChrome::GetForBrowserContext(
+                original_profile));
+
+  OpenPickerMainView();
+  auto [step, type_choice_active] = ClickAddProfileAndReadState();
+  EXPECT_EQ(step, "localProfileCustomization");
+
+  Browser* new_browser = ui_test_utils::WaitForBrowserToOpen();
+  ASSERT_NE(new_browser, nullptr);
+  Profile* new_profile = new_browser->profile();
+  ASSERT_NE(new_profile, nullptr);
+  ASSERT_NE(new_profile, original_profile);
+
+  EXPECT_EQ(nullptr,
+            feedback::FeedbackUploaderFactoryChrome::GetForBrowserContext(
+                new_profile));
 }
 
 // Flag-off is a pure pass-through: the boolean equals upstream's Dice value

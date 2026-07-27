@@ -27,6 +27,10 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/test/base/in_process_browser_test.h"
 
+namespace content {
+class BrowserContext;
+}  // namespace content
+
 namespace roamux::test {
 
 // The pin's chrome-side WebUI-toolbar sub-feature set — the
@@ -49,13 +53,37 @@ inline void DisableWebUIToolbarFeatures(
       /*disable_features=*/kRoamuxDisabledWebUIToolbarFeatures);
 }
 
+// roam-223: install an empty testing factory for FeedbackUploaderChrome on
+// |context|, so the service is never constructed for a browser-test profile.
+// Its constructor posts a {MayBlock, BEST_EFFORT, BLOCK_SHUTDOWN} task that can
+// sit queued-but-not-running at shutdown and stall CompleteShutdown (the
+// attributed roam-201/roam-223 teardown stall). Upstream already suppresses the
+// service for TestingProfile-based unit tests via ServiceIsNULLWhileTesting(),
+// which browser tests do not reach.
+//
+// Call from SetUpBrowserContextKeyedServices() — the upstream hook dispatched
+// immediately before each profile's keyed services are created. Fixtures
+// deriving RoamuxBrowserTest get this for free; fixtures on foreign hierarchies
+// (ProfilePickerTestBase, WebUIMochaBrowserTest, ...) call it from their own
+// override, as with DisableWebUIToolbarFeatures above.
+//
+// Declared here but defined in the .cc so this header stays include-light for
+// the WebUI mocha fixtures compiled into upstream browser_tests.
+void SuppressFeedbackUploaderForTesting(content::BrowserContext* context);
+
 // The overlay browsertest base: InProcessBrowserTest with the WebUI-toolbar
 // experiment pinned off (constructor-time ScopedFeatureList; body in the .cc —
-// chromium-style forbids inline complex constructors).
+// chromium-style forbids inline complex constructors) and the feedback uploader
+// suppressed (roam-223).
 class RoamuxBrowserTest : public InProcessBrowserTest {
  public:
   RoamuxBrowserTest();
   ~RoamuxBrowserTest() override;
+
+ protected:
+  // InProcessBrowserTest:
+  void SetUpBrowserContextKeyedServices(
+      content::BrowserContext* context) override;
 
  private:
   base::test::ScopedFeatureList webui_toolbar_disables_;
