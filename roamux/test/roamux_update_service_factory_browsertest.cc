@@ -20,12 +20,15 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "roamux/browser/updates/roamux_update_service.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "url/gurl.h"
 
 namespace roamux::updates {
 namespace {
 
-using RoamuxUpdateServiceFactoryBrowserTest = InProcessBrowserTest;
+// roam-223: derive the overlay base so this fixture inherits the
+// feedback-uploader suppression (and the roam-99 WebUI-toolbar disables).
+using RoamuxUpdateServiceFactoryBrowserTest = roamux::test::RoamuxBrowserTest;
 
 // Finding 2: regular profiles get a service; OTR does NOT — so updatesAvailable
 // is false off the record and the update card degrades there.

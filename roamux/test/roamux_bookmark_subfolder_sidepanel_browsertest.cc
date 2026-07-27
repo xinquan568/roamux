@@ -19,7 +19,6 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
@@ -28,6 +27,7 @@
 #include "content/public/test/browser_test.h"
 #include "roamux/browser/bookmarks/subfolder_tab_groups.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/roamux_browser_test.h"
 #include "url/gurl.h"
 
 namespace roamux {
@@ -36,7 +36,9 @@ namespace {
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
 
-class RoamuxSubfolderSidePanelTest : public InProcessBrowserTest {
+// roam-223: derive the overlay base so this fixture (and the FlagOff
+// fixture that derives it) inherits the feedback-uploader suppression.
+class RoamuxSubfolderSidePanelTest : public roamux::test::RoamuxBrowserTest {
  public:
   RoamuxSubfolderSidePanelTest() {
     features_.InitAndEnableFeature(features::kBookmarkSubfolderGroups);
