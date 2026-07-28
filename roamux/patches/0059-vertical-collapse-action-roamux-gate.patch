@@ -1,0 +1,26 @@
+diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
+index 1631afc28c..d77d8be922 100644
+--- a/chrome/browser/ui/browser_actions.cc
++++ b/chrome/browser/ui/browser_actions.cc
+@@ -74,6 +74,7 @@
+ #include "chrome/browser/ui/side_panel/side_panel_enums.h"
+ #include "chrome/browser/ui/side_panel/side_panel_ui.h"
+ #include "chrome/browser/ui/tabs/features.h"
++#include "roamux/common/roamux_features.h"
+ #include "chrome/browser/ui/tabs/projects/projects_panel_state_controller.h"
+ #include "chrome/browser/ui/tabs/public/tab_features.h"
+ #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+@@ -794,7 +795,12 @@ void BrowserActions::InitializeChromeMenuActions() {
+                   actions::ActionPinnableState::kNotPinnable))
+           .Build());
+ 
+-  if (tabs::IsVerticalTabsFeatureEnabled()) {
++  // Roamux (roam-234): patch 0008 widened the vertical-strip creation gate to
++  // the roamux placement flag, so this action's producer must match — the
++  // strip's top container CHECKs on the collapse item during BrowserView
++  // construction (crashed at startup under the Roamux-only configuration).
++  if (tabs::IsVerticalTabsFeatureEnabled() ||
++      base::FeatureList::IsEnabled(roamux::features::kTabStripPosition)) {
+     root_action_item_->AddChild(
+         actions::ActionItem::Builder(
+             base::BindRepeating(
