@@ -412,12 +412,18 @@ class PackagingTest(unittest.TestCase):
                 capture_output=True, text=True),
             sleep_fn=time.sleep)
         if mount.returncode != 0:
+            try:
+                state = "attachments of this image at failure: %r" % (
+                    _hdiutil_representatives(out),)
+            except (RuntimeError, subprocess.CalledProcessError) as exc:
+                state = "attachment-state query failed: %s" % exc
             self.fail(
-                "hdiutil attach failed %d time(s) (last rc=%d): %s\n%s" % (
-                    len(tries), mount.returncode, mount.args,
-                    "\n".join("  try %d stderr: %s" % (
-                        i + 1, (t.stderr or "").strip())
-                        for i, t in enumerate(tries))))
+                "hdiutil attach failed %d time(s) (last rc=%d): %s\n%s\n%s"
+                % (len(tries), mount.returncode, mount.args,
+                   "\n".join("  try %d stderr: %s" % (
+                       i + 1, (t.stderr or "").strip())
+                       for i, t in enumerate(tries)),
+                   state))
         self._assert_preserved(mountpoint / "Roamux.app")
 
 
@@ -557,10 +563,22 @@ class DmgMountHygieneTest(unittest.TestCase):
     def test_attach_persistent_failure_returns_last_result(self):
         sleeps = []
         res, tries = _attach_with_retry(
-            lambda: self._Result(1), attempts=3, sleep_fn=sleeps.append)
+            lambda: self._Result(1), delays=(2, 4), sleep_fn=sleeps.append)
         self.assertEqual(res.returncode, 1)
         self.assertEqual(len(tries), 3)
         self.assertEqual(sleeps, [2, 4])
+
+    def test_default_retry_schedule_rides_out_long_windows(self):
+        # CI evidence (PR #237 head 6ba9bfa): five EAGAINs across ~20 s —
+        # windows outlast short settling. The default schedule must wait
+        # ~90 s total across 7 attempts, and stay bounded.
+        self.assertEqual(_RETRY_DELAYS, (2, 4, 8, 15, 30, 30))
+        sleeps = []
+        res, tries = _attach_with_retry(
+            lambda: self._Result(1), sleep_fn=sleeps.append)
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(len(tries), 7)
+        self.assertEqual(sleeps, [2, 4, 8, 15, 30, 30])
 
 
 class RoamuxPartsPathTest(unittest.TestCase):
@@ -920,23 +938,27 @@ def _detach_until_gone(enumerate_fn, detach_fn, max_passes=3):
             % (max_passes, "; ".join(errors) or "no stderr captured"))
 
 
-def _attach_with_retry(run_fn, attempts=5, sleep_fn=None):
+# roam-233: EAGAIN windows on this host outlast short settling — tier-2 CI on
+# PR #237 saw five failures across ~20 s while a probe minutes later was
+# healthy. Capped-exponential schedule: 7 attempts, ~89 s of settling total.
+_RETRY_DELAYS = (2, 4, 8, 15, 30, 30)
+
+
+def _attach_with_retry(run_fn, delays=_RETRY_DELAYS, sleep_fn=None):
     """roam-233: `hdiutil attach` can fail transiently ("Resource temporarily
     unavailable") even with a verified-clean attachment table — observed live
-    while landing this fix, with zero roamux-pkg attachments before and after,
-    and reproduced standalone at ~1-in-10 rapid attach/detach cycles (the
-    diskimages stack settling after recent detaches; the window can exceed
-    6 s). Bounded retry with a growing settle delay (2,4,6,8 s — ≤20 s total);
-    returns (last_result, all_tries) so a persistent failure still
-    self-explains with every stderr."""
+    while landing this fix (standalone: ~1-in-10 rapid attach/detach cycles;
+    CI: a window >20 s). Bounded retry over the delay schedule (attempts =
+    len(delays)+1); returns (last_result, all_tries) so a persistent failure
+    still self-explains with every stderr."""
     tries = []
-    for attempt in range(attempts):
+    for attempt in range(len(delays) + 1):
         res = run_fn()
         tries.append(res)
         if res.returncode == 0:
             return res, tries
-        if sleep_fn is not None and attempt < attempts - 1:
-            sleep_fn(2 * (attempt + 1))
+        if sleep_fn is not None and attempt < len(delays):
+            sleep_fn(delays[attempt])
     return tries[-1], tries
 
 
