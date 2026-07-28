@@ -9,10 +9,13 @@ import importlib
 import io
 import os
 import pathlib
+import plistlib
+import re
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -390,15 +393,192 @@ class PackagingTest(unittest.TestCase):
             self.skipTest("hdiutil unavailable (non-macOS)")
         out = self.tmp / "Roamux.dmg"
         package_roamux.package_dmg(self.app, out, volname="Roamux")
-        mount = subprocess.run(
-            ["hdiutil", "attach", str(out), "-nobrowse", "-readonly",
-             "-mountrandom", "/tmp"], capture_output=True, text=True,
-            check=True)
-        mnt = mount.stdout.strip().split("\t")[-1]
-        try:
-            self._assert_preserved(pathlib.Path(mnt) / "Roamux.app")
-        finally:
-            subprocess.run(["hdiutil", "detach", mnt], capture_output=True)
+        # roam-233: cleanup is registered BEFORE attach and keyed by the image
+        # path, so a partially-successful attach (device created, mount step
+        # failed, non-zero exit — the mountpoint never learned) still gets
+        # detached. _detach_until_gone re-enumerates this exact DMG path until
+        # empty and raises otherwise — the run-scoped leak postcondition; on
+        # the shared dev/CI host nothing outside this test's own image is ever
+        # consulted or touched.
+        self.addCleanup(_detach_until_gone,
+                        lambda: _hdiutil_representatives(out),
+                        _hdiutil_detach)
+        mountpoint = self.tmp / "mnt"
+        mountpoint.mkdir()
+        mount, tries = _attach_with_retry(
+            lambda: subprocess.run(
+                ["hdiutil", "attach", str(out), "-nobrowse", "-readonly",
+                 "-mountpoint", str(mountpoint)],
+                capture_output=True, text=True),
+            sleep_fn=time.sleep)
+        if mount.returncode != 0:
+            try:
+                state = "attachments of this image at failure: %r" % (
+                    _hdiutil_representatives(out),)
+            except (RuntimeError, subprocess.CalledProcessError) as exc:
+                state = "attachment-state query failed: %s" % exc
+            self.fail(
+                "hdiutil attach failed %d time(s) (last rc=%d): %s\n%s\n%s"
+                % (len(tries), mount.returncode, mount.args,
+                   "\n".join("  try %d stderr: %s" % (
+                       i + 1, (t.stderr or "").strip())
+                       for i, t in enumerate(tries)),
+                   state))
+        self._assert_preserved(mountpoint / "Roamux.app")
+
+
+class DmgMountHygieneTest(unittest.TestCase):
+    """roam-233: pure seams for the DMG mount cleanup — representative-device
+    selection over `hdiutil info -plist` data and the bounded detach-until-gone
+    policy. Fixture-driven; hdiutil is never invoked."""
+
+    @staticmethod
+    def _info(images):
+        return plistlib.dumps({"images": images})
+
+    @staticmethod
+    def _image(path, *devs, **kw):
+        record = {"image-path": path}
+        if kw.get("entities", True):
+            record["system-entities"] = [{"dev-entry": d} for d in devs]
+        return record
+
+    DMG = "/tmp/roamux-pkg-abc/Roamux.dmg"
+
+    # ---- _representative_devices ----
+
+    def test_one_representative_per_multi_entity_attachment(self):
+        # One attachment exposing parent disk, a slice, and a synthesized
+        # device must yield exactly ONE representative (the whole-disk node) —
+        # the round-1-blocker fixture: one attachment => one detach.
+        data = self._info([self._image(
+            self.DMG, "/dev/disk4", "/dev/disk4s1", "/dev/disk5")])
+        self.assertEqual(_representative_devices(data, self.DMG),
+                         ["/dev/disk4"])
+
+    def test_each_matching_record_yields_its_own_representative(self):
+        data = self._info([
+            self._image(self.DMG, "/dev/disk4", "/dev/disk4s1"),
+            self._image(self.DMG, "/dev/disk6", "/dev/disk6s1"),
+        ])
+        self.assertEqual(_representative_devices(data, self.DMG),
+                         ["/dev/disk4", "/dev/disk6"])
+
+    def test_non_matching_and_empty_yield_nothing(self):
+        data = self._info([self._image("/elsewhere/Other.dmg", "/dev/disk9")])
+        self.assertEqual(_representative_devices(data, self.DMG), [])
+        self.assertEqual(
+            _representative_devices(self._info([]), self.DMG), [])
+
+    def test_no_whole_disk_entry_falls_back_to_first_dev_entry(self):
+        # Frozen-plan fallback: when a record exposes no whole-disk node
+        # (/dev/diskN), the representative is the record's FIRST dev-entry —
+        # not the shortest child (deterministic but arbitrary ordering would
+        # detach a slice picked by string length).
+        data = self._info([self._image(
+            self.DMG, "/dev/disk10s2", "/dev/disk4s1")])
+        self.assertEqual(_representative_devices(data, self.DMG),
+                         ["/dev/disk10s2"])
+
+    def test_matching_record_without_usable_dev_entry_raises(self):
+        # A record hdiutil says is attached but cannot be enumerated must NOT
+        # read as "no attachment" — cleanup has to fail loudly instead.
+        for record in (self._image(self.DMG, entities=False),
+                       self._image(self.DMG)):
+            with self.assertRaises(RuntimeError) as ctx:
+                _representative_devices(self._info([record]), self.DMG)
+            self.assertIn(self.DMG, str(ctx.exception))
+
+    # ---- _detach_until_gone ----
+
+    @staticmethod
+    def _script(*batches):
+        """enumerate_fn returning successive batches (last repeats)."""
+        state = {"i": 0}
+
+        def enumerate_fn():
+            batch = batches[min(state["i"], len(batches) - 1)]
+            state["i"] += 1
+            return list(batch)
+        return enumerate_fn
+
+    def test_no_attachment_is_a_noop(self):
+        calls = []
+        _detach_until_gone(self._script([]),
+                           lambda dev, force: calls.append(dev) or (0, ""))
+        self.assertEqual(calls, [])
+
+    def test_teardown_on_first_detach_touches_no_siblings(self):
+        calls = []
+
+        def detach(dev, force):
+            calls.append((dev, force))
+            return 0, ""
+        _detach_until_gone(self._script(["/dev/disk4"], []), detach)
+        self.assertEqual(calls, [("/dev/disk4", False)])
+
+    def test_busy_then_force_succeeds(self):
+        calls = []
+
+        def detach(dev, force):
+            calls.append((dev, force))
+            return (1, "Resource busy") if not force else (0, "")
+        _detach_until_gone(
+            self._script(["/dev/disk4"], ["/dev/disk4"], []), detach)
+        self.assertEqual(calls,
+                         [("/dev/disk4", False), ("/dev/disk4", True)])
+
+    def test_survivors_after_max_passes_raise_with_stderr(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            _detach_until_gone(self._script(["/dev/disk4"]),
+                               lambda dev, force: (1, "Resource busy"))
+        self.assertIn("/dev/disk4", str(ctx.exception))
+        self.assertIn("Resource busy", str(ctx.exception))
+
+    # ---- _attach_with_retry ----
+
+    class _Result:
+        def __init__(self, rc):
+            self.returncode = rc
+
+    def test_attach_first_try_success_never_sleeps(self):
+        sleeps = []
+        res, tries = _attach_with_retry(
+            lambda: self._Result(0), sleep_fn=sleeps.append)
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(len(tries), 1)
+        self.assertEqual(sleeps, [])
+
+    def test_attach_transient_failure_retries_after_settle(self):
+        # The EAGAIN case observed live during the roam-233 gates: attach
+        # fails transiently with a clean attachment table, then succeeds.
+        sleeps = []
+        outcomes = [self._Result(1), self._Result(0)]
+        res, tries = _attach_with_retry(
+            lambda: outcomes[len(sleeps)], sleep_fn=sleeps.append)
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(len(tries), 2)
+        self.assertEqual(sleeps, [2])
+
+    def test_attach_persistent_failure_returns_last_result(self):
+        sleeps = []
+        res, tries = _attach_with_retry(
+            lambda: self._Result(1), delays=(2, 4), sleep_fn=sleeps.append)
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(len(tries), 3)
+        self.assertEqual(sleeps, [2, 4])
+
+    def test_default_retry_schedule_rides_out_long_windows(self):
+        # CI evidence (PR #237 head 6ba9bfa): five EAGAINs across ~20 s —
+        # windows outlast short settling. The default schedule must wait
+        # ~90 s total across 7 attempts, and stay bounded.
+        self.assertEqual(_RETRY_DELAYS, (2, 4, 8, 15, 30, 30))
+        sleeps = []
+        res, tries = _attach_with_retry(
+            lambda: self._Result(1), sleep_fn=sleeps.append)
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(len(tries), 7)
+        self.assertEqual(sleeps, [2, 4, 8, 15, 30, 30])
 
 
 class RoamuxPartsPathTest(unittest.TestCase):
@@ -710,6 +890,88 @@ def _exe(path):
 
 def _has(tool):
     return subprocess.run(["which", tool], capture_output=True).returncode == 0
+
+
+def _representative_devices(plist_bytes, image_path):
+    """roam-233: ONE representative device per `images[]` record attached from
+    image_path. A single attachment exposes several system entities (parent
+    whole-disk node, slices, APFS synthesized devices); detaching any one tears
+    the whole attachment down, so cleanup must be per-attachment, never
+    per-dev-entry. The whole-disk node is the shortest dev-entry. A matching
+    record with no usable dev-entry must fail loudly — hdiutil says it is
+    attached, so "nothing to detach" would be a silent leak."""
+    reps = []
+    for image in plistlib.loads(plist_bytes).get("images", []):
+        if image.get("image-path") != image_path:
+            continue
+        devs = [e["dev-entry"] for e in image.get("system-entities", [])
+                if e.get("dev-entry")]
+        if not devs:
+            raise RuntimeError(
+                "hdiutil reports an attachment of %s with no usable dev-entry:"
+                " %r" % (image_path, image))
+        whole = [d for d in devs if re.fullmatch(r"/dev/disk\d+", d)]
+        reps.append(min(whole, key=lambda d: (len(d), d)) if whole
+                    else devs[0])
+    return reps
+
+
+def _detach_until_gone(enumerate_fn, detach_fn, max_passes=3):
+    """roam-233: bounded detach loop with re-query as the source of truth
+    (already-gone devices are success, not error). Pass 1 detaches plain,
+    later passes -force; survivors after max_passes raise with the collected
+    stderr so the failure self-explains."""
+    errors = []
+    for attempt in range(max_passes):
+        devices = enumerate_fn()
+        if not devices:
+            return
+        force = attempt > 0
+        for dev in devices:
+            rc, stderr = detach_fn(dev, force)
+            if rc != 0:
+                errors.append("%s%s: %s" % (
+                    dev, " -force" if force else "", (stderr or "").strip()))
+    if enumerate_fn():
+        raise RuntimeError(
+            "hdiutil detach failed to clear attachments after %d passes: %s"
+            % (max_passes, "; ".join(errors) or "no stderr captured"))
+
+
+# roam-233: EAGAIN windows on this host outlast short settling — tier-2 CI on
+# PR #237 saw five failures across ~20 s while a probe minutes later was
+# healthy. Capped-exponential schedule: 7 attempts, ~89 s of settling total.
+_RETRY_DELAYS = (2, 4, 8, 15, 30, 30)
+
+
+def _attach_with_retry(run_fn, delays=_RETRY_DELAYS, sleep_fn=None):
+    """roam-233: `hdiutil attach` can fail transiently ("Resource temporarily
+    unavailable") even with a verified-clean attachment table — observed live
+    while landing this fix (standalone: ~1-in-10 rapid attach/detach cycles;
+    CI: a window >20 s). Bounded retry over the delay schedule (attempts =
+    len(delays)+1); returns (last_result, all_tries) so a persistent failure
+    still self-explains with every stderr."""
+    tries = []
+    for attempt in range(len(delays) + 1):
+        res = run_fn()
+        tries.append(res)
+        if res.returncode == 0:
+            return res, tries
+        if sleep_fn is not None and attempt < len(delays):
+            sleep_fn(delays[attempt])
+    return tries[-1], tries
+
+
+def _hdiutil_representatives(image_path):
+    info = subprocess.run(["hdiutil", "info", "-plist"],
+                          capture_output=True, check=True)
+    return _representative_devices(info.stdout, str(image_path))
+
+
+def _hdiutil_detach(device, force):
+    cmd = ["hdiutil", "detach", device] + (["-force"] if force else [])
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    return res.returncode, res.stderr
 
 
 def _rmtree(p):
