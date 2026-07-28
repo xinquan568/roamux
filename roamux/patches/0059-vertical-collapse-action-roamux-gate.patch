@@ -1,16 +1,15 @@
 diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
-index 1631afc28c..d77d8be922 100644
 --- a/chrome/browser/ui/browser_actions.cc
 +++ b/chrome/browser/ui/browser_actions.cc
-@@ -74,6 +74,7 @@
- #include "chrome/browser/ui/side_panel/side_panel_enums.h"
- #include "chrome/browser/ui/side_panel/side_panel_ui.h"
- #include "chrome/browser/ui/tabs/features.h"
+@@ -133,6 +133,7 @@
+ #include "components/tabs/public/tab_interface.h"
+ #include "components/user_prefs/user_prefs.h"
+ #include "components/vector_icons/vector_icons.h"
 +#include "roamux/common/roamux_features.h"
- #include "chrome/browser/ui/tabs/projects/projects_panel_state_controller.h"
- #include "chrome/browser/ui/tabs/public/tab_features.h"
- #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-@@ -794,7 +795,12 @@ void BrowserActions::InitializeChromeMenuActions() {
+ #include "ui/accessibility/accessibility_features.h"
+ #include "ui/actions/actions.h"
+ #include "ui/base/l10n/l10n_util.h"
+@@ -794,7 +795,12 @@
                    actions::ActionPinnableState::kNotPinnable))
            .Build());
  
