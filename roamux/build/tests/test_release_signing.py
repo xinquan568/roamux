@@ -10,6 +10,7 @@ import io
 import os
 import pathlib
 import plistlib
+import re
 import stat
 import subprocess
 import sys
@@ -463,6 +464,16 @@ class DmgMountHygieneTest(unittest.TestCase):
         self.assertEqual(
             _representative_devices(self._info([]), self.DMG), [])
 
+    def test_no_whole_disk_entry_falls_back_to_first_dev_entry(self):
+        # Frozen-plan fallback: when a record exposes no whole-disk node
+        # (/dev/diskN), the representative is the record's FIRST dev-entry —
+        # not the shortest child (deterministic but arbitrary ordering would
+        # detach a slice picked by string length).
+        data = self._info([self._image(
+            self.DMG, "/dev/disk10s2", "/dev/disk4s1")])
+        self.assertEqual(_representative_devices(data, self.DMG),
+                         ["/dev/disk10s2"])
+
     def test_matching_record_without_usable_dev_entry_raises(self):
         # A record hdiutil says is attached but cannot be enumerated must NOT
         # read as "no attachment" — cleanup has to fail loudly instead.
@@ -881,7 +892,9 @@ def _representative_devices(plist_bytes, image_path):
             raise RuntimeError(
                 "hdiutil reports an attachment of %s with no usable dev-entry:"
                 " %r" % (image_path, image))
-        reps.append(min(devs, key=lambda d: (len(d), d)))
+        whole = [d for d in devs if re.fullmatch(r"/dev/disk\d+", d)]
+        reps.append(min(whole, key=lambda d: (len(d), d)) if whole
+                    else devs[0])
     return reps
 
 
