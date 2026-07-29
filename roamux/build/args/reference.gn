@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Roamux reference GN args — the default UNSIGNED personal-alpha, unbranded build (roam-4 / plan §11.8, §12.3).
-# Use: gn gen out/Default --args="$(tr '\n' ' ' < roamux/build/args/reference.gn)"
+# Use (BOOTSTRAP.md; roam-114/roam-238 — NEVER newline-flatten a commented args file: the SPDX
+# header line would swallow the whole flattened string):
+#   mkdir -p out/Default && cp roamux/build/args/reference.gn out/Default/args.gn
+#   gn gen out/Default
 
 # --- Unbranded build (no Google API keys ⇒ Google sign-in/sync non-functional by construction; §7.3) ---
 is_chrome_branded = false
@@ -20,6 +23,13 @@ blink_symbol_level = 0
 # roamux_signin_authorized_build (declared in roamux/build/buildflags.gni, default false) stays
 # false here; a distributor enables the optional path via google_keys.gni (§12.3) — see
 # roamux/build/google_keys.gni.template. Keys alone are necessary but NOT sufficient.
+
+# --- Proprietary codecs (roam-238): match the release config so dev/CI builds share the shipped ---
+# --- flag reality (the roam-241 dev-follows-shipped posture). Propagation is manual: this file ---
+# --- is a source template — an edit reaches out/Default only when args.gn is re-copied and ---
+# --- regenerated, and an existing out/CI only when it is recreated or its args are refreshed. ---
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
 
 # --- Optional distributor Google API keys (keep OUT of source; §12.3). Uncomment on a keyed build: ---
 # import("//roamux/build/google_keys.gni")

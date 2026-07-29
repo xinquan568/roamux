@@ -20,3 +20,11 @@ chrome_pgo_phase = 0
 
 # roam-32: bundle Sparkle + compile the updater in release artifacts.
 roamux_enable_sparkle = true
+
+# roam-238: ship proprietary codecs (H.264/AAC). Unbranded builds default these OFF
+# (proprietary_codecs=false, ffmpeg_branding="Chromium"), which left the packaged app
+# unable to play H.264/AAC — Microsoft Stream and most corporate video platforms fail
+# their MSE capability probe. Licensing decision (scope: unsigned personal distribution,
+# roam-229 lineage) is recorded in the roam-238 PR; this pair is the single revert point.
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
