@@ -243,5 +243,36 @@ TEST_F(VerticalPlacementPredicateTest,
       IsVerticalTabStripOnLogicalTrailingEdge(nullptr, /*is_rtl=*/true));
 }
 
+// roam-244: the accessors must be TOTAL over pref services whose registry never
+// ran roamux::prefs::RegisterProfilePrefs. Upstream test harnesses legitimately
+// build a PrefService with only the upstream tab prefs registered and then
+// construct objects that reach these accessors (patch 0008 makes
+// VerticalTabStripStateController's constructor do exactly that), so a bare
+// GetInteger CHECK-crashes the harness in SetUp and a bare SetInteger hits
+// PrefService::SetUserPrefValue's unregistered path. Production is unaffected:
+// registration is guaranteed by patch 0004 and independently asserted by
+// RoamuxBrowserPrefsHookTest.UpstreamRegistrationIncludesRoamuxPrefs.
+// TDD/P6: both cases were written and RED-run before the accessors were made
+// total (the getter crashed, the setter tripped the unregistered-write path).
+class TabStripPlacementUnregisteredPrefTest : public testing::Test {
+ protected:
+  // Deliberately NOT registered — this is the harness shape under test.
+  TestingPrefServiceSimple pref_service_;
+};
+
+TEST_F(TabStripPlacementUnregisteredPrefTest, GetFallsBackToTopWithoutCrashing) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  EXPECT_EQ(TabStripPlacement::kTop, GetTabStripPlacement(&pref_service_));
+}
+
+TEST_F(TabStripPlacementUnregisteredPrefTest, SetIsANoOpWithoutCrashing) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  SetTabStripPlacement(&pref_service_, TabStripPlacement::kLeft);
+  // The write cannot land anywhere, so the read still reports the fallback.
+  EXPECT_EQ(TabStripPlacement::kTop, GetTabStripPlacement(&pref_service_));
+}
+
 }  // namespace
 }  // namespace roamux

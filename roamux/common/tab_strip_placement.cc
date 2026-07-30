@@ -15,6 +15,18 @@ TabStripPlacement GetTabStripPlacement(const PrefService* pref_service) {
       !base::FeatureList::IsEnabled(features::kTabStripPosition)) {
     return TabStripPlacement::kTop;
   }
+  // roam-244: stay total over pref services whose registry never ran
+  // roamux::prefs::RegisterProfilePrefs. Upstream test harnesses legitimately
+  // build a PrefService carrying only the upstream tab prefs and then construct
+  // objects that reach here — patch 0008 wires this call into
+  // VerticalTabStripStateController's constructor — and GetInteger CHECKs on an
+  // unregistered pref, taking the whole harness down in SetUp. Production
+  // registration is guaranteed by patch 0004 and independently asserted by
+  // RoamuxBrowserPrefsHookTest.UpstreamRegistrationIncludesRoamuxPrefs, so this
+  // fallback cannot mask a shipped regression.
+  if (!pref_service->FindPreference(prefs::kTabStripPosition)) {
+    return TabStripPlacement::kTop;
+  }
   const int stored = pref_service->GetInteger(prefs::kTabStripPosition);
   if (stored < static_cast<int>(TabStripPlacement::kTop) ||
       stored > static_cast<int>(TabStripPlacement::kRight)) {
@@ -25,7 +37,11 @@ TabStripPlacement GetTabStripPlacement(const PrefService* pref_service) {
 
 void SetTabStripPlacement(PrefService* pref_service,
                           TabStripPlacement placement) {
-  if (!pref_service) {
+  // roam-244: the write side needs the same totality as the read side —
+  // PrefService::SetUserPrefValue rejects an unregistered path (NOTREACHED),
+  // so on such a registry the placement is simply unwritable and the store is
+  // skipped rather than crashing the caller.
+  if (!pref_service || !pref_service->FindPreference(prefs::kTabStripPosition)) {
     return;
   }
   pref_service->SetInteger(prefs::kTabStripPosition,
