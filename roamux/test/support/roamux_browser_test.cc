@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "roamux/test/support/roamux_browser_test.h"
 
+#include "base/command_line.h"
 #include "chrome/browser/feedback/feedback_uploader_factory_chrome.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
+#include "components/variations/variations_switches.h"
 
 namespace roamux::test {
 
@@ -21,6 +23,14 @@ RoamuxBrowserTest::RoamuxBrowserTest() {
 }
 
 RoamuxBrowserTest::~RoamuxBrowserTest() = default;
+
+void RoamuxBrowserTest::SetUpCommandLine(base::CommandLine* command_line) {
+  InProcessBrowserTest::SetUpCommandLine(command_line);
+  // roam-240: see the header comment. The upstream constant keeps the guard
+  // rename-safe at uprevs.
+  command_line->AppendSwitch(
+      variations::switches::kDisableFieldTrialTestingConfig);
+}
 
 void RoamuxBrowserTest::SetUpBrowserContextKeyedServices(
     content::BrowserContext* context) {

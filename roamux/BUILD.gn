@@ -252,6 +252,10 @@ test("roamux_browsertests") {
     "//components/services/storage/public/mojom",
     "//components/signin/public/base",
     "//components/signin/public/identity_manager",
+
+    # roam-240: RoamuxBrowserTest::SetUpCommandLine appends the exported
+    # kDisableFieldTrialTestingConfig constant owned by this component.
+    "//components/variations",
     "//components/user_data_importer/common",
     "//content/test:test_support",
     "//google_apis",
