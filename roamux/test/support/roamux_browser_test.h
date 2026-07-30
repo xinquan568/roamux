@@ -82,6 +82,12 @@ class RoamuxBrowserTest : public InProcessBrowserTest {
 
  protected:
   // InProcessBrowserTest:
+  // roam-240: appends --disable-field-trial-config so every derived suite runs
+  // real flag defaults instead of the compiled-in field-trial testing config
+  // (1,291 studies at this pin — its VerticalTabs/VerticalTabsLaunch studies
+  // masked the E1 gate-mismatch family, roam-234/roam-239). A test that wants
+  // an upstream feature opts in explicitly via ScopedFeatureList.
+  void SetUpCommandLine(base::CommandLine* command_line) override;
   void SetUpBrowserContextKeyedServices(
       content::BrowserContext* context) override;
 

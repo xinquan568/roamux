@@ -15,6 +15,7 @@
 #include "chrome/browser/feedback/feedback_uploader_factory_chrome.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "content/public/test/browser_test.h"
@@ -65,6 +66,24 @@ IN_PROC_BROWSER_TEST_F(RoamuxTestEnvBrowserTest,
   EXPECT_EQ(nullptr,
             feedback::FeedbackUploaderFactoryChrome::GetForBrowserContext(
                 browser()->profile()));
+}
+
+// roam-240 env-guard (TDD: born RED pre-switch): overlay browsertests must run
+// real flag defaults, not the compiled-in field-trial testing config (1,291
+// studies at this pin). The config's VerticalTabs/VerticalTabsLaunch studies
+// masked the whole E1 gate-mismatch family (roam-234's startup crash,
+// roam-239's ten read-side sites) until fixtures with explicit disables
+// existed. GREEN via RoamuxBrowserTest::SetUpCommandLine appending
+// --disable-field-trial-config, after which a default-off upstream feature
+// reads disabled from a plain derived fixture. A test that wants an upstream
+// feature opts in via ScopedFeatureList — explicit and self-documenting.
+// Also pins drift: if the switch is lost in a refactor or the mechanism
+// changes at an uprev, this fails loudly.
+IN_PROC_BROWSER_TEST_F(RoamuxTestEnvBrowserTest,
+                       FieldTrialTestingConfigIsOffInOverlayTests) {
+  // Default-off upstream feature that the testing config's VerticalTabs study
+  // enables at this pin — the exact masking that hid roam-234/roam-239.
+  EXPECT_FALSE(base::FeatureList::IsEnabled(::tabs::kVerticalTabs));
 }
 
 }  // namespace
