@@ -18,10 +18,11 @@ fieldtrial_testing_enabled =
 Roamux ships unbranded macOS builds, so `is_official_build` is irrelevant to this gate and
 shipped users ran whatever experiment groups the testing config picked: at pin M149/mac,
 653 studies issuing 747 force-enable and 47 force-disable feature directives plus 197
-studies' params. Resolved against compiled defaults, at least 518 forced-ON and 13
-forced-OFF features were *effective* flips (116+13 directives unresolved by the textual
-harvest — treated as potential flips; full three-bucket inventory attached to issue #241,
-regenerate at every pin bump). This experiment soup silently changes at every Chromium pin
+studies' params. Resolved against compiled defaults: forced-ON 747 = **518
+effective flips / 113 no-ops / 116 unresolved**; forced-OFF 47 = **13 effective flips /
+21 no-ops / 13 unresolved** (unresolved = conditional/macro-defined defaults the textual
+harvest cannot resolve — treated as potential flips; full three-bucket inventory attached
+to issue #241, regenerate at every pin bump). This experiment soup silently changes at every Chromium pin
 and is exactly what masked the E1 read-side gate-mismatch family: roam-234's startup crash
 and roam-239's ten bare-predicate call sites were invisible until fixtures explicitly
 disabled the studies. Chromium derivatives conventionally disable the testing config so
