@@ -31,5 +31,10 @@ blink_symbol_level = 0
 proprietary_codecs = true
 ffmpeg_branding = "Chrome"
 
+# --- roam-241: disable the fieldtrial testing config — dev follows shipped (same flag ---
+# --- reality everywhere; decision + inventory on roam-241, docs/adr/0002). Same manual ---
+# --- propagation semantics as the codec pins above; this single arg is the revert point. ---
+disable_fieldtrial_testing_config = true
+
 # --- Optional distributor Google API keys (keep OUT of source; §12.3). Uncomment on a keyed build: ---
 # import("//roamux/build/google_keys.gni")

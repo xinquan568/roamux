@@ -28,3 +28,10 @@ roamux_enable_sparkle = true
 # roam-229 lineage) is recorded in the roam-238 PR; this pair is the single revert point.
 proprietary_codecs = true
 ffmpeg_branding = "Chrome"
+
+# roam-241: shipped behavior must be deterministic — real flag defaults plus deliberate
+# overrides only. Unbranded builds otherwise compile in the fieldtrial testing config
+# (the gate ignores is_official_build): a pin-varying experiment soup that masked the
+# E1 gate-mismatch family (roam-234/roam-239). Decision + per-pin feature inventory are
+# recorded on roam-241 and in docs/adr/0002; this single arg is the revert point.
+disable_fieldtrial_testing_config = true
