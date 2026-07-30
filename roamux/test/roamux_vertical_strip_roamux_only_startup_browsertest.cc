@@ -57,6 +57,17 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripRoamuxOnlyStartupTest,
   EXPECT_NE(CollapseActionItem(browser()), nullptr);
 }
 
+// roam-239: the predicate itself is the read-side contract — production call
+// sites from session/tab restore through the mac menus, theme pack, metrics,
+// settings strings, and the state controller key off
+// IsVerticalTabsFeatureEnabled() alone. Under the Roamux-only configuration it
+// returned false while the patch-0008 creation gate built the strip anyway;
+// the widened predicate must report the capability the strip actually has.
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripRoamuxOnlyStartupTest,
+                       PredicateIncludesRoamuxCapability) {
+  EXPECT_TRUE(::tabs::IsVerticalTabsFeatureEnabled());
+}
+
 // All three features OFF: the patched producer condition must degrade to the
 // upstream expression exactly — no action registered, clean startup.
 class RoamuxVerticalStripAllOffStartupTest
@@ -79,6 +90,9 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalStripAllOffStartupTest,
   ASSERT_TRUE(browser());
   ASSERT_TRUE(browser()->window());
   EXPECT_EQ(CollapseActionItem(browser()), nullptr);
+  // roam-239 parity guard: with every feature off the widened predicate must
+  // degrade to the upstream expression exactly.
+  EXPECT_FALSE(::tabs::IsVerticalTabsFeatureEnabled());
 }
 
 }  // namespace
