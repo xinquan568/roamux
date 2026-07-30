@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Pinning invariants on the GN args templates (roam-238).
+"""Pinning invariants on the GN args templates (roam-238, roam-241).
 
 The shipped release build must carry proprietary codecs (H.264/AAC): roam-238 traced a
 "Microsoft Stream can't play this video" report to release.gn never setting
@@ -7,6 +7,12 @@ proprietary_codecs/ffmpeg_branding, so both took their unbranded-build defaults 
 packaged app rejected avc1/mp4a at the mime layer AND lacked the FFmpeg decoders.
 reference.gn carries the same pair so dev/CI builds share the release flag reality
 (the roam-241 dev-follows-shipped posture).
+
+Shipped builds must also disable the fieldtrial testing config (roam-241): unbranded
+builds compile it in by default (the gate ignores is_official_build), so users would
+run a pin-varying experiment soup — the masking that hid the E1 gate-mismatch family
+(roam-234/roam-239). Decision + inventory recorded on roam-241 and in ADR 0002; the
+single-arg pin per file is the revert point.
 
 These are TEXT pins, not GN semantics: they guarantee the assignments stay present,
 unique, and uncommented in the templates. GN-level validation (arg names known, ffmpeg
@@ -29,6 +35,7 @@ ARGS_DIR = pathlib.Path(__file__).resolve().parent.parent / "args"
 PINNED = (
     ("proprietary_codecs", "true"),
     ("ffmpeg_branding", '"Chrome"'),
+    ("disable_fieldtrial_testing_config", "true"),
 )
 
 
@@ -45,7 +52,7 @@ def _active_assignments(text, name):
     return hits
 
 
-class GnArgsCodecPinsTest(unittest.TestCase):
+class GnArgsPinsTest(unittest.TestCase):
     def _pin(self, filename):
         path = ARGS_DIR / filename
         self.assertTrue(path.exists(), f"missing {path}")
@@ -61,10 +68,10 @@ class GnArgsCodecPinsTest(unittest.TestCase):
                 f"{filename}: `{name}` must be {want}, found {values[0]!r}")
         return text
 
-    def test_release_gn_pins_proprietary_codecs(self):
+    def test_release_gn_pins(self):
         self._pin("release.gn")
 
-    def test_reference_gn_pins_proprietary_codecs(self):
+    def test_reference_gn_pins(self):
         self._pin("reference.gn")
 
     def test_no_documented_tr_flatten(self):
