@@ -1,0 +1,83 @@
+diff --git a/chrome/browser/ui/tabs/vertical_tab_strip_state_controller_unittest.cc b/chrome/browser/ui/tabs/vertical_tab_strip_state_controller_unittest.cc
+index 88981f5e91..d0122ddc2f 100644
+--- a/chrome/browser/ui/tabs/vertical_tab_strip_state_controller_unittest.cc
++++ b/chrome/browser/ui/tabs/vertical_tab_strip_state_controller_unittest.cc
+@@ -14,6 +14,7 @@
+ #include "chrome/browser/ui/tabs/test_vertical_tab_strip_state_controller_delegate.h"
+ #include "chrome/browser/ui/tabs/vertical_tab_strip_state.h"
+ #include "chrome/common/pref_names.h"
++#include "roamux/common/roamux_features.h"
+ #include "components/pref_registry/pref_registry_syncable.h"
+ #include "components/sync_preferences/testing_pref_service_syncable.h"
+ #include "testing/gmock/include/gmock/gmock.h"
+@@ -83,6 +84,16 @@ TEST_F(VerticalTabStripStateControllerTest, Initial) {
+ }
+ 
+ TEST_F(VerticalTabStripStateControllerTest, VerticalTabsEnabled) {
++  // Roamux (roam-244): this case asserts upstream's vertical-tabs contract,
++  // which roam-182 replaces when the roamux tab-strip placement owns the
++  // display (SetVerticalTabsEnabled then maps onto placement and
++  // ShouldDisplayVerticalTabs reads the placement contribution instead of the
++  // upstream pref). Pin the roamux flag off so the assertions below keep
++  // exercising the upstream path, which the overlay still degrades to exactly.
++  // The roamux-side contract is covered by the overlay's own suites.
++  base::test::ScopedFeatureList roamux_placement_off;
++  roamux_placement_off.InitAndDisableFeature(roamux::features::kTabStripPosition);
++
+   auto subscription = controller()->RegisterOnModeChanged(base::BindRepeating(
+       [](bool display_vertical_tabs,
+          VerticalTabStripStateController* controller) {
+@@ -108,8 +119,18 @@ TEST_F(VerticalTabStripStateControllerTest, VerticalTabsEnabled) {
+ }
+ 
+ TEST_F(VerticalTabStripStateControllerTest, FeatureDisabled) {
++  // Roamux (roam-244): this case asserts upstream's vertical-tabs contract,
++  // which roam-182 replaces when the roamux tab-strip placement owns the
++  // display (SetVerticalTabsEnabled then maps onto placement and
++  // ShouldDisplayVerticalTabs reads the placement contribution instead of the
++  // upstream pref). Pin the roamux flag off so the assertions below keep
++  // exercising the upstream path, which the overlay still degrades to exactly.
++  // The roamux-side contract is covered by the overlay's own suites.
+   base::test::ScopedFeatureList local_feature_list;
+-  local_feature_list.InitAndDisableFeature(tabs::kVerticalTabs);
++  local_feature_list.InitWithFeatures(
++      /*enabled_features=*/{},
++      /*disabled_features=*/{tabs::kVerticalTabs,
++                             roamux::features::kTabStripPosition});
+ 
+   controller()->SetVerticalTabsEnabled(true);
+   EXPECT_TRUE(pref_service()->GetBoolean(prefs::kVerticalTabsEnabled));
+@@ -119,6 +140,16 @@ TEST_F(VerticalTabStripStateControllerTest, FeatureDisabled) {
+ }
+ 
+ TEST_F(VerticalTabStripStateControllerTest, VerticalTabsEnabledFirstTime) {
++  // Roamux (roam-244): this case asserts upstream's vertical-tabs contract,
++  // which roam-182 replaces when the roamux tab-strip placement owns the
++  // display (SetVerticalTabsEnabled then maps onto placement and
++  // ShouldDisplayVerticalTabs reads the placement contribution instead of the
++  // upstream pref). Pin the roamux flag off so the assertions below keep
++  // exercising the upstream path, which the overlay still degrades to exactly.
++  // The roamux-side contract is covered by the overlay's own suites.
++  base::test::ScopedFeatureList roamux_placement_off;
++  roamux_placement_off.InitAndDisableFeature(roamux::features::kTabStripPosition);
++
+   base::UserActionTester user_action_tester;
+   ASSERT_FALSE(
+       pref_service()->GetBoolean(prefs::kVerticalTabsEnabledFirstTime));
+@@ -224,6 +255,16 @@ TEST_F(VerticalTabStripStateControllerTest, ExpandOnHoverEnabledChanged) {
+ }
+ 
+ TEST_F(VerticalTabStripStateControllerTest, ImmersiveModeLock) {
++  // Roamux (roam-244): this case asserts upstream's vertical-tabs contract,
++  // which roam-182 replaces when the roamux tab-strip placement owns the
++  // display (SetVerticalTabsEnabled then maps onto placement and
++  // ShouldDisplayVerticalTabs reads the placement contribution instead of the
++  // upstream pref). Pin the roamux flag off so the assertions below keep
++  // exercising the upstream path, which the overlay still degrades to exactly.
++  // The roamux-side contract is covered by the overlay's own suites.
++  base::test::ScopedFeatureList roamux_placement_off;
++  roamux_placement_off.InitAndDisableFeature(roamux::features::kTabStripPosition);
++
+   int call_count = 0;
+   auto subscription = controller()->RegisterOnModeChanged(base::BindRepeating(
+       [](int* call_count, VerticalTabStripStateController* controller) {
