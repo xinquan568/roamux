@@ -4,7 +4,7 @@
 name: nightly
 on:
   schedule:
-    - cron: "0 10 * * *"   # daily, 10:00 UTC
+    - cron: "0 18 * * *"   # daily, 18:00 UTC = 02:00 CST (UTC+8) the next day
   workflow_dispatch:
 permissions:
   contents: read
