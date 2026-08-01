@@ -1,3 +1,15 @@
+diff --git a/chrome/browser/ui/tabs/BUILD.gn b/chrome/browser/ui/tabs/BUILD.gn
+index 8879e2322f..926e96cad3 100644
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -908,6 +908,7 @@ if (!is_android) {
+       "//components/web_modal",
+       "//content/public/browser",
+       "//content/test:test_support",
++      "//roamux/common",
+       "//skia",
+       "//testing/gmock",
+       "//testing/gtest",
 diff --git a/chrome/browser/ui/tabs/tab_metrics_provider.cc b/chrome/browser/ui/tabs/tab_metrics_provider.cc
 index c1cd204963..e277a1596c 100644
 --- a/chrome/browser/ui/tabs/tab_metrics_provider.cc

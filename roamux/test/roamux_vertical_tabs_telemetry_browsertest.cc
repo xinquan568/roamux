@@ -42,6 +42,8 @@ namespace roamux {
 namespace {
 
 constexpr char kStateHistogram[] = "Tabs.VerticalTabs.State";
+constexpr char kSessionStartHistogram[] =
+    "Tabs.VerticalTabs.EnabledAtSessionStart";
 
 // Drives one ProvideCurrentSessionData pass over the live ProfileManager.
 void ProvideSessionData() {
@@ -87,6 +89,34 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalTabsTelemetryTest,
   ProvideSessionData();
   histograms.ExpectUniqueSample(kStateHistogram,
                                 VerticalTabsState::kAllVertical, 1);
+}
+
+// The UNGATED sibling histogram. TabMetricsProvider's constructor calls
+// OnProfileAdded -> OnUserEducationSessionStart for each loaded profile, which
+// is the only route to that private method from a test. Without these two cases
+// the ungated substitution has NO flag-on regression cover: the upstream
+// fixture pins kTabStripPosition off, where the old inline pref read and the
+// new helper are observationally identical, so reverting just that one
+// substitution would leave every other gate green.
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalTabsTelemetryTest,
+                       SessionStartFollowsPlacementNotThePref) {
+  SetTabStripPlacement(prefs(), TabStripPlacement::kLeft);
+  ASSERT_FALSE(prefs()->GetBoolean(prefs::kUpstreamVerticalTabsEnabled))
+      << "the migrated state has the upstream pref cleared";
+
+  base::HistogramTester histograms;
+  TabMetricsProvider provider(g_browser_process->profile_manager());
+  histograms.ExpectBucketCount(kSessionStartHistogram, true, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxVerticalTabsTelemetryTest,
+                       SessionStartReportsFalseForTopPlacementWithStalePref) {
+  SetTabStripPlacement(prefs(), TabStripPlacement::kTop);
+  prefs()->SetBoolean(prefs::kUpstreamVerticalTabsEnabled, true);
+
+  base::HistogramTester histograms;
+  TabMetricsProvider provider(g_browser_process->profile_manager());
+  histograms.ExpectBucketCount(kSessionStartHistogram, false, 1);
 }
 
 // A Top placement reports horizontal even if a stale upstream pref says
