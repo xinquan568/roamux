@@ -82,6 +82,32 @@ bool ShouldDockVerticalTabStripLeft(const PrefService* pref_service);
 bool IsVerticalTabStripOnLogicalTrailingEdge(const PrefService* pref_service,
                                              bool is_rtl);
 
+// roam-254: whether this profile's tab strip is effectively vertical, for
+// read-side consumers that must describe what the USER SEES rather than what a
+// single pref says. Mirrors patch 0008's authority split exactly:
+//
+//   kTabStripPosition ON  -> the roamux placement is the sole authority
+//                            (roam-182); the upstream pref is cleared by the
+//                            migration and must not be consulted.
+//   kTabStripPosition OFF -> the upstream pref remains authoritative and is
+//                            read EXACTLY as upstream reads it, including its
+//                            CHECK on an unregistered pref. Adding a
+//                            FindPreference fallback here would turn that
+//                            CHECK into a silent false — a behavioural change
+//                            on a path roam-254 does not own.
+//
+// Introduced because Tabs.VerticalTabs.* reported horizontal for migrated
+// default-on profiles: TabMetricsProvider read the pref roam-182 clears while
+// the display followed the placement.
+//
+// BOUNDED DISCREPANCY: this is a LIVE pref read, whereas
+// VerticalTabStripStateController caches its placement contribution and freezes
+// it while an enable-state lock is held. During such a lock this can disagree
+// with the mode a window is actually displaying. The window is bounded by the
+// lock; consumers sampling session-level state (metrics) tolerate it, consumers
+// needing the displayed mode must ask the controller.
+bool IsVerticalTabStripEffectivelyEnabled(const PrefService* pref_service);
+
 }  // namespace roamux
 
 #endif  // ROAMUX_COMMON_TAB_STRIP_PLACEMENT_H_

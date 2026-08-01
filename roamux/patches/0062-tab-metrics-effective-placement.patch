@@ -1,0 +1,76 @@
+diff --git a/chrome/browser/ui/tabs/tab_metrics_provider.cc b/chrome/browser/ui/tabs/tab_metrics_provider.cc
+index c1cd204963..e277a1596c 100644
+--- a/chrome/browser/ui/tabs/tab_metrics_provider.cc
++++ b/chrome/browser/ui/tabs/tab_metrics_provider.cc
+@@ -10,9 +10,9 @@
+ #include "chrome/browser/ui/tabs/features.h"
+ #include "chrome/browser/user_education/user_education_service.h"
+ #include "chrome/browser/user_education/user_education_service_factory.h"
+-#include "chrome/common/pref_names.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/user_education/common/session/user_education_session_manager.h"
++#include "roamux/common/tab_strip_placement.h"
+ #include "third_party/metrics_proto/chrome_user_metrics_extension.pb.h"
+ 
+ TabMetricsProvider::TabMetricsProvider(ProfileManager* profile_manager)
+@@ -35,8 +35,11 @@ VerticalTabsState TabMetricsProvider::GetVerticalTabsState() {
+ 
+   size_t vertical_tab_profiles = 0;
+   for (Profile* profile : profiles) {
+-    if (profile->GetPrefs() &&
+-        profile->GetPrefs()->GetBoolean(prefs::kVerticalTabsEnabled)) {
++    // Roamux (roam-254): report what the user is looking at. With
++    // kTabStripPosition on the roamux placement is the sole authority
++    // (roam-182 clears the upstream pref this used to read); with it off the
++    // upstream pref stays authoritative, unchanged.
++    if (roamux::IsVerticalTabStripEffectivelyEnabled(profile->GetPrefs())) {
+       vertical_tab_profiles++;
+     }
+   }
+@@ -83,8 +86,10 @@ void TabMetricsProvider::OnProfileAdded(Profile* profile) {
+ }
+ 
+ void TabMetricsProvider::OnUserEducationSessionStart(Profile* profile) {
++  // Roamux (roam-254): same authority split as GetVerticalTabsState. This
++  // histogram is ungated, so it was wrong from the moment kTabStripPosition
++  // went default-on (roam-185), independent of patch 0060.
+   base::UmaHistogramBoolean(
+       "Tabs.VerticalTabs.EnabledAtSessionStart",
+-      profile->GetPrefs() &&
+-          profile->GetPrefs()->GetBoolean(prefs::kVerticalTabsEnabled));
++      roamux::IsVerticalTabStripEffectivelyEnabled(profile->GetPrefs()));
+ }
+diff --git a/chrome/browser/ui/tabs/tab_metrics_provider_unittest.cc b/chrome/browser/ui/tabs/tab_metrics_provider_unittest.cc
+index 2d34a23c2e..6e309151fd 100644
+--- a/chrome/browser/ui/tabs/tab_metrics_provider_unittest.cc
++++ b/chrome/browser/ui/tabs/tab_metrics_provider_unittest.cc
+@@ -19,6 +19,7 @@
+ #include "components/user_education/common/user_education_features.h"
+ #include "components/user_education/test/user_education_session_mocks.h"
+ #include "content/public/test/browser_task_environment.h"
++#include "roamux/common/roamux_features.h"
+ #include "testing/gtest/include/gtest/gtest.h"
+ 
+ class TabMetricsProviderTest : public testing::Test {
+@@ -30,7 +31,20 @@ class TabMetricsProviderTest : public testing::Test {
+   void SetUp() override {
+     testing::Test::SetUp();
+     ASSERT_TRUE(testing_profile_manager_.SetUp());
+-    feature_list_.InitAndEnableFeature(tabs::kVerticalTabs);
++    // Roamux (roam-254/roam-249): pin the roamux placement flag OFF for this
++    // fixture. Every case here sets prefs::kVerticalTabsEnabled and expects it
++    // to drive the histograms — upstream's contract. roam-182 replaced that
++    // contract when kTabStripPosition is on (the placement becomes the sole
++    // authority and the migration clears the pref), and roam-254 made the
++    // metrics follow the placement accordingly. With the flag off the overlay
++    // degrades to upstream's expression EXACTLY, so these cases keep asserting
++    // UPSTREAM's contract on a path Roamux still guarantees; the flag-on
++    // contract is covered by the overlay's own suites
++    // (RoamuxVerticalTabsTelemetryTest, EffectiveVerticalTabsTest). Nothing is
++    // deleted and no assertion is inverted — same idiom as patch 0061.
++    feature_list_.InitWithFeatures(
++        /*enabled_features=*/{tabs::kVerticalTabs},
++        /*disabled_features=*/{roamux::features::kTabStripPosition});
+   }
+ 
+   ProfileManager* profile_manager() {
