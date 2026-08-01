@@ -77,7 +77,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalTabsTelemetryTest,
   // upstream pref at runtime and calling MigrateProfilePrefs — doing that
   // inside a live browser drives the display/observer pipeline patch 0008
   // wired into the pref and segfaults. That crash is orthogonal to this
-  // issue's telemetry contract and is filed separately; the state below is
+  // issue's telemetry contract and needs its own issue; the state below is
   // exactly what the migration leaves behind, which is what the defect is
   // about.
   SetTabStripPlacement(prefs(), TabStripPlacement::kLeft);
