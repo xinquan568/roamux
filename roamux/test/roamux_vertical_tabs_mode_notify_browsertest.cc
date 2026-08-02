@@ -6,10 +6,12 @@
 // BrowserView::OnVerticalTabStripModeChanged's vertical branch is not
 // idempotent — HorizontalTabStripRegionView::ResetTabStrip has no
 // `tab_strip_set_` guard, unlike its InitializeTabStrip counterpart and both
-// VerticalTabStripRegionView counterparts. So with placement Left/Right (the
-// strip already re-parented into the vertical region) a redundant edge tears
-// down a strip that is no longer the horizontal region's, and
-// views::View::RemoveChildViewT segfaults. At kTop the same redundant edge
+// VerticalTabStripRegionView counterparts. So with placement Left/Right the
+// horizontal strip has ALREADY been reset (the vertical region builds its own
+// view tree), and a redundant edge resets it a second time: TabStrip::Reset
+// does `RemoveChildViewT(std::exchange(tab_container_, nullptr))`, so the
+// second call passes the now-null tab_container_ and segfaults. At kTop the
+// same redundant edge
 // lands in the idempotent branch and is silently absorbed — which is why the
 // crash needs BOTH the flag and a vertical placement.
 //

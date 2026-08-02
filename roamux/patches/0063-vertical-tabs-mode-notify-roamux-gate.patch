@@ -1,8 +1,8 @@
 diff --git a/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc b/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc
-index b74a020df4..6c8a2b78de 100644
+index b74a020df4..84b8b1ffb8 100644
 --- a/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc
 +++ b/chrome/browser/ui/tabs/vertical_tab_strip_state_controller.cc
-@@ -334,7 +334,22 @@ void VerticalTabStripStateController::OnModeChanged() {
+@@ -334,7 +334,25 @@ void VerticalTabStripStateController::OnModeChanged() {
  
    // Roamux (roam-8): keep the cached display mode in sync on every real
    // mode-change notification.
@@ -13,10 +13,13 @@ index b74a020df4..6c8a2b78de 100644
 +  // BrowserView::OnVerticalTabStripModeChanged's vertical branch is not
 +  // idempotent (HorizontalTabStripRegionView::ResetTabStrip tracks
 +  // tab_strip_set_ but never consults it, unlike its InitializeTabStrip
-+  // counterpart and both VerticalTabStripRegionView counterparts), so a
-+  // same-mode notify tears down a strip that placement already re-parented
-+  // -> SIGSEGV. Suppress only under the flag: with the flag off the upstream
-+  // pref IS authoritative and upstream's unconditional notify is correct.
++  // counterpart and both VerticalTabStripRegionView counterparts). With a
++  // vertical placement the horizontal strip has ALREADY been reset, so a
++  // same-mode notify resets it a SECOND time -- TabStrip::Reset does
++  // RemoveChildViewT(std::exchange(tab_container_, nullptr)), so the second
++  // call passes the now-null tab_container_ -> SIGSEGV. Suppress only under
++  // the flag: with the flag off the upstream pref IS authoritative and
++  // upstream's unconditional notify is correct.
 +  const bool new_display = ShouldDisplayVerticalTabs();
 +  if (base::FeatureList::IsEnabled(roamux::features::kTabStripPosition) &&
 +      new_display == roamux_last_display_vertical_) {

@@ -77,11 +77,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxVerticalTabsTelemetryTest,
   // upstream pref at runtime and calling MigrateProfilePrefs — doing that
   // inside a live browser segfaulted when this test was written (roam-256):
   // with a Left/Right placement the upstream-pref write fired a same-mode
-  // NotifyModeChanged, and BrowserView's vertical branch reset a strip that
-  // placement had already re-parented. Patch 0063 fixes that; the sequence is
-  // covered directly by RoamuxVerticalTabsModeNotify*. This case keeps
-  // asserting state, which is exactly what the migration leaves behind and
-  // what this issue's telemetry contract is about.
+  // NotifyModeChanged, and BrowserView's vertical branch reset the horizontal
+  // strip a second time (TabStrip::Reset had already nulled tab_container_).
+  // Patch 0063 fixes that; the sequence is covered directly by
+  // RoamuxVerticalTabsModeNotify*. This case keeps asserting state, which is
+  // exactly what the migration leaves behind and what this issue's telemetry
+  // contract is about.
   SetTabStripPlacement(prefs(), TabStripPlacement::kLeft);
   ASSERT_EQ(TabStripPlacement::kLeft, GetTabStripPlacement(prefs()));
   ASSERT_FALSE(prefs()->GetBoolean(prefs::kUpstreamVerticalTabsEnabled))
