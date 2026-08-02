@@ -48,6 +48,23 @@ void SetTabStripPlacement(PrefService* pref_service,
                            static_cast<int>(placement));
 }
 
+bool IsVerticalTabStripEffectivelyEnabled(const PrefService* pref_service) {
+  if (!pref_service) {
+    return false;
+  }
+  if (base::FeatureList::IsEnabled(features::kTabStripPosition)) {
+    // roam-182 sole authority: the migration clears the upstream pref, so it
+    // carries no signal here. ShouldDisplayVerticalTabsForPlacement is total
+    // over registries missing kTabStripPosition (roam-244).
+    return ShouldDisplayVerticalTabsForPlacement(pref_service);
+  }
+  // Flag off: read the upstream pref EXACTLY as upstream does — no
+  // FindPreference fallback. Upstream CHECKs on an unregistered pref; adding a
+  // guard here would silently turn that into false, a behavioural change on a
+  // path roam-254 does not own (Step-5 finding 1).
+  return pref_service->GetBoolean(prefs::kUpstreamVerticalTabsEnabled);
+}
+
 bool ShouldDisplayVerticalTabsForPlacement(const PrefService* pref_service) {
   const TabStripPlacement placement = GetTabStripPlacement(pref_service);
   return placement == TabStripPlacement::kLeft ||

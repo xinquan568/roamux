@@ -260,7 +260,8 @@ class TabStripPlacementUnregisteredPrefTest : public testing::Test {
   TestingPrefServiceSimple pref_service_;
 };
 
-TEST_F(TabStripPlacementUnregisteredPrefTest, GetFallsBackToTopWithoutCrashing) {
+TEST_F(TabStripPlacementUnregisteredPrefTest,
+       GetFallsBackToTopWithoutCrashing) {
   base::test::ScopedFeatureList features;
   features.InitAndEnableFeature(features::kTabStripPosition);
   EXPECT_EQ(TabStripPlacement::kTop, GetTabStripPlacement(&pref_service_));
@@ -272,6 +273,106 @@ TEST_F(TabStripPlacementUnregisteredPrefTest, SetIsANoOpWithoutCrashing) {
   SetTabStripPlacement(&pref_service_, TabStripPlacement::kLeft);
   // The write cannot land anywhere, so the read still reports the fallback.
   EXPECT_EQ(TabStripPlacement::kTop, GetTabStripPlacement(&pref_service_));
+}
+
+// ---------------------------------------------------------------------------
+// roam-254: IsVerticalTabStripEffectivelyEnabled — the authority split that
+// Tabs.VerticalTabs.* telemetry must express. Written RED before the
+// implementation (TDD/P6). The contract has exactly two rows:
+//   flag ON  -> the roamux placement alone (roam-182 sole authority)
+//   flag OFF -> the upstream pref alone, read exactly as upstream reads it
+// ---------------------------------------------------------------------------
+
+class EffectiveVerticalTabsTest : public testing::Test {
+ protected:
+  EffectiveVerticalTabsTest() {
+    prefs::RegisterProfilePrefs(pref_service_.registry());
+    // The upstream mirror pref is registered by //chrome, which //roamux/common
+    // cannot depend on; register it here so the flag-off branch has a real
+    // pref to read.
+    pref_service_.registry()->RegisterBooleanPref(
+        prefs::kUpstreamVerticalTabsEnabled, false);
+  }
+
+  TestingPrefServiceSimple pref_service_;
+};
+
+TEST_F(EffectiveVerticalTabsTest,
+       FlagOnLeftPlacementIsVerticalDespiteClearedPref) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  SetTabStripPlacement(&pref_service_, TabStripPlacement::kLeft);
+  // Exactly the migrated-profile shape roam-182 produces: placement adopted,
+  // upstream pref cleared. This is the reported defect.
+  pref_service_.SetBoolean(prefs::kUpstreamVerticalTabsEnabled, false);
+  EXPECT_TRUE(IsVerticalTabStripEffectivelyEnabled(&pref_service_));
+}
+
+TEST_F(EffectiveVerticalTabsTest, FlagOnRightPlacementIsVertical) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  SetTabStripPlacement(&pref_service_, TabStripPlacement::kRight);
+  EXPECT_TRUE(IsVerticalTabStripEffectivelyEnabled(&pref_service_));
+}
+
+TEST_F(EffectiveVerticalTabsTest, FlagOnTopPlacementIgnoresATrueUpstreamPref) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  SetTabStripPlacement(&pref_service_, TabStripPlacement::kTop);
+  pref_service_.SetBoolean(prefs::kUpstreamVerticalTabsEnabled, true);
+  // Guards against over-correcting: with the flag on the placement is the SOLE
+  // authority, so a stale true upstream pref must not resurrect vertical.
+  EXPECT_FALSE(IsVerticalTabStripEffectivelyEnabled(&pref_service_));
+}
+
+TEST_F(EffectiveVerticalTabsTest, FlagOnBottomPlacementIsNotVertical) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  SetTabStripPlacement(&pref_service_, TabStripPlacement::kBottom);
+  EXPECT_FALSE(IsVerticalTabStripEffectivelyEnabled(&pref_service_));
+}
+
+TEST_F(EffectiveVerticalTabsTest, FlagOffFollowsTheUpstreamPref) {
+  base::test::ScopedFeatureList features;
+  features.InitAndDisableFeature(features::kTabStripPosition);
+  // A Left placement is stored but must be ignored: with the flag off the
+  // upstream pref is authoritative, byte-identical to upstream today.
+  pref_service_.SetInteger(prefs::kTabStripPosition,
+                           static_cast<int>(TabStripPlacement::kLeft));
+  pref_service_.SetBoolean(prefs::kUpstreamVerticalTabsEnabled, true);
+  EXPECT_TRUE(IsVerticalTabStripEffectivelyEnabled(&pref_service_));
+
+  pref_service_.SetBoolean(prefs::kUpstreamVerticalTabsEnabled, false);
+  EXPECT_FALSE(IsVerticalTabStripEffectivelyEnabled(&pref_service_));
+}
+
+TEST_F(EffectiveVerticalTabsTest, NullPrefServiceIsNotVertical) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  EXPECT_FALSE(IsVerticalTabStripEffectivelyEnabled(nullptr));
+}
+
+// roam-244 totality, scoped to the placement branch: a registry that never ran
+// roamux::prefs::RegisterProfilePrefs must not crash. (The flag-OFF branch
+// deliberately keeps upstream's CHECK on an unregistered upstream pref, so
+// there is no matching case for it — preserving that crash is the point.)
+class EffectiveVerticalTabsUnregisteredPlacementTest : public testing::Test {
+ protected:
+  EffectiveVerticalTabsUnregisteredPlacementTest() {
+    pref_service_.registry()->RegisterBooleanPref(
+        prefs::kUpstreamVerticalTabsEnabled, false);
+  }
+
+  // roamux placement pref deliberately NOT registered.
+  TestingPrefServiceSimple pref_service_;
+};
+
+TEST_F(EffectiveVerticalTabsUnregisteredPlacementTest,
+       FlagOnFallsBackToNotVerticalWithoutCrashing) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kTabStripPosition);
+  pref_service_.SetBoolean(prefs::kUpstreamVerticalTabsEnabled, true);
+  EXPECT_FALSE(IsVerticalTabStripEffectivelyEnabled(&pref_service_));
 }
 
 }  // namespace

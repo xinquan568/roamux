@@ -30,6 +30,14 @@ inline constexpr char kExternalOpenMode[] =
 inline constexpr char kExternalOpenProfile[] =
     "roamux.profiles.external_open_profile";
 
+// Mirror of upstream prefs::kVerticalTabsEnabled — //roamux/common cannot
+// depend on //chrome. roam-182 writes it from MigrateProfilePrefs (the
+// "never writes" stance was revoked, maintainer-authorized 2026-07-20);
+// roam-254 reads it from tab_strip_placement.cc, which is why this moved out
+// of roamux_prefs.cc's anonymous namespace — the two are separate translation
+// units of the same target.
+inline constexpr char kUpstreamVerticalTabsEnabled[] = "vertical_tabs.enabled";
+
 void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
 // roam-213: Local State registrar — invoked from upstream RegisterLocalState

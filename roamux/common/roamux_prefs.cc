@@ -11,13 +11,6 @@
 
 namespace roamux::prefs {
 
-namespace {
-// Mirror of upstream prefs::kVerticalTabsEnabled — //roamux/common cannot
-// depend on //chrome. Local to the migration; roam-182 writes it (the
-// "never writes" stance was revoked, maintainer-authorized 2026-07-20).
-constexpr char kUpstreamVerticalTabsEnabled[] = "vertical_tabs.enabled";
-}  // namespace
-
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(kTabStripPosition,
                                 0);  // 0 = top (Chromium default)
