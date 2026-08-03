@@ -501,6 +501,21 @@ def _runs_on_is_selfhosted(lines):
     return False
 
 
+def _executable_text(body):
+    """Drop echoed text so a log line cannot masquerade as an invocation:
+    `run: echo "bash .../require_ac_power.sh"` prints a command, it does not run
+    one. Deliberately narrow — truncating at `echo` rather than stripping all
+    quoted text, because real commands legitimately carry quoted arguments
+    (e.g. "${CHROMIUM_SRC}/.../universalizer.py"). Erring toward truncation is
+    safe here: it can only cause a missing-protection failure, never a false
+    pass. Comments are stripped by the caller."""
+    out = []
+    for line in body.splitlines():
+        m = re.search(r"(?:^|[\s|&;(])echo(?:\s|$)", line)
+        out.append(line[:m.start()] if m else line)
+    return "\n".join(out)
+
+
 # An INVOCATION, not a mention: `caffeinate` must be followed by flags and a
 # command, and the gate must actually be run. A bare substring anywhere in the
 # job (a comment stripped earlier, a log line, an unrelated wrapped command)
@@ -565,8 +580,9 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
     def test_every_selfhosted_job_is_power_protected(self):
         for (wf, job), text in self._selfhosted_jobs().items():
             with self.subTest(f"{wf}:{job}"):
-                body = "\n".join(l for l in text.splitlines()
-                                 if not l.strip().startswith("#"))
+                body = _executable_text("\n".join(
+                    l for l in text.splitlines()
+                    if not l.strip().startswith("#")))
                 if _RE_TIER2.search(body):
                     # Protection is proven behaviourally in test_tier2_job.py
                     # (re-exec under caffeinate + the gate before any side effect).
@@ -581,7 +597,8 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
 
     def test_release_long_builds_are_caffeinated(self):
         text = (WORKFLOWS / "release.yml").read_text()
-        body = "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
+        body = _executable_text("\n".join(
+            l for l in text.splitlines() if not l.strip().startswith("#")))
         for cmd in ("autoninja", "universalizer.py"):
             idx = body.find(cmd)
             self.assertGreater(idx, 0, f"{cmd} not found")

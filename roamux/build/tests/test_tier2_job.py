@@ -286,10 +286,10 @@ exec "$@"
         # Pin the exact argv, not merely "some flag containing an i":
         # -s/-i/-m are system/idle/disk sleep, and -i is load-bearing for the
         # battery case. Also pin the command, so the re-exec target cannot drift.
-        got = argv.read_text().split()
-        self.assertEqual(got[0], "-sim", f"caffeinate flags must be -sim (got {got})")
-        self.assertTrue(got[1].endswith("tier2_job.sh"),
-                        f"caffeinate must exec the job script (got {got})")
+        # Pinned EXACTLY — argv length included, so neither an extra argument
+        # nor a drifted target can slip through.
+        self.assertEqual(argv.read_text().split(),
+                         ["-sim", "roamux/build/ci/tier2_job.sh"])
         out = r.stdout + r.stderr
         self.assertIn("battery", out.lower(), out)
         self.assertNotEqual(r.returncode, 97, "re-entered: recursion guard broken")
