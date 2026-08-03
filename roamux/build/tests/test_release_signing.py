@@ -6,6 +6,7 @@ nested-code discovery, and packaging symlink/exec-bit preservation."""
 
 import contextlib
 import importlib
+import inspect
 import io
 import os
 import pathlib
@@ -400,23 +401,27 @@ class PackagingTest(unittest.TestCase):
         # empty and raises otherwise — the run-scoped leak postcondition; on
         # the shared dev/CI host nothing outside this test's own image is ever
         # consulted or touched.
+        # roam-233 anticipated that exact partial-attach shape but only at
+        # TEARDOWN, i.e. after the retry loop had already exhausted every
+        # attempt against the leaked device. roam-259 moves the same recovery
+        # in between attempts; this cleanup remains the final backstop.
         self.addCleanup(_detach_until_gone,
                         lambda: _hdiutil_representatives(out),
                         _hdiutil_detach)
         mountpoint = self.tmp / "mnt"
         mountpoint.mkdir()
-        mount, tries = _attach_with_retry(
-            lambda: subprocess.run(
-                ["hdiutil", "attach", str(out), "-nobrowse", "-readonly",
-                 "-mountpoint", str(mountpoint)],
-                capture_output=True, text=True),
-            sleep_fn=time.sleep)
+        # roam-259: recovery (detach this image) runs between attempts, so a
+        # leaked device from a failed mount cannot make every retry collide.
+        mount, tries, recovery_errors = _attach_dmg_with_recovery(
+            out, mountpoint)
         if mount.returncode != 0:
             try:
                 state = "attachments of this image at failure: %r" % (
                     _hdiutil_representatives(out),)
             except (RuntimeError, subprocess.CalledProcessError) as exc:
                 state = "attachment-state query failed: %s" % exc
+            if recovery_errors:
+                state += "\n  recovery errors: %s" % "; ".join(recovery_errors)
             self.fail(
                 "hdiutil attach failed %d time(s) (last rc=%d): %s\n%s\n%s"
                 % (len(tries), mount.returncode, mount.args,
@@ -579,6 +584,254 @@ class DmgMountHygieneTest(unittest.TestCase):
         self.assertEqual(res.returncode, 1)
         self.assertEqual(len(tries), 7)
         self.assertEqual(sleeps, [2, 4, 8, 15, 30, 30])
+
+    # ---- roam-259: recover (detach the leaked device) before retrying ----
+
+    def test_attach_recovers_after_detaching_the_leaked_device(self):
+        # The roam-259 mechanism: `attach -mountpoint` attaches, THEN mounts.
+        # A failed mount returns rc=1 with the device already attached, so
+        # every later attempt collides with the leak until it is detached.
+        # Sleeping cannot clear it; recovery must, and must run BEFORE the
+        # settle so the window also covers post-detach settling.
+        events = []
+        leaked = {"present": True}
+
+        def run_fn():
+            events.append("attach")
+            return self._Result(1 if leaked["present"] else 0)
+
+        def recover_fn():
+            events.append("recover")
+            leaked["present"] = False
+
+        res, tries = _attach_with_retry(
+            run_fn, sleep_fn=lambda d: events.append("sleep:%s" % d),
+            recover_fn=recover_fn)
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(len(tries), 2)
+        self.assertEqual(events, ["attach", "recover", "sleep:2", "attach"])
+
+    def test_attach_first_try_success_never_recovers(self):
+        recoveries = []
+        res, tries = _attach_with_retry(
+            lambda: self._Result(0), sleep_fn=lambda d: None,
+            recover_fn=lambda: recoveries.append(1))
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(len(tries), 1)
+        self.assertEqual(recoveries, [])
+
+    def test_recovery_failure_does_not_abort_the_retry_loop(self):
+        # Recovery is best-effort: _detach_until_gone raises on survivors,
+        # _hdiutil_representatives raises CalledProcessError (check=True) and
+        # _representative_devices raises on a record with no dev-entry. None of
+        # those may abandon the remaining attempts or destroy the attach
+        # stderr the call site reports from `tries`.
+        def recover_fn():
+            raise RuntimeError("detach failed to clear attachments")
+
+        res, tries = _attach_with_retry(
+            lambda: self._Result(1), delays=(2, 4), sleep_fn=lambda d: None,
+            recover_fn=recover_fn)
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(len(tries), 3)
+
+    def test_recovery_not_attempted_after_the_final_attempt(self):
+        # No retry follows the last failure, and the call site's addCleanup
+        # owns final teardown — recovering there would be pointless work.
+        recoveries = []
+        res, tries = _attach_with_retry(
+            lambda: self._Result(1), delays=(2, 4), sleep_fn=lambda d: None,
+            recover_fn=lambda: recoveries.append(1))
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(len(tries), 3)
+        self.assertEqual(len(recoveries), 2)
+
+    def test_attach_with_explicit_recover_fn_none_behaves_as_before(self):
+        sleeps = []
+        res, tries = _attach_with_retry(
+            lambda: self._Result(1), delays=(2, 4), sleep_fn=sleeps.append,
+            recover_fn=None)
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(len(tries), 3)
+        self.assertEqual(sleeps, [2, 4])
+
+    def test_recovery_errors_are_collected_for_diagnostics(self):
+        # Swallowing must not hide a broken detach path: the caller gets the
+        # collected reasons AND every original attach stderr.
+        errors = []
+
+        def run_fn():
+            r = self._Result(1)
+            r.stderr = "Resource temporarily unavailable"
+            return r
+
+        def recover_fn():
+            raise RuntimeError("detach failed to clear attachments")
+
+        res, tries = _attach_with_retry(
+            run_fn, delays=(2,), sleep_fn=lambda d: None,
+            recover_fn=recover_fn, recovery_errors=errors)
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual(len(tries), 2)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("detach failed to clear attachments", errors[0])
+        self.assertTrue(
+            all("Resource temporarily unavailable" in t.stderr for t in tries))
+
+    def test_dmg_attach_helper_wires_recovery_into_the_mount_path(self):
+        # The seam tests above prove the loop behaves; this proves the DMG
+        # mount path's own helper actually assembles run_fn + recover_fn.
+        calls = []
+        leaked = {"present": True}
+
+        def attach_fn():
+            calls.append("attach")
+            return self._Result(1 if leaked["present"] else 0)
+
+        def recover_fn():
+            calls.append("recover")
+            leaked["present"] = False
+            raise RuntimeError("detach complained but cleared it")
+
+        res, tries, errors = _attach_dmg_with_recovery(
+            "/nonexistent/Roamux.dmg", "/nonexistent/mnt",
+            attach_fn=attach_fn, recover_fn=recover_fn, sleep_fn=lambda d: None)
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(len(tries), 2)
+        self.assertEqual(calls, ["attach", "recover", "attach"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("detach complained", errors[0])
+
+    def test_dmg_attach_helper_defaults_to_detaching_this_image(self):
+        # The test above supplies recover_fn, so it cannot notice if the
+        # helper's DEFAULT recovery were removed — which would restore the
+        # original defect on the real call path while staying green. Pin the
+        # default wiring: no recover_fn, real helpers mocked out.
+        events = []
+        leaked = {"present": True}
+
+        def fake_reps(image_path):
+            events.append("enumerate")
+            return ["/dev/disk9"] if leaked["present"] else []
+
+        def fake_detach(device, force):
+            events.append("detach:%s" % device)
+            leaked["present"] = False
+            return 0, ""
+
+        def attach_fn():
+            events.append("attach")
+            return self._Result(1 if leaked["present"] else 0)
+
+        mod = sys.modules[__name__]
+        with mock.patch.object(mod, "_hdiutil_representatives", fake_reps), \
+                mock.patch.object(mod, "_hdiutil_detach", fake_detach):
+            res, tries, errors = _attach_dmg_with_recovery(
+                "/nonexistent/Roamux.dmg", "/nonexistent/mnt",
+                attach_fn=attach_fn, sleep_fn=lambda d: None)
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(len(tries), 2)
+        # The trailing enumerate is _detach_until_gone's re-query: it treats a
+        # fresh enumeration, not the detach's exit code, as the source of
+        # truth that the table is clear (roam-233).
+        self.assertEqual(events, ["attach", "enumerate", "detach:/dev/disk9",
+                                  "enumerate", "attach"])
+        self.assertEqual(errors, [])
+
+    def test_packaging_mount_path_uses_the_recovery_helper(self):
+        # Wiring check: the helper above is only worth anything if the real
+        # mount path calls it. That path runs hdiutil and is skip-guarded off
+        # macOS, so it cannot be executed hermetically to observe the wiring —
+        # assert on its source instead (same idiom as test_tier2_job.py).
+        src = inspect.getsource(
+            PackagingTest.test_dmg_preserves_symlinks_and_exec_bits)
+        self.assertIn("_attach_dmg_with_recovery", src)
+        self.assertNotIn("_attach_with_retry(", src)
+
+
+class DmgCreateRetryTest(unittest.TestCase):
+    """roam-259 secondary: package_dmg's 4-attempt `hdiutil create` retry had
+    no sleep on any path — the same latent shape as the attach bug, on the
+    release path rather than the test path. `create` has no leaked-device mode
+    to clear, so the settle schedule is short (unlike _RETRY_DELAYS)."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-dmgcreate-"))
+        self.addCleanup(_rmtree, self.tmp)
+
+    def _package(self, create_rcs, **kw):
+        """Drive package_dmg with `hdiutil create` scripted to the given
+        return codes. `ditto` always succeeds; no real hdiutil is invoked.
+        Returns the count of `hdiutil create` invocations so the attempt
+        contract can be pinned, not just the delays."""
+        creates = []
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "ditto":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            creates.append(cmd)
+            rc = create_rcs.pop(0)
+            return subprocess.CompletedProcess(
+                cmd, rc, "", "hdiutil: create failed" if rc else "")
+
+        with mock.patch.object(package_roamux.subprocess, "run", fake_run):
+            out = package_roamux.package_dmg(
+                self.tmp / "Roamux.app", self.tmp / "Roamux.dmg", **kw)
+        return out, creates
+
+    def test_create_retries_with_backoff_between_attempts(self):
+        sleeps = []
+        _, creates = self._package([1, 1, 0], sleep_fn=sleeps.append)
+        self.assertEqual(sleeps, [2, 4])
+        self.assertEqual(len(creates), 3)
+
+    def test_create_does_not_sleep_after_the_final_failure(self):
+        # Pins BOTH halves of the contract: exactly 4 attempts (a 3-attempt
+        # implementation sleeping after each failure would also produce 3
+        # sleeps) and no settle after the last one.
+        sleeps = []
+        rcs = [1, 1, 1, 1]
+        creates = []
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "ditto":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            creates.append(cmd)
+            return subprocess.CompletedProcess(
+                cmd, rcs.pop(0), "", "hdiutil: create failed")
+
+        with mock.patch.object(package_roamux.subprocess, "run", fake_run):
+            with self.assertRaises(RuntimeError) as cm:
+                package_roamux.package_dmg(
+                    self.tmp / "Roamux.app", self.tmp / "Roamux.dmg",
+                    sleep_fn=sleeps.append)
+        self.assertIn("hdiutil create failed after retries", str(cm.exception))
+        self.assertEqual(len(creates), 4, "the 4-attempt contract is preserved")
+        self.assertEqual(rcs, [], "every scripted failure must be consumed")
+        self.assertEqual(sleeps, [2, 4, 8])
+
+    def test_create_first_try_success_never_sleeps(self):
+        sleeps = []
+        _, creates = self._package([0], sleep_fn=sleeps.append)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(len(creates), 1)
+
+    def test_create_schedule_is_shorter_than_the_attach_schedule(self):
+        # `create` has no leaked-device mode to clear, so it must not inherit
+        # the attach path's ~89 s settle and stall a release job.
+        self.assertEqual(package_roamux._CREATE_RETRY_DELAYS, (2, 4, 8))
+        self.assertLess(sum(package_roamux._CREATE_RETRY_DELAYS),
+                        sum(_RETRY_DELAYS))
+
+    def test_create_default_path_sleeps_without_an_injected_sleep_fn(self):
+        # Without this, every test above could pass over a production path
+        # that still has zero backoff: they all inject sleep_fn. Note the
+        # deliberate asymmetry with _attach_with_retry, where sleep_fn=None
+        # means "do not sleep"; here None resolves to the real time.sleep.
+        slept = []
+        with mock.patch.object(package_roamux.time, "sleep", slept.append):
+            self._package([1, 1, 0])
+        self.assertEqual(slept, [2, 4])
 
 
 class RoamuxPartsPathTest(unittest.TestCase):
@@ -938,28 +1191,95 @@ def _detach_until_gone(enumerate_fn, detach_fn, max_passes=3):
             % (max_passes, "; ".join(errors) or "no stderr captured"))
 
 
-# roam-233: EAGAIN windows on this host outlast short settling — tier-2 CI on
-# PR #237 saw five failures across ~20 s while a probe minutes later was
-# healthy. Capped-exponential schedule: 7 attempts, ~89 s of settling total.
+# Two DISTINCT attach failure modes share this schedule — do not conflate them:
+#
+#   1. create-then-attach leak (roam-259, the common one). The trigger is
+#      `hdiutil create` (UDZO conversion inside package_dmg) immediately
+#      followed by `attach` of the just-created image; machine load raises the
+#      rate but is NOT required. `attach -mountpoint` attaches then mounts, so
+#      a failed mount leaves the device attached and every later attempt
+#      collides with the leak. Settling cannot fix this — detach-before-retry
+#      can, and does (measured 0/63 -> 62/63). This corrects roam-233, which
+#      recorded the trigger as rapid attach/detach cycles.
+#
+#   2. clean-table transient (roam-233's original mode). Enumeration finds
+#      nothing to detach and the window genuinely outlasts short settling —
+#      tier-2 CI on PR #237 saw five failures across ~20 s while a probe
+#      minutes later was healthy.
+#
+# The capped-exponential schedule below (7 attempts, ~89 s total) is retained
+# CONSERVATIVELY FOR MODE 2, whose evidence is independent of roam-259 and
+# still stands. It is not the fix for mode 1 and must not be read as such: with
+# recovery in place mode 1 clears on attempt 2 after a single 2 s sleep, so the
+# full 89 s is only ever paid when every attempt genuinely fails.
 _RETRY_DELAYS = (2, 4, 8, 15, 30, 30)
 
 
-def _attach_with_retry(run_fn, delays=_RETRY_DELAYS, sleep_fn=None):
-    """roam-233: `hdiutil attach` can fail transiently ("Resource temporarily
-    unavailable") even with a verified-clean attachment table — observed live
-    while landing this fix (standalone: ~1-in-10 rapid attach/detach cycles;
-    CI: a window >20 s). Bounded retry over the delay schedule (attempts =
+def _attach_with_retry(run_fn, delays=_RETRY_DELAYS, sleep_fn=None,
+                       recover_fn=None, recovery_errors=None):
+    """Bounded `hdiutil attach` retry over the delay schedule (attempts =
     len(delays)+1); returns (last_result, all_tries) so a persistent failure
-    still self-explains with every stderr."""
+    still self-explains with every stderr.
+
+    roam-259: a failed attempt does not imply a clean attachment table.
+    `attach -mountpoint` attaches and THEN mounts, so a failed *mount* returns
+    non-zero with the device already attached — the image is partially
+    attached, and every later attempt collides with what the previous one
+    leaked. Waiting cannot clear that; `recover_fn` (detach this image) runs
+    before the settle, so the sleep also covers post-detach settling.
+
+    Recovery is best-effort by design: it is skipped after the final failed
+    attempt (no retry follows; the caller's addCleanup owns teardown), and any
+    exception it raises is collected into `recovery_errors` rather than
+    propagated. `_detach_until_gone` raises on survivors,
+    `_hdiutil_representatives` raises CalledProcessError (check=True) and
+    `_representative_devices` raises for a record with no dev-entry; letting
+    any of those escape would abandon the remaining attempts and destroy the
+    attach stderr the caller reports from `tries`. The next attach is the real
+    signal."""
     tries = []
     for attempt in range(len(delays) + 1):
         res = run_fn()
         tries.append(res)
         if res.returncode == 0:
             return res, tries
-        if sleep_fn is not None and attempt < len(delays):
-            sleep_fn(delays[attempt])
+        if attempt < len(delays):
+            if recover_fn is not None:
+                try:
+                    recover_fn()
+                except Exception as exc:  # never BaseException
+                    if recovery_errors is not None:
+                        recovery_errors.append(
+                            "attempt %d recovery: %s" % (attempt + 1, exc))
+            if sleep_fn is not None:
+                sleep_fn(delays[attempt])
     return tries[-1], tries
+
+
+def _attach_dmg_with_recovery(image_path, mountpoint, attach_fn=None,
+                              recover_fn=None, sleep_fn=time.sleep):
+    """roam-259: the DMG mount path's attach, with leak recovery wired in.
+
+    Exists so that "recovery reaches the real mount path" is a testable
+    property rather than an inline lambda: the seams default to the real
+    `hdiutil attach` and to detaching every attachment of THIS image (the same
+    two helpers the caller already registers with addCleanup). Returns
+    (result, tries, recovery_errors)."""
+    if attach_fn is None:
+        def attach_fn():
+            return subprocess.run(
+                ["hdiutil", "attach", str(image_path), "-nobrowse", "-readonly",
+                 "-mountpoint", str(mountpoint)],
+                capture_output=True, text=True)
+    if recover_fn is None:
+        def recover_fn():
+            _detach_until_gone(lambda: _hdiutil_representatives(image_path),
+                               _hdiutil_detach)
+    recovery_errors = []
+    res, tries = _attach_with_retry(
+        attach_fn, sleep_fn=sleep_fn, recover_fn=recover_fn,
+        recovery_errors=recovery_errors)
+    return res, tries, recovery_errors
 
 
 def _hdiutil_representatives(image_path):

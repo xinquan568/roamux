@@ -22,6 +22,82 @@ def _clean_git_env():
                          "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")}
 
 
+def _log_path():
+    """roam-259: where a blocked push leaves its evidence.
+
+    NOT `REPO/.git/...` — in a linked worktree `.git` is a FILE, and this
+    repo's own /issue2pr pipeline runs every task inside a worktree, so the
+    naive path would fail exactly where it is used most. Ask git for the real
+    git dir (per-worktree), resolving a relative answer against REPO. Returns
+    None if no usable location can be determined; logging is best-effort and
+    never blocks a push."""
+    try:
+        out = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=REPO,
+                             env=_clean_git_env(), capture_output=True,
+                             text=True)
+        if out.returncode == 0 and out.stdout.strip():
+            git_dir = pathlib.Path(out.stdout.strip())
+            if not git_dir.is_absolute():
+                git_dir = REPO / git_dir
+            if git_dir.is_dir():
+                return git_dir / "roamux-pre-push.log"
+    except OSError:
+        pass
+    fallback = REPO / ".git"
+    return fallback / "roamux-pre-push.log" if fallback.is_dir() else None
+
+
+def _run_teed(cmd, log, **kwargs):
+    """Run `cmd`, streaming its output live AND appending it to `log`.
+
+    stderr is merged into stdout (one pipe — two would risk a fill-and-block
+    deadlock), so the failure text lands in the durable copy alongside the
+    progress that explains it. Any logging failure degrades to a warning: a
+    gate that failed because its own logging failed would be worse than the
+    bug this fixes."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, **kwargs)
+    sink = None
+    if log is not None:
+        try:
+            sink = open(log, "a")
+        except OSError as exc:
+            print(f"pre-push: no durable log ({exc}); live output only.",
+                  file=sys.stderr, flush=True)
+
+    def _close(handle):
+        try:
+            handle.close()
+        except OSError as exc:
+            # Close can flush buffered bytes and fail (full disk, dead NFS).
+            # That must NOT escape: proc.wait() below is what propagates the
+            # child's verdict, and losing it would fail a green gate.
+            print(f"pre-push: durable log close failed ({exc}).",
+                  file=sys.stderr, flush=True)
+
+    try:
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            if sink is not None:
+                try:
+                    sink.write(line)
+                    sink.flush()  # a crashed push must still leave the lines
+                except OSError as exc:
+                    print(f"pre-push: durable log disabled ({exc}); "
+                          "live output only.", file=sys.stderr, flush=True)
+                    _close(sink)
+                    sink = None
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+        if sink is not None:
+            _close(sink)
+    return proc.wait()
+
+
 def gtest_decision(environ):
     """Return ('run', src) when a usable checkout is configured, else ('skip', reason). Pure — testable."""
     src = environ.get("ROAMUX_CHROMIUM_SRC", "")
@@ -33,29 +109,39 @@ def gtest_decision(environ):
 
 
 def main():
-    print("pre-push: running the hermetic suite (checkout-free)...")
-    rc = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "roamux/build/tests"],
-                        cwd=REPO, env=_clean_git_env()).returncode
+    log = _log_path()
+    if log is not None:
+        print(f"pre-push: logging this run to {log}", flush=True)
+    else:
+        # Say so out loud: silently losing the durable evidence would recreate
+        # exactly the failure mode roam-259 is about.
+        print("pre-push: no durable log location could be resolved; "
+              "live output only.", file=sys.stderr, flush=True)
+    print("pre-push: running the hermetic suite (checkout-free)...", flush=True)
+    rc = _run_teed([sys.executable, "-m", "unittest", "discover", "-s", "roamux/build/tests"],
+                   log, cwd=REPO, env=_clean_git_env())
     if rc != 0:
-        print("pre-push: hermetic suite FAILED — push blocked.", file=sys.stderr)
+        print("pre-push: hermetic suite FAILED — push blocked.", file=sys.stderr, flush=True)
         return rc
 
     action, detail = gtest_decision(os.environ)
     if action == "skip":
-        print(f"pre-push: SKIP gtest gate — {detail}; the touched-target build+test runs in CI.")
+        print(f"pre-push: SKIP gtest gate — {detail}; the touched-target build+test runs in CI.",
+              flush=True)
         return 0
 
     src = detail
-    print(f"pre-push: Chromium checkout at {src} — building + running {GTEST_TARGET} (incremental)...")
-    build = subprocess.run(["autoninja", "-C", "out/Default", GTEST_TARGET], cwd=src)
-    if build.returncode != 0:
-        print("pre-push: autoninja FAILED — push blocked.", file=sys.stderr)
-        return build.returncode
-    test = subprocess.run([str(pathlib.Path(src) / "out" / "Default" / GTEST_TARGET)], cwd=src)
-    if test.returncode != 0:
-        print(f"pre-push: {GTEST_TARGET} FAILED — push blocked.", file=sys.stderr)
-        return test.returncode
-    print(f"pre-push: {GTEST_TARGET} green.")
+    print(f"pre-push: Chromium checkout at {src} — building + running {GTEST_TARGET} (incremental)...",
+          flush=True)
+    build_rc = _run_teed(["autoninja", "-C", "out/Default", GTEST_TARGET], log, cwd=src)
+    if build_rc != 0:
+        print("pre-push: autoninja FAILED — push blocked.", file=sys.stderr, flush=True)
+        return build_rc
+    test_rc = _run_teed([str(pathlib.Path(src) / "out" / "Default" / GTEST_TARGET)], log, cwd=src)
+    if test_rc != 0:
+        print(f"pre-push: {GTEST_TARGET} FAILED — push blocked.", file=sys.stderr, flush=True)
+        return test_rc
+    print(f"pre-push: {GTEST_TARGET} green.", flush=True)
     return 0
 
 
