@@ -479,6 +479,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _runs_on_is_selfhosted(lines):
+    """True when a job's `runs-on:` names the self-hosted label, whether inline
+    (`runs-on: [self-hosted, ...]`) or as a multiline label list."""
+    live = [l for l in lines if not l.strip().startswith("#")]
+    for i, line in enumerate(live):
+        if not line.strip().startswith("runs-on:"):
+            continue
+        rest = line.split("runs-on:", 1)[1].strip()
+        if rest:
+            return "self-hosted" in rest
+        indent = len(line) - len(line.lstrip())
+        for cont in live[i + 1:]:
+            if not cont.strip():
+                continue
+            if len(cont) - len(cont.lstrip()) <= indent:
+                break
+            if "self-hosted" in cont:
+                return True
+        return False
+    return False
+
+
+# An INVOCATION, not a mention: `caffeinate` must be followed by flags and a
+# command, and the gate must actually be run. A bare substring anywhere in the
+# job (a comment stripped earlier, a log line, an unrelated wrapped command)
+# must not count as protection.
+_RE_TIER2 = re.compile(r"(?:^|[\s|])bash\s+\S*tier2_job\.sh\b", re.M)
+_RE_GATE = re.compile(r"(?:^|[\s|])bash\s+\S*require_ac_power\.sh\b", re.M)
+_RE_CAFFEINATE = re.compile(r"(?:^|[\s|])caffeinate\s+-\S+\s+\S", re.M)
+
+
 class SelfHostedPowerProtectionTest(unittest.TestCase):
     """roam-258: every self-hosted job must be power-protected.
 
@@ -499,10 +530,11 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
             lines = wf.read_text().splitlines()
             name, buf, in_jobs = None, [], False
             def flush():
-                # Match the runs-on DECLARATION, not any mention: `targeted-suite`
-                # echoes the words "self-hosted" in a log line and is hosted.
-                if name and any(l.strip().startswith("runs-on:") and "self-hosted" in l
-                                for l in buf if not l.strip().startswith("#")):
+                # Parse the runs-on DECLARATION structurally — not any mention
+                # (`targeted-suite` echoes "self-hosted" in a log line and is
+                # hosted), and not only the same physical line: the label list
+                # may be inline `[a, b]` or a multiline `- a` block.
+                if name and _runs_on_is_selfhosted(buf):
                     jobs[(wf.name, name)] = "\n".join(buf)
             for line in lines:
                 if line.startswith("jobs:"):
@@ -535,17 +567,17 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
             with self.subTest(f"{wf}:{job}"):
                 body = "\n".join(l for l in text.splitlines()
                                  if not l.strip().startswith("#"))
-                if "tier2_job.sh" in body:
+                if _RE_TIER2.search(body):
                     # Protection is proven behaviourally in test_tier2_job.py
                     # (re-exec under caffeinate + the gate before any side effect).
                     continue
-                # Otherwise the job must carry BOTH halves itself. A bare
-                # `caffeinate` occurrence is NOT accepted as protection: it could
-                # wrap something incidental while the real body stays exposed.
-                self.assertIn(self.GATE, body,
-                              f"{wf}:{job} has no power pre-flight")
-                self.assertIn("caffeinate", body,
-                              f"{wf}:{job} does not hold a power assertion")
+                # Otherwise the job must carry BOTH halves itself, as real
+                # invocations — a bare occurrence could wrap something
+                # incidental while the actual long body stays exposed.
+                self.assertRegex(body, _RE_GATE,
+                                 f"{wf}:{job} does not INVOKE the power pre-flight")
+                self.assertRegex(body, _RE_CAFFEINATE,
+                                 f"{wf}:{job} does not wrap a command in caffeinate")
 
     def test_release_long_builds_are_caffeinated(self):
         text = (WORKFLOWS / "release.yml").read_text()
@@ -557,15 +589,37 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
             self.assertIn("caffeinate", body[line_start:idx],
                           f"the long `{cmd}` invocation must be wrapped in caffeinate")
 
+    def test_release_power_gate_is_the_first_step_after_checkout(self):
+        # The frozen invariant. Parse STEPS so an intervening step fails this,
+        # and assert checkout exists — otherwise a missing checkout would make
+        # a find()-based check pass vacuously.
+        lines = (WORKFLOWS / "release.yml").read_text().splitlines()
+        steps, cur = [], None
+        for line in lines:
+            if line.strip().startswith("#"):
+                continue
+            if re.match(r"^      - (name|uses):", line):
+                if cur is not None:
+                    steps.append("\n".join(cur))
+                cur = [line]
+            elif cur is not None:
+                cur.append(line)
+        if cur is not None:
+            steps.append("\n".join(cur))
+        idx = [i for i, st in enumerate(steps) if "actions/checkout" in st]
+        self.assertTrue(idx, "release.yml must check out the overlay")
+        after = steps[idx[-1] + 1]
+        self.assertRegex(after, _RE_GATE,
+                         "the power gate must be the FIRST step after checkout, "
+                         f"but that step is: {after.splitlines()[0].strip()}")
+
     def test_release_power_gate_precedes_the_expensive_steps(self):
         body = "\n".join(l for l in (WORKFLOWS / "release.yml").read_text().splitlines()
-                         if not l.strip().startswith("#"))
+                          if not l.strip().startswith("#"))
         gate = body.find(self.GATE)
         self.assertGreater(gate, 0, "release.yml must run the power pre-flight")
-        self.assertGreater(gate, body.find("actions/checkout"),
-                           "the gate needs the checked-out script")
         for expensive in ("fetch_sparkle.py", "apply_patches.py", "autoninja",
                           "universalizer.py"):
             at = body.find(expensive)
-            if at > 0:
-                self.assertLess(gate, at, f"the power gate must precede `{expensive}`")
+            self.assertGreater(at, 0, f"{expensive} vanished from release.yml")
+            self.assertLess(gate, at, f"the power gate must precede `{expensive}`")

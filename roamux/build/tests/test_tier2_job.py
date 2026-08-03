@@ -37,8 +37,8 @@ def _fake_pmset(dirpath, output, rc=0):
     """A pmset that VALIDATES it was called as `-g batt` — so a gate probing
     something else cannot quietly pass — and then emits the given shape."""
     return _fake_bin(dirpath, "pmset", f"""
-if [ "$1" != "-g" ] || [ "$2" != "batt" ]; then
-  echo "fake pmset: unexpected args: $*" >&2
+if [ "$#" -ne 2 ] || [ "$1" != "-g" ] || [ "$2" != "batt" ]; then
+  echo "fake pmset: expected exactly `-g batt`, got: $*" >&2
   exit 99
 fi
 cat <<'EOF'
@@ -283,16 +283,21 @@ exec "$@"
                            timeout=120)
         n = count.read_text().count("x") if count.exists() else 0
         self.assertEqual(n, 1, f"expected exactly one caffeinate invocation, got {n}")
-        # -i (PreventUserIdleSystemSleep) is the load-bearing flag for the
-        # battery case; it may be combined, as in -sim.
-        flags = [a for a in argv.read_text().split() if a.startswith("-")]
-        self.assertTrue(any("i" in f for f in flags),
-                        f"caffeinate must be given -i (got {flags})")
+        # Pin the exact argv, not merely "some flag containing an i":
+        # -s/-i/-m are system/idle/disk sleep, and -i is load-bearing for the
+        # battery case. Also pin the command, so the re-exec target cannot drift.
+        got = argv.read_text().split()
+        self.assertEqual(got[0], "-sim", f"caffeinate flags must be -sim (got {got})")
+        self.assertTrue(got[1].endswith("tier2_job.sh"),
+                        f"caffeinate must exec the job script (got {got})")
         out = r.stdout + r.stderr
         self.assertIn("battery", out.lower(), out)
-        self.assertNotEqual(r.returncode, 0,
-                            "the gate's failure must propagate through caffeinate")
         self.assertNotEqual(r.returncode, 97, "re-entered: recursion guard broken")
+        # The GATE's status (1), not merely "some failure" — proves the exact
+        # child status survives the caffeinate re-exec rather than being
+        # replaced by a shell or signal code.
+        self.assertEqual(r.returncode, 1,
+                         "the gate's exit status must propagate through caffeinate")
 
     def test_tier2_caffeinate_guards_are_present(self):
         self.assertIn("ROAMUX_CAFFEINATED", self.code, "recursion guard")
