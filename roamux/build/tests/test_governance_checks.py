@@ -201,6 +201,69 @@ class PrePushReportingTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("still ran", buf.getvalue())
 
+    def test_tee_survives_a_sink_that_fails_mid_stream(self):
+        # A write error must disable the log and keep going — never escape and
+        # never cost us the child's verdict.
+        class Exploding:
+            def write(self, _):
+                raise OSError("disk full")
+
+            def flush(self):
+                raise OSError("disk full")
+
+            def close(self):
+                raise OSError("disk full")
+
+        buf, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(self.mod, "open", lambda *a, **k: Exploding(),
+                               create=True):
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                rc = self.mod._run_teed(
+                    self._child("import sys; print('ran'); sys.exit(4)"),
+                    self.tmp / "pre-push.log")
+        self.assertEqual(rc, 4, "the child's verdict must survive a dead sink")
+        self.assertIn("ran", buf.getvalue())
+        self.assertIn("durable log disabled", err.getvalue())
+
+    def test_tee_survives_a_close_time_failure(self):
+        # close() can flush buffered bytes and fail. That must not escape:
+        # proc.wait() below it is what propagates the child's return code.
+        class FailsOnClose:
+            def __init__(self):
+                self.written = []
+
+            def write(self, line):
+                self.written.append(line)
+
+            def flush(self):
+                pass
+
+            def close(self):
+                raise OSError("close failed")
+
+        buf, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(self.mod, "open",
+                               lambda *a, **k: FailsOnClose(), create=True):
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                rc = self.mod._run_teed(
+                    self._child("import sys; print('ran'); sys.exit(5)"),
+                    self.tmp / "pre-push.log")
+        self.assertEqual(rc, 5)
+        self.assertIn("close failed", err.getvalue())
+
+    def test_main_warns_when_no_durable_log_can_be_resolved(self):
+        # Silently losing the evidence would recreate the exact failure mode
+        # roam-259 is about.
+        buf, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(self.mod, "_log_path", lambda: None), \
+                mock.patch.object(self.mod, "_run_teed",
+                                  lambda cmd, log, **kw: 0), \
+                mock.patch.dict(os.environ, {"ROAMUX_CHROMIUM_SRC": ""}), \
+                contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = self.mod.main()
+        self.assertEqual(rc, 0)
+        self.assertIn("no durable log location", err.getvalue())
+
     def test_log_path_resolves_when_dot_git_is_a_file(self):
         # Linked worktrees (which this repo's own /issue2pr pipeline uses for
         # every run) have `.git` as a FILE, so `REPO/.git/x` is not a path.
@@ -266,9 +329,14 @@ class PrePushReportingTest(unittest.TestCase):
                  and isinstance(n.func, ast.Name) and n.func.id == "print"]
         self.assertTrue(calls, "no print calls found in main()")
         for call in calls:
-            kwargs = {kw.arg for kw in call.keywords}
-            self.assertIn("flush", kwargs,
-                          "unflushed print at line %d of main()" % call.lineno)
+            flush = next((kw.value for kw in call.keywords
+                          if kw.arg == "flush"), None)
+            self.assertIsNotNone(
+                flush, "unflushed print at line %d of main()" % call.lineno)
+            # `flush=False` would satisfy a mere keyword-presence check while
+            # leaving the buffering bug in place.
+            self.assertTrue(isinstance(flush, ast.Constant) and flush.value is True,
+                            "print at line %d must pass flush=True" % call.lineno)
 
 
 class OverlayStructureTest(TmpTree):

@@ -702,6 +702,42 @@ class DmgMountHygieneTest(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("detach complained", errors[0])
 
+    def test_dmg_attach_helper_defaults_to_detaching_this_image(self):
+        # The test above supplies recover_fn, so it cannot notice if the
+        # helper's DEFAULT recovery were removed — which would restore the
+        # original defect on the real call path while staying green. Pin the
+        # default wiring: no recover_fn, real helpers mocked out.
+        events = []
+        leaked = {"present": True}
+
+        def fake_reps(image_path):
+            events.append("enumerate")
+            return ["/dev/disk9"] if leaked["present"] else []
+
+        def fake_detach(device, force):
+            events.append("detach:%s" % device)
+            leaked["present"] = False
+            return 0, ""
+
+        def attach_fn():
+            events.append("attach")
+            return self._Result(1 if leaked["present"] else 0)
+
+        mod = sys.modules[__name__]
+        with mock.patch.object(mod, "_hdiutil_representatives", fake_reps), \
+                mock.patch.object(mod, "_hdiutil_detach", fake_detach):
+            res, tries, errors = _attach_dmg_with_recovery(
+                "/nonexistent/Roamux.dmg", "/nonexistent/mnt",
+                attach_fn=attach_fn, sleep_fn=lambda d: None)
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(len(tries), 2)
+        # The trailing enumerate is _detach_until_gone's re-query: it treats a
+        # fresh enumeration, not the detach's exit code, as the source of
+        # truth that the table is clear (roam-233).
+        self.assertEqual(events, ["attach", "enumerate", "detach:/dev/disk9",
+                                  "enumerate", "attach"])
+        self.assertEqual(errors, [])
+
     def test_packaging_mount_path_uses_the_recovery_helper(self):
         # Wiring check: the helper above is only worth anything if the real
         # mount path calls it. That path runs hdiutil and is skip-guarded off
@@ -725,13 +761,15 @@ class DmgCreateRetryTest(unittest.TestCase):
 
     def _package(self, create_rcs, **kw):
         """Drive package_dmg with `hdiutil create` scripted to the given
-        return codes. `ditto` always succeeds; no real hdiutil is invoked."""
-        cmds = []
+        return codes. `ditto` always succeeds; no real hdiutil is invoked.
+        Returns the count of `hdiutil create` invocations so the attempt
+        contract can be pinned, not just the delays."""
+        creates = []
 
         def fake_run(cmd, **kwargs):
-            cmds.append(cmd[0])
             if cmd[0] == "ditto":
                 return subprocess.CompletedProcess(cmd, 0, "", "")
+            creates.append(cmd)
             rc = create_rcs.pop(0)
             return subprocess.CompletedProcess(
                 cmd, rc, "", "hdiutil: create failed" if rc else "")
@@ -739,24 +777,51 @@ class DmgCreateRetryTest(unittest.TestCase):
         with mock.patch.object(package_roamux.subprocess, "run", fake_run):
             out = package_roamux.package_dmg(
                 self.tmp / "Roamux.app", self.tmp / "Roamux.dmg", **kw)
-        return out, cmds
+        return out, creates
 
     def test_create_retries_with_backoff_between_attempts(self):
         sleeps = []
-        self._package([1, 1, 0], sleep_fn=sleeps.append)
+        _, creates = self._package([1, 1, 0], sleep_fn=sleeps.append)
         self.assertEqual(sleeps, [2, 4])
+        self.assertEqual(len(creates), 3)
 
     def test_create_does_not_sleep_after_the_final_failure(self):
+        # Pins BOTH halves of the contract: exactly 4 attempts (a 3-attempt
+        # implementation sleeping after each failure would also produce 3
+        # sleeps) and no settle after the last one.
         sleeps = []
-        with self.assertRaises(RuntimeError) as cm:
-            self._package([1, 1, 1, 1], sleep_fn=sleeps.append)
+        rcs = [1, 1, 1, 1]
+        creates = []
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "ditto":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            creates.append(cmd)
+            return subprocess.CompletedProcess(
+                cmd, rcs.pop(0), "", "hdiutil: create failed")
+
+        with mock.patch.object(package_roamux.subprocess, "run", fake_run):
+            with self.assertRaises(RuntimeError) as cm:
+                package_roamux.package_dmg(
+                    self.tmp / "Roamux.app", self.tmp / "Roamux.dmg",
+                    sleep_fn=sleeps.append)
         self.assertIn("hdiutil create failed after retries", str(cm.exception))
-        self.assertEqual(len(sleeps), 3)
+        self.assertEqual(len(creates), 4, "the 4-attempt contract is preserved")
+        self.assertEqual(rcs, [], "every scripted failure must be consumed")
+        self.assertEqual(sleeps, [2, 4, 8])
 
     def test_create_first_try_success_never_sleeps(self):
         sleeps = []
-        self._package([0], sleep_fn=sleeps.append)
+        _, creates = self._package([0], sleep_fn=sleeps.append)
         self.assertEqual(sleeps, [])
+        self.assertEqual(len(creates), 1)
+
+    def test_create_schedule_is_shorter_than_the_attach_schedule(self):
+        # `create` has no leaked-device mode to clear, so it must not inherit
+        # the attach path's ~89 s settle and stall a release job.
+        self.assertEqual(package_roamux._CREATE_RETRY_DELAYS, (2, 4, 8))
+        self.assertLess(sum(package_roamux._CREATE_RETRY_DELAYS),
+                        sum(_RETRY_DELAYS))
 
     def test_create_default_path_sleeps_without_an_injected_sleep_fn(self):
         # Without this, every test above could pass over a production path

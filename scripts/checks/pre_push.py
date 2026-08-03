@@ -64,6 +64,17 @@ def _run_teed(cmd, log, **kwargs):
         except OSError as exc:
             print(f"pre-push: no durable log ({exc}); live output only.",
                   file=sys.stderr, flush=True)
+
+    def _close(handle):
+        try:
+            handle.close()
+        except OSError as exc:
+            # Close can flush buffered bytes and fail (full disk, dead NFS).
+            # That must NOT escape: proc.wait() below is what propagates the
+            # child's verdict, and losing it would fail a green gate.
+            print(f"pre-push: durable log close failed ({exc}).",
+                  file=sys.stderr, flush=True)
+
     try:
         for line in proc.stdout:
             sys.stdout.write(line)
@@ -71,12 +82,19 @@ def _run_teed(cmd, log, **kwargs):
             if sink is not None:
                 try:
                     sink.write(line)
-                except OSError:
+                    sink.flush()  # a crashed push must still leave the lines
+                except OSError as exc:
+                    print(f"pre-push: durable log disabled ({exc}); "
+                          "live output only.", file=sys.stderr, flush=True)
+                    _close(sink)
                     sink = None
     finally:
-        proc.stdout.close()
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
         if sink is not None:
-            sink.close()
+            _close(sink)
     return proc.wait()
 
 
@@ -94,6 +112,11 @@ def main():
     log = _log_path()
     if log is not None:
         print(f"pre-push: logging this run to {log}", flush=True)
+    else:
+        # Say so out loud: silently losing the durable evidence would recreate
+        # exactly the failure mode roam-259 is about.
+        print("pre-push: no durable log location could be resolved; "
+              "live output only.", file=sys.stderr, flush=True)
     print("pre-push: running the hermetic suite (checkout-free)...", flush=True)
     rc = _run_teed([sys.executable, "-m", "unittest", "discover", "-s", "roamux/build/tests"],
                    log, cwd=REPO, env=_clean_git_env())
