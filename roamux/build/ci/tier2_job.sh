@@ -5,7 +5,30 @@
 # two declared, restored channels: (1) the overlay symlink (flipped to this job's checkout, restored
 # by the EXIT trap), (2) the pristine-reconcile + idempotent fail-loud patch runhook (roam-175: the
 # base's tracked state is CI-owned). No sudo; no secrets on this tier.
+
+# roam-258: hold a power assertion for the WHOLE job before anything else runs.
+# The builder idle-sleeps after ONE minute on battery (pmset -b sleep 1); a long
+# compile is not user activity, so the machine sleeps, the runner stops renewing
+# the job lease, GitHub invalidates it, and the job reports as a failure with NO
+# failing step. Re-exec (rather than wrapping just the build) so every phase is
+# covered, and via exec so the tree stays flat — no background keep-alive to
+# leak. caffeinate propagates the child's status, preserving fail-loud.
+# Both guards matter: ROAMUX_CAFFEINATED stops infinite re-exec, and
+# `command -v` lets a machine without caffeinate proceed unprotected rather
+# than fail. NOTE: -i (PreventUserIdleSystemSleep) is the load-bearing flag —
+# -s is documented as effective only on AC, which is not the failing case.
+if [ -z "${ROAMUX_CAFFEINATED:-}" ] && command -v caffeinate >/dev/null 2>&1; then
+  export ROAMUX_CAFFEINATED=1
+  exec caffeinate -sim "$0" "$@"
+fi
+
 set -euo pipefail
+
+# roam-258: refuse a battery start BEFORE any side effect — before the env-contract checks, the
+# overlay symlink flip, the pristine reconcile, the patch runhook, the suites and the build. Path is
+# derived from THIS script's location, not the CWD: the workflows invoke us as
+# `bash roamux/build/ci/tier2_job.sh` from ${GITHUB_WORKSPACE} and we later `cd "${SRC}"`.
+bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/require_ac_power.sh"
 
 SRC="${ROAMUX_CHROMIUM_SRC:-${HOME}/chromium/src}"
 OUT="${ROAMUX_CI_OUT:-out/CI}"
