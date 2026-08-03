@@ -46,17 +46,23 @@ file is compiled into `roamux_browsertests`, which `roamux/build/ci/tier2_job.sh
 runs under the `Roamux*` filter (`:97`), as the `targeted-suite-selfhosted` required check. Second,
 **no job builds `interactive_ui_tests`** — the target appears in no workflow or build script.
 
-Against that, the repair options cost real surface for no enforced signal:
+Both repair options would preserve real behaviour that the overlay suite does not cover — the overlay
+suite checks command **presence and absence**, while the six upstream cases additionally drive toggle
+activation through the native system menu, round-trip expand-on-hover, and check badge type and
+visibility across a vertical↔horizontal transition. What neither option can do is make any of that
+*enforced*, and each carries a standing cost:
 
 - **Pin the flag off per case** (the `0061`/`0062` idiom). Every `patches/` entry is a standing
   obligation at each Chromium re-pin: `roamux/build/apply_patches.py` fails loudly on a patch that no
-  longer applies, and `tier2_job.sh:44` runs it. This would be the only entry in the stack whose
-  target file no job compiles — able to break CI at a re-pin, unable to signal anything before then —
-  and it would duplicate the flag-off control that already exists at `:139-160`.
+  longer applies, and `tier2_job.sh:44` runs it. Patch `0061` already carries that cost for an
+  upstream test file no job compiles, so this would deepen an existing liability rather than create a
+  new kind — more rebase surface, still no CI-enforced signal, and duplicating the flag-off control
+  that already exists at `:139-160`.
 - **Rewrite them to assert suppression.** The largest and most brittle upstream diff, to produce a
-  second copy of `:115-122` in a binary nothing runs. For the two badge cases it is not even
-  expressible: the test ignores the failed `GetModelAndIndexForCommandId` lookup, so there is no
-  assertion to invert — only a case to delete.
+  second copy of `:115-122` in a binary nothing runs. The badge cases *are* rewritable — asserting
+  that `GetModelAndIndexForCommandId` returns `false` would express the suppression correctly, rather
+  than the current silent fall-through to index `0` — but that assertion is exactly what
+  `:115-122` already makes, under CI, in Roamux's own terms.
 
 ## Decision
 
@@ -132,7 +138,10 @@ a description of how the failure feels. When the tracing is inconclusive, the fa
   stack, and therefore nothing to the per-re-pin rebase cost. Contract coverage stays in one place,
   `roamux/test`, where CI runs it and where it is expressed in Roamux's own terms.
 
-- **Harder:** `interactive_ui_tests` is now permanently non-green with the stack applied, so anyone
-  running it locally must consult this register to separate the known six from a real regression.
-  That cost is why the register records failure signatures and not just names — and it is bounded by
-  the same fact that made the decision cheap: no CI job runs the suite today.
+- **Harder:** `interactive_ui_tests` is deliberately left non-green under the current stack — until
+  these cases are reconciled under the re-entry condition above — so anyone running it locally must
+  consult this register to separate the known six from a real regression. That cost is why the
+  register records failure signatures and not just names, and it is bounded by the same fact that
+  made the decision cheap: no CI job runs the suite today. Local-only behavioural coverage of the
+  suppressed surfaces (toggle activation, expand-on-hover round-trip, badge transitions) is given up
+  with them; the suppression contract itself is not.
