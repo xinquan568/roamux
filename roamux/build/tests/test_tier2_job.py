@@ -6,10 +6,45 @@ declared, restored channels — the overlay symlink and the patch runhook. This 
 enforcement (discipline-plus-tests), explicitly not kernel/JIT isolation; see docs/ci/self-hosted-runner.md.
 """
 
+import os
 import pathlib
+import stat
+import subprocess
+import sys
+import tempfile
 import unittest
 
-SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "ci" / "tier2_job.sh"
+CI = pathlib.Path(__file__).resolve().parent.parent / "ci"
+SCRIPT = CI / "tier2_job.sh"
+POWER_GATE = CI / "require_ac_power.sh"
+REPO = pathlib.Path(__file__).resolve().parents[3]
+
+# Real `pmset -g batt` output shapes, captured from the builder.
+PMSET_AC = ("Now drawing from 'AC Power'\n"
+            " -InternalBattery-0 (id=24379491)\t80%; AC attached; not charging present: true\n")
+PMSET_BATTERY = ("Now drawing from 'Battery Power'\n"
+                 " -InternalBattery-0 (id=24379491)\t80%; discharging; 4:12 remaining present: true\n")
+
+
+def _fake_bin(dirpath, name, body):
+    p = pathlib.Path(dirpath) / name
+    p.write_text("#!/bin/bash\n" + body)
+    p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return p
+
+
+def _fake_pmset(dirpath, output, rc=0):
+    """A pmset that VALIDATES it was called as `-g batt` — so a gate probing
+    something else cannot quietly pass — and then emits the given shape."""
+    return _fake_bin(dirpath, "pmset", f"""
+if [ "$1" != "-g" ] || [ "$2" != "batt" ]; then
+  echo "fake pmset: unexpected args: $*" >&2
+  exit 99
+fi
+cat <<'EOF'
+{output}EOF
+exit {rc}
+""")
 
 
 class Tier2JobScriptTest(unittest.TestCase):
@@ -128,3 +163,148 @@ class Tier2JobScriptTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Tier2PowerGateTest(unittest.TestCase):
+    """roam-258: the builder idle-sleeps after ONE minute on battery (pmset -b
+    sleep 1), which kills long jobs with no failing step. These are BEHAVIOURAL
+    tests of the pre-flight — a fake pmset on PATH, never the real host."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-power-"))
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, ignore_errors=True)
+        self.assertTrue(POWER_GATE.exists(), f"missing {POWER_GATE}")
+
+    def _run(self, pmset_output, rc=0, env=None):
+        bindir = self.tmp / "bin"
+        bindir.mkdir(exist_ok=True)
+        _fake_pmset(bindir, pmset_output, rc)
+        e = dict(os.environ)
+        e["PATH"] = f"{bindir}:{e['PATH']}"
+        e.pop("ROAMUX_ALLOW_BATTERY", None)
+        e.update(env or {})
+        return subprocess.run(["bash", str(POWER_GATE)], capture_output=True,
+                              text=True, env=e, timeout=30)
+
+    def test_ac_power_passes(self):
+        r = self._run(PMSET_AC)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_battery_fails_fast_with_a_clear_message(self):
+        r = self._run(PMSET_BATTERY)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("battery", (r.stdout + r.stderr).lower())
+
+    def test_battery_message_carries_the_triage_discriminator(self):
+        # The log where the failure happens must distinguish idle-sleep from a
+        # network drop, so triage does not depend on log forensics.
+        r = self._run(PMSET_BATTERY)
+        out = (r.stdout + r.stderr).lower()
+        self.assertIn("renew", out, "must name the renewal-gap signature")
+
+    def test_allow_battery_escape_hatch_downgrades_to_a_warning(self):
+        r = self._run(PMSET_BATTERY, env={"ROAMUX_ALLOW_BATTERY": "1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = (r.stdout + r.stderr).lower()
+        self.assertIn("warning", out)
+        # It waives the guarantee — that must be said, not implied by silence.
+        self.assertTrue("waiv" in out or "no guarantee" in out or "may still" in out,
+                        f"the override must name itself as a waiver: {out}")
+
+    def test_emits_a_github_annotation(self):
+        r = self._run(PMSET_BATTERY)
+        self.assertIn("::error::", r.stdout + r.stderr)
+        w = self._run(PMSET_BATTERY, env={"ROAMUX_ALLOW_BATTERY": "1"})
+        self.assertIn("::warning::", w.stdout + w.stderr)
+
+    def test_unknown_power_state_fails_closed(self):
+        # Treating an unrecognised/failed probe as AC would hollow out the only
+        # deterministic guarantee this fix rests on.
+        for label, out, rc in (("nonzero", PMSET_AC, 3),
+                               ("garbage", "wat\n", 0),
+                               ("empty", "", 0)):
+            with self.subTest(label):
+                r = self._run(out, rc)
+                self.assertNotEqual(r.returncode, 0, f"{label} must fail closed")
+                self.assertIn("determine", (r.stdout + r.stderr).lower())
+
+    def test_script_is_executable_and_spdx_headed(self):
+        self.assertIn("SPDX-License-Identifier: Apache-2.0",
+                      POWER_GATE.read_text().splitlines()[1])
+        self.assertTrue(os.access(POWER_GATE, os.X_OK), "must be executable")
+
+
+class Tier2CaffeinateTest(unittest.TestCase):
+    """roam-258: the job must hold a power assertion for its whole body."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-caf-"))
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, ignore_errors=True)
+        self.text = SCRIPT.read_text()
+        self.code = "\n".join(l for l in self.text.splitlines()
+                              if not l.strip().startswith("#"))
+
+    def test_tier2_job_reexecs_under_caffeinate_once(self):
+        # BEHAVIOURAL: drive the real entry point the way the workflows do
+        # (`bash roamux/build/ci/tier2_job.sh`, CWD = repo root). Fake pmset
+        # reports battery so the run stops at the gate and never builds.
+        bindir = self.tmp / "bin"; bindir.mkdir()
+        count = self.tmp / "caffeinate.count"
+        argv = self.tmp / "caffeinate.argv"
+        _fake_pmset(bindir, PMSET_BATTERY)
+        # Fails FAST on re-entry: without this, a removed recursion guard would
+        # exec forever and this test would HANG instead of failing.
+        _fake_bin(bindir, "caffeinate", f"""
+echo x >> "{count}"
+n=$(wc -l < "{count}" | tr -d ' ')
+if [ "$n" -gt 1 ]; then
+  echo "fake caffeinate: re-entered ($n) — recursion guard is broken" >&2
+  exit 97
+fi
+echo "$@" > "{argv}"
+# Real caffeinate consumes its own flags, then execs the command. Without this,
+# bash's `exec` builtin would try to interpret -sim as ITS options.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+exec "$@"
+""")
+        e = dict(os.environ)
+        e["PATH"] = f"{bindir}:{e['PATH']}"
+        e["ROAMUX_CANONICAL_OVERLAY"] = str(self.tmp / "overlay")
+        e["GITHUB_WORKSPACE"] = str(self.tmp / "ws")
+        e.pop("ROAMUX_CAFFEINATED", None)
+        e.pop("ROAMUX_ALLOW_BATTERY", None)
+        r = subprocess.run(["bash", "roamux/build/ci/tier2_job.sh"],
+                           cwd=REPO, capture_output=True, text=True, env=e,
+                           timeout=120)
+        n = count.read_text().count("x") if count.exists() else 0
+        self.assertEqual(n, 1, f"expected exactly one caffeinate invocation, got {n}")
+        # -i (PreventUserIdleSystemSleep) is the load-bearing flag for the
+        # battery case; it may be combined, as in -sim.
+        flags = [a for a in argv.read_text().split() if a.startswith("-")]
+        self.assertTrue(any("i" in f for f in flags),
+                        f"caffeinate must be given -i (got {flags})")
+        out = r.stdout + r.stderr
+        self.assertIn("battery", out.lower(), out)
+        self.assertNotEqual(r.returncode, 0,
+                            "the gate's failure must propagate through caffeinate")
+        self.assertNotEqual(r.returncode, 97, "re-entered: recursion guard broken")
+
+    def test_tier2_caffeinate_guards_are_present(self):
+        self.assertIn("ROAMUX_CAFFEINATED", self.code, "recursion guard")
+        self.assertIn("command -v caffeinate", self.code,
+                      "a machine without caffeinate must proceed, not fail")
+
+    def test_tier2_power_gate_precedes_every_side_effect(self):
+        gate = self.code.find("require_ac_power.sh")
+        self.assertGreater(gate, 0, "the power gate must be invoked")
+        for marker in ("ln -sfn", "git -C", "apply_patches.py", "autoninja",
+                       "python3 -m unittest"):
+            at = self.code.find(marker)
+            if at > 0:
+                self.assertLess(gate, at,
+                                f"the power gate must precede `{marker}`")

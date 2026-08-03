@@ -477,3 +477,95 @@ class WorkflowInvariantsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SelfHostedPowerProtectionTest(unittest.TestCase):
+    """roam-258: every self-hosted job must be power-protected.
+
+    The builder idle-sleeps after ~1 minute on battery, which kills long jobs with NO failing step
+    and looks nearly identical to a builder network drop. Protection means BOTH: a fail-fast
+    pre-flight so a battery start is refused in seconds, and a caffeinate assertion over the long
+    commands so an unplug mid-run is survivable. Enumeration is deliberately independent of the
+    ROAMUX_CHROMIUM_DEPENDENT marker — release.yml's job carries no such marker, so a
+    marker-based scan would silently skip the longest job of the three.
+    """
+
+    GATE = "require_ac_power.sh"
+
+    def _selfhosted_jobs(self):
+        """{(workflow, job_name): job_text} for every job whose runs-on is self-hosted."""
+        jobs = {}
+        for wf in sorted(list(WORKFLOWS.glob("*.yml")) + list(WORKFLOWS.glob("*.yaml"))):
+            lines = wf.read_text().splitlines()
+            name, buf, in_jobs = None, [], False
+            def flush():
+                # Match the runs-on DECLARATION, not any mention: `targeted-suite`
+                # echoes the words "self-hosted" in a log line and is hosted.
+                if name and any(l.strip().startswith("runs-on:") and "self-hosted" in l
+                                for l in buf if not l.strip().startswith("#")):
+                    jobs[(wf.name, name)] = "\n".join(buf)
+            for line in lines:
+                if line.startswith("jobs:"):
+                    in_jobs = True
+                    continue
+                if not in_jobs:
+                    continue
+                stripped = line.strip()
+                # A job key is exactly two-space indented and ends with ':'.
+                if (line.startswith("  ") and not line.startswith("   ")
+                        and stripped.endswith(":") and not stripped.startswith("#")):
+                    flush()
+                    name, buf = stripped[:-1], []
+                elif name is not None:
+                    buf.append(line)
+            flush()
+        return jobs
+
+    def test_enumeration_finds_the_known_selfhosted_jobs(self):
+        # Non-vacuous: a broken parser must fail here rather than pass the
+        # coverage test below by finding nothing.
+        found = {(w, j) for (w, j) in self._selfhosted_jobs()}
+        for expected in (("ci.yml", "targeted-suite-selfhosted"),
+                         ("nightly.yml", "nightly-selfhosted"),
+                         ("release.yml", "build-sign-package")):
+            self.assertIn(expected, found, f"parser missed {expected}; found {sorted(found)}")
+
+    def test_every_selfhosted_job_is_power_protected(self):
+        for (wf, job), text in self._selfhosted_jobs().items():
+            with self.subTest(f"{wf}:{job}"):
+                body = "\n".join(l for l in text.splitlines()
+                                 if not l.strip().startswith("#"))
+                if "tier2_job.sh" in body:
+                    # Protection is proven behaviourally in test_tier2_job.py
+                    # (re-exec under caffeinate + the gate before any side effect).
+                    continue
+                # Otherwise the job must carry BOTH halves itself. A bare
+                # `caffeinate` occurrence is NOT accepted as protection: it could
+                # wrap something incidental while the real body stays exposed.
+                self.assertIn(self.GATE, body,
+                              f"{wf}:{job} has no power pre-flight")
+                self.assertIn("caffeinate", body,
+                              f"{wf}:{job} does not hold a power assertion")
+
+    def test_release_long_builds_are_caffeinated(self):
+        text = (WORKFLOWS / "release.yml").read_text()
+        body = "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
+        for cmd in ("autoninja", "universalizer.py"):
+            idx = body.find(cmd)
+            self.assertGreater(idx, 0, f"{cmd} not found")
+            line_start = body.rfind("\n", 0, idx) + 1
+            self.assertIn("caffeinate", body[line_start:idx],
+                          f"the long `{cmd}` invocation must be wrapped in caffeinate")
+
+    def test_release_power_gate_precedes_the_expensive_steps(self):
+        body = "\n".join(l for l in (WORKFLOWS / "release.yml").read_text().splitlines()
+                         if not l.strip().startswith("#"))
+        gate = body.find(self.GATE)
+        self.assertGreater(gate, 0, "release.yml must run the power pre-flight")
+        self.assertGreater(gate, body.find("actions/checkout"),
+                           "the gate needs the checked-out script")
+        for expensive in ("fetch_sparkle.py", "apply_patches.py", "autoninja",
+                          "universalizer.py"):
+            at = body.find(expensive)
+            if at > 0:
+                self.assertLess(gate, at, f"the power gate must precede `{expensive}`")
