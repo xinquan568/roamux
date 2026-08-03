@@ -625,7 +625,7 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
             steps.append("\n".join(cur))
         idx = [i for i, st in enumerate(steps) if "actions/checkout" in st]
         self.assertTrue(idx, "release.yml must check out the overlay")
-        after = steps[idx[-1] + 1]
+        after = _executable_text(steps[idx[-1] + 1])
         self.assertRegex(after, _RE_GATE,
                          "the power gate must be the FIRST step after checkout, "
                          f"but that step is: {after.splitlines()[0].strip()}")
