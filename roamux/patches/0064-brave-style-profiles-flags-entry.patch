@@ -1,0 +1,48 @@
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -4743,6 +4743,18 @@
+ //
+ // When adding a new choice, add it to the end of the list.
+ const FeatureEntry kFeatureEntries[] = {
++    // Roamux (roam-266): the E5 Brave-style profiles feature, graduated to
++    // default-on for v0.0.1-alpha.9. This entry is the kill-switch — every
++    // other Roamux flag already shipped one when it graduated (roam-226), and
++    // without it this would be the only default-on flag a user cannot turn
++    // off. Listed ahead of roamux-signin-opt-in because that row is the child
++    // control: it is hidden entirely while this feature is off.
++    {"roamux-brave-style-profiles", "Roamux: Brave-style profiles",
++     "Suppresses the default Chromium sign-in surfaces and takes profile "
++     "creation down the name-only path. Turn this off to restore stock "
++     "Chromium profile and sign-in behaviour.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kBraveStyleProfiles)},
+     // Roamux (roam-31): developer mirror of
+     // roamux.signin.optional_entry_point_enabled (E5). Functional sign-in
+     // additionally requires a keyed-and-authorized build (three-state
+diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
+--- a/chrome/browser/flag-metadata.json
++++ b/chrome/browser/flag-metadata.json
+@@ -8401,6 +8401,11 @@
+     "expiry_milestone": -1
+   },
+   {
++    "name": "roamux-brave-style-profiles",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
+     "name": "roamux-edge-import",
+     "owners": [ "xinquan568@users.noreply.github.com" ],
+     "expiry_milestone": -1
+diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-never-expire-list.json
+--- a/chrome/browser/flag-never-expire-list.json
++++ b/chrome/browser/flag-never-expire-list.json
+@@ -116,6 +116,7 @@
+   "release-notes-notification-all-channels",
+   "release-notes-notification-always-eligible",
+   "roamux-bookmark-subfolder-groups",
++  "roamux-brave-style-profiles",
+   "roamux-edge-import",
+   "roamux-external-open-profile",
+   "roamux-initial-url",
