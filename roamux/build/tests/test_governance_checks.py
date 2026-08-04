@@ -160,7 +160,7 @@ class PrePushEnvSanitizationTest(unittest.TestCase):
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         with mock.patch.dict(os.environ, environ, clear=True):
-            return mod._clean_git_env()
+            return mod._sanitized_child_env()
 
     def test_require_dmg_mount_is_stripped(self):
         env = self._child_env({"REQUIRE_DMG_MOUNT": "1", "PATH": "/usr/bin"})

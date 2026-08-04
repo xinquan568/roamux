@@ -14,9 +14,13 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 GTEST_TARGET = "roamux_unittests"
 
 
-def _clean_git_env():
-    # git exports GIT_DIR/GIT_INDEX_FILE/... into hooks; strip them so the fixture tests' throwaway
-    # `git -C <tmp>` repos are not hijacked into the real repo.
+def _sanitized_child_env():
+    """The environment this hook hands to its children. Two responsibilities:
+
+    1. git hygiene — git exports GIT_DIR/GIT_INDEX_FILE/... into hooks; strip them so the fixture
+       tests' throwaway `git -C <tmp>` repos are not hijacked into the real repo.
+    2. gate policy — strip opt-ins that would re-add work this gate deliberately does not do.
+    """
     #
     # REQUIRE_DMG_MOUNT (roam-261): stripped so `git push` NEVER mounts a disk image, whatever the
     # developer has exported. The mount is opt-in per tier and this tier does not opt in — it was
@@ -40,7 +44,7 @@ def _log_path():
     never blocks a push."""
     try:
         out = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=REPO,
-                             env=_clean_git_env(), capture_output=True,
+                             env=_sanitized_child_env(), capture_output=True,
                              text=True)
         if out.returncode == 0 and out.stdout.strip():
             git_dir = pathlib.Path(out.stdout.strip())
@@ -126,7 +130,7 @@ def main():
               "live output only.", file=sys.stderr, flush=True)
     print("pre-push: running the hermetic suite (checkout-free)...", flush=True)
     rc = _run_teed([sys.executable, "-m", "unittest", "discover", "-s", "roamux/build/tests"],
-                   log, cwd=REPO, env=_clean_git_env())
+                   log, cwd=REPO, env=_sanitized_child_env())
     if rc != 0:
         print("pre-push: hermetic suite FAILED — push blocked.", file=sys.stderr, flush=True)
         return rc

@@ -545,11 +545,36 @@ class DmgMountWiringTest(unittest.TestCase):
         return result
 
     def test_required_but_unavailable_is_a_failure_not_a_skip(self):
+        boom = mock.Mock(side_effect=AssertionError("package_dmg was reached"))
         with mock.patch.dict(os.environ, {"REQUIRE_DMG_MOUNT": "1"}), \
-                mock.patch(__name__ + "._has", return_value=False):
+                mock.patch(__name__ + "._has", return_value=False), \
+                mock.patch.object(package_roamux, "package_dmg", boom):
             result = self._run_dmg_case()
         self.assertEqual(1, len(result.failures), result.failures)
         self.assertEqual([], result.skipped)
+        self.assertEqual([], result.errors)
+        # Assert WHICH failure — otherwise any unrelated later assertion would
+        # satisfy the count and this would stop testing the gate.
+        self.assertIn("REQUIRE_DMG_MOUNT", result.failures[0][1])
+        self.assertIn("hdiutil", result.failures[0][1])
+        boom.assert_not_called()
+
+    def test_required_and_available_reaches_packaging(self):
+        # The branch the other two cannot see: a preamble that skipped by
+        # default but failed EVERY opted-in run would keep them both green.
+        # Prove the opted-in path gets PAST the preamble by making the first
+        # step after it raise a distinctive sentinel — no image is ever built
+        # or mounted, so this stays hermetic and instant.
+        sentinel = mock.Mock(side_effect=RuntimeError("REACHED_PACKAGING"))
+        with mock.patch.dict(os.environ, {"REQUIRE_DMG_MOUNT": "1"}), \
+                mock.patch(__name__ + "._has", return_value=True), \
+                mock.patch.object(package_roamux, "package_dmg", sentinel):
+            result = self._run_dmg_case()
+        self.assertEqual([], result.skipped, "opted-in tier must not skip")
+        self.assertEqual([], result.failures, result.failures)
+        self.assertEqual(1, len(result.errors), result.errors)
+        self.assertIn("REACHED_PACKAGING", result.errors[0][1])
+        sentinel.assert_called_once()
 
     def test_unset_skips_before_any_mounting_work(self):
         # package_dmg raises if reached, so this also proves the gate short-

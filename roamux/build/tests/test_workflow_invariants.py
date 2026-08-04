@@ -72,6 +72,24 @@ def _read(name):
     return path.read_text()
 
 
+def _job_block(text, job_id):
+    """The lines of one named job, independent of where it sits in the mapping.
+
+    A new top-level job key (two-space indent, ends with ':') closes the block —
+    the same rule _marked_job_blocks uses."""
+    lines, block, capturing = text.splitlines(), [], False
+    for line in lines:
+        if line.rstrip() == f"  {job_id}:":
+            capturing = True
+            continue
+        if capturing:
+            if (line.startswith("  ") and not line.startswith("   ")
+                    and line.rstrip().endswith(":")):
+                break
+            block.append(line)
+    return "\n".join(block) if block else None
+
+
 def _marked_job_blocks(text):
     """Split a workflow into chunks per marked (Chromium-dependent) job, marker line included."""
     blocks, current, capturing = [], [], False
@@ -189,12 +207,18 @@ class WorkflowInvariantsTest(unittest.TestCase):
         # Roamux.dmg to a single conditional job.
         text = _read("nightly.yml")
         self.assertIsNotNone(text, "nightly.yml missing")
-        hosted = text.split("nightly-selfhosted")[0]
-        self.assertIn("REQUIRE_DMG_MOUNT=1", hosted,
+        block = _job_block(text, "hermetic-suite")
+        self.assertIsNotNone(block, "nightly.yml has no hermetic-suite job")
+        # Assert ONE logical run command carries both — asserting the two
+        # strings independently would pass with the opt-in parked on an
+        # unrelated step, where the unittest process never sees it. Job order
+        # is irrelevant because the block is keyed by name, not position.
+        runs = [l for l in block.replace("\\\n", " ").splitlines()
+                if "unittest discover" in l]
+        self.assertEqual(1, len(runs), f"expected 1 discovery run, got {runs}")
+        self.assertIn("REQUIRE_DMG_MOUNT=1", runs[0],
                       "nightly's hosted suite must opt into the disk-image "
-                      "mount (roam-261)")
-        self.assertIn("unittest discover", hosted,
-                      "the opt-in must sit on the hermetic-suite run")
+                      "mount on the discovery command itself (roam-261)")
 
     def test_release_binds_environment_and_tag_triggers_only(self):
         text = _read("release.yml")
