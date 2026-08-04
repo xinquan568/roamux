@@ -63,12 +63,21 @@ jobs:
       - name: Checkout overlay
         uses: actions/checkout@v4
 
+      # roam-258: refuse a battery start before any expensive work. This job is hours long, so it is
+      # the likeliest of the three self-hosted jobs to be killed by idle sleep (~1 min on battery)
+      # and reported as a failure with NO failing step. The long commands below are additionally
+      # wrapped in `caffeinate`, which covers being unplugged mid-run — a case no start-time check
+      # can see. Placed with the other instant fail-fast gates, before Sparkle/signing/build.
+      - name: Require AC power (roam-258)
+        run: bash roamux/build/ci/require_ac_power.sh
+
       # roam-156: fail before any build work if the tag disagrees with the checked-in
       # marketing version. roamux/build/VERSION is the source of truth (it is compiled
       # in and rides the appcast); the tag must name the same version, or the release
       # would ship a binary whose About page and update dialog contradict each other.
-      # Deliberately the first step after checkout — everything below it (Sparkle,
-      # signing, the universal2 build) is expensive and pointless if this fails.
+      # Deliberately among the first steps after checkout (alongside roam-258's power
+      # gate) — everything below (Sparkle, signing, the universal2 build) is expensive
+      # and pointless if this fails.
       - name: Assert tag matches roamux/build/VERSION
         run: python3 roamux/build/release_version.py --check-tag "${GITHUB_REF_NAME}"
 
@@ -130,7 +139,10 @@ jobs:
             # so <out>/Chromium Packaging/signing/ (with the GN-generated build_props_config.py
             # that config_factory.get_class needs) exists for sign_roamux — the source tree
             # never has it. It is arch-independent; building it per slice is harmless.
-            autoninja -C "${CHROMIUM_SRC}/out/Release-${cpu}" chrome "chrome/installer/mac:copy_signing"
+            # roam-258: hold a power assertion across the hours-long slice build — idle sleep
+            # would otherwise kill the job with no failing step. caffeinate propagates the
+            # child's status, so the fail-fast checks below are unaffected.
+            caffeinate -sim autoninja -C "${CHROMIUM_SRC}/out/Release-${cpu}" chrome "chrome/installer/mac:copy_signing"
             want="${cpu}"; [ "${want}" = "x64" ] && want="x86_64"
             slice_archs="$(lipo -archs "${CHROMIUM_SRC}/out/Release-${cpu}/Chromium.app/Contents/MacOS/Chromium")"
             [ "${slice_archs}" = "${want}" ] \
@@ -142,7 +154,7 @@ jobs:
           # self-heals a stale Roamux.app).
           mkdir -p "${CHROMIUM_SRC}/out/Release"
           rm -rf "${CHROMIUM_SRC}/out/Release/Chromium.app"
-          python3 "${CHROMIUM_SRC}/chrome/installer/mac/universalizer.py" \
+          caffeinate -sim python3 "${CHROMIUM_SRC}/chrome/installer/mac/universalizer.py" \
             "${CHROMIUM_SRC}/out/Release-arm64/Chromium.app" \
             "${CHROMIUM_SRC}/out/Release-x64/Chromium.app" \
             "${CHROMIUM_SRC}/out/Release/Chromium.app"
