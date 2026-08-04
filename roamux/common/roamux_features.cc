@@ -16,8 +16,15 @@ BASE_FEATURE(kBookmarkSubfolderGroups,
              base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kTabVisitNav, "RoamuxTabVisitNav",
              base::FEATURE_ENABLED_BY_DEFAULT);  // roam-189: shipped default-on
+// roam-266: shipped default-on for v0.0.1-alpha.9
+// (chrome://flags/#roamux-brave-style-profiles lets users opt out — patch 0064
+// adds that entry in the same change; graduating without it would have made
+// this the only default-on flag with no kill-switch). Flag-on suppresses the
+// default sign-in surfaces (sign-in stays inert-with-explanation unless the
+// build is keyed and authorized) and takes profile creation down the name-only
+// path; roamux-signin-opt-in re-exposes the Chromium sign-in/sync surfaces.
 BASE_FEATURE(kBraveStyleProfiles, "RoamuxBraveStyleProfiles",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 // roam-179: ENABLED by default — the E8 rebrand's user-visible scheme
 // branding ships on (D3); the flag stays as a kill-switch (flag-off identity
 // is pinned at the browser level).

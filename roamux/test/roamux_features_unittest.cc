@@ -15,10 +15,34 @@ TEST(RoamuxFeaturesTest, FeatureTogglesOnUnderScopedFeatureList) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(roamux::features::kTabVisitNav);
   EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kTabVisitNav));
-  // A flag not named in the override keeps its (disabled) default. roam-185
-  // and roam-187 shipped their flags default-ON; kBraveStyleProfiles (E5, not
-  // scheduled to graduate) is the stable still-disabled example.
-  EXPECT_FALSE(
+  // A flag not named in the override keeps its default. roam-266 graduated
+  // kBraveStyleProfiles, so EVERY Roamux flag now ships default-ON and this
+  // direction no longer discriminates on its own — see
+  // ScopedOverrideLeavesUnnamedFeaturesAtTheirDefault below, which runs the
+  // proof in the direction that still can.
+  EXPECT_TRUE(
+      base::FeatureList::IsEnabled(roamux::features::kBraveStyleProfiles));
+}
+
+TEST(RoamuxFeaturesTest, ScopedOverrideLeavesUnnamedFeaturesAtTheirDefault) {
+  // roam-266: with no disabled-by-default flag left, the scoping proof has to
+  // run the other way — DISABLE one flag and require an unnamed one to stay
+  // enabled. Without this, a ScopedFeatureList that leaked its override across
+  // every Roamux flag would pass the enable-direction test above unnoticed.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(roamux::features::kTabVisitNav);
+  EXPECT_FALSE(base::FeatureList::IsEnabled(roamux::features::kTabVisitNav));
+  EXPECT_TRUE(
+      base::FeatureList::IsEnabled(roamux::features::kBraveStyleProfiles));
+}
+
+TEST(RoamuxFeaturesTest, BraveStyleProfilesEnabledByDefault) {
+  // roam-266: the E5 Brave-style profiles feature ships enabled by default in
+  // v0.0.1-alpha.9 (chrome://flags/#roamux-brave-style-profiles lets users opt
+  // out — added by patch 0064 in the same change, since graduating without a
+  // kill-switch would have made this the only default-on flag with no
+  // off-switch).
+  EXPECT_TRUE(
       base::FeatureList::IsEnabled(roamux::features::kBraveStyleProfiles));
 }
 
