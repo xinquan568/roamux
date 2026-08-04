@@ -88,7 +88,16 @@ python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
 # the pipeline" assertions live. This runner HAS the checkout, so run them
 # fail-not-skip (REQUIRE_SIGNING_PARTS=1 turns a skip into a failure). Hermetic
 # (tmp fixtures; no real codesign/notarize) — imports ${SRC} read-only.
-( cd "${GITHUB_WORKSPACE}" && REQUIRE_SIGNING_PARTS=1 ROAMUX_CHROMIUM_SRC="${SRC}" \
+#
+# roam-261: this run is also one of the two homes of the disk-image mount case
+# (test_dmg_preserves_symlinks_and_exec_bits). It is opt-in per tier now — it
+# was 35-45% of the hermetic push gate's wall clock and is the least hermetic
+# thing in that suite — so REQUIRE_DMG_MOUNT=1 is what keeps tier-2 exercising
+# the shipped Roamux.dmg's symlink/exec-bit preservation. Fail-not-skip: with
+# the flag set, a missing hdiutil FAILS rather than skipping. Asserted by
+# test_tier2_job.py; the rationale lives above dmg_mount_decision.
+( cd "${GITHUB_WORKSPACE}" && REQUIRE_SIGNING_PARTS=1 REQUIRE_DMG_MOUNT=1 \
+    ROAMUX_CHROMIUM_SRC="${SRC}" \
     python3 -m unittest roamux.build.tests.test_release_signing )
 
 # Warm CI build dir: APFS-clone the operator's warm out/Default on first use (copy-on-write).

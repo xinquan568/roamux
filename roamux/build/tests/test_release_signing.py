@@ -362,6 +362,61 @@ class RenameBundleTest(unittest.TestCase):
                          "no stamp requested -> no version rewrite")
 
 
+# ---------------------------------------------------------------------------
+# roam-261: the disk-image mount is opt-in per tier. THE DECISION AND WHY.
+#
+# `test_dmg_preserves_symlinks_and_exec_bits` is the only test in this repo that
+# mounts a real disk image. It used to run on every path that ran the hermetic
+# suite: `git push` (scripts/checks/pre_push.py), tier-1 CI's required `lint`
+# job, the nightly hosted suite, and tier-2. roam-259 fixed its `hdiutil attach`
+# flake (detach the leaked device, then retry), so this is NOT a flake work-
+# around — the case was measured 5/5 green after that fix, and again here.
+#
+# It is gated for two reasons that survive roam-259 having worked:
+#   1. Wall clock. Measured on the dev Mac: this one case takes 10.2-38.2s
+#      (load-sensitive), against ~26.5-30.2s for the whole 351-test suite. One
+#      test of 351 was 35-45% of a gate whose entire purpose is fast feedback.
+#   2. Hermeticity. The suite is documented as hermetic; mounting a real disk
+#      image on a shared host is the least hermetic thing in it (see roam-233
+#      for the leak/contention history that motivated the mount hygiene above).
+#
+# Rejected alternatives (roam-261 offered three):
+#   - Move all of PackagingTest: refused. `test_zip_preserves_symlinks_and_
+#     exec_bits` costs ~0.1s and needs no hdiutil; exiling it buys nothing.
+#   - Keep it on the push path: refused on 1 and 2 above, not on flake rate.
+#
+# ACCEPTED COST, stated plainly: breaking DMG symlink/exec-bit preservation is
+# now caught at tier-2 or nightly, not at push. `package_dmg` is release-
+# critical (.github/workflows/release.yml builds the shipped Roamux.dmg through
+# it), so the case is kept in TWO opt-in homes, not one — tier-2
+# (roamux/build/ci/tier2_job.sh) and the nightly hosted run — because tier-2
+# alone is conditional on vars.ROAMUX_CI_CHROMIUM_RUNNER and is unreachable for
+# fork PRs (R15). Both opt-ins are asserted: test_tier2_job.py and
+# test_workflow_invariants.py respectively.
+#
+# Fail-not-skip is the load-bearing property (mirrors REQUIRE_GRIT /
+# REQUIRE_SIGNING_PARTS): a tier that ASKS for the mount and cannot have it
+# fails loudly, because a silent skip there would mean the case runs nowhere.
+# ---------------------------------------------------------------------------
+def dmg_mount_decision(environ, has_hdiutil):
+    """Return ('run', None) | ('skip', reason) | ('fail', reason).
+
+    Extracted so the tier policy is assertable without mounting anything
+    (mirrors scripts/checks/pre_push.py's `gtest_decision`, covered in
+    test_governance_checks.py). Inputs are explicit — no globals — so both
+    branches are reachable in a test on any host."""
+    if environ.get("REQUIRE_DMG_MOUNT") != "1":
+        return ("skip",
+                "disk-image mount is opt-in per tier (roam-261): set "
+                "REQUIRE_DMG_MOUNT=1 to run it. Runs in tier-2 "
+                "(roamux/build/ci/tier2_job.sh) and the nightly hosted suite.")
+    if not has_hdiutil:
+        return ("fail",
+                "REQUIRE_DMG_MOUNT=1 but hdiutil is unavailable — this tier "
+                "asked for the disk-image mount and cannot run it")
+    return ("run", None)
+
+
 class PackagingTest(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-pkg-"))
@@ -390,8 +445,14 @@ class PackagingTest(unittest.TestCase):
         self._assert_preserved(dest / "Roamux.app")
 
     def test_dmg_preserves_symlinks_and_exec_bits(self):
-        if not _has("hdiutil"):
-            self.skipTest("hdiutil unavailable (non-macOS)")
+        # roam-261: opt-in per tier — see dmg_mount_decision's rationale above.
+        # Consulted BEFORE any packaging work, so a skipping tier never builds
+        # or mounts an image.
+        action, reason = dmg_mount_decision(os.environ, _has("hdiutil"))
+        if action == "skip":
+            self.skipTest(reason)
+        if action == "fail":
+            self.fail(reason)
         out = self.tmp / "Roamux.dmg"
         package_roamux.package_dmg(self.app, out, volname="Roamux")
         # roam-233: cleanup is registered BEFORE attach and keyed by the image
@@ -430,6 +491,104 @@ class PackagingTest(unittest.TestCase):
                        for i, t in enumerate(tries)),
                    state))
         self._assert_preserved(mountpoint / "Roamux.app")
+
+
+class DmgMountGateTest(unittest.TestCase):
+    """roam-261: the tier gate itself, asserted without mounting anything.
+
+    Extracted decision + direct coverage mirrors scripts/checks/pre_push.py's
+    `gtest_decision` (covered in test_governance_checks.py) — the point is that
+    the POLICY can be verified in ~0ms, while the disk-image mount it governs
+    stays where the policy puts it."""
+
+    def test_unset_skips(self):
+        self.assertEqual(
+            "skip", dmg_mount_decision({}, True)[0],
+            "default (no tier opted in) must skip, not mount")
+
+    def test_required_with_hdiutil_runs(self):
+        action, reason = dmg_mount_decision({"REQUIRE_DMG_MOUNT": "1"}, True)
+        self.assertEqual("run", action)
+        self.assertIsNone(reason)
+
+    def test_required_without_hdiutil_fails_not_skips(self):
+        # The load-bearing case: a tier that ASKED for the mount and cannot get
+        # it must fail loudly. A skip here would mean the case silently runs
+        # nowhere — the exact regression roam-261's acceptance guards against.
+        action, reason = dmg_mount_decision({"REQUIRE_DMG_MOUNT": "1"}, False)
+        self.assertEqual("fail", action)
+        self.assertIn("hdiutil", reason)
+
+    def test_only_exactly_one_enables(self):
+        # Mirrors the REQUIRE_SIGNING_PARTS == "1" / REQUIRE_GRIT idiom: no
+        # truthiness games, so a stray `export REQUIRE_DMG_MOUNT=0` cannot read
+        # as an opt-in.
+        for value in ("0", "true", "yes", "", "1 "):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    "skip",
+                    dmg_mount_decision({"REQUIRE_DMG_MOUNT": value}, True)[0])
+
+
+class DmgMountWiringTest(unittest.TestCase):
+    """roam-261: that PackagingTest actually HONOURS the gate.
+
+    DmgMountGateTest proves the decision; only this proves the wiring. A
+    preamble that called skipTest() where it should call fail() would leave
+    every gate-level assertion green while the case quietly ran nowhere."""
+
+    @staticmethod
+    def _run_dmg_case():
+        case = PackagingTest("test_dmg_preserves_symlinks_and_exec_bits")
+        result = unittest.TestResult()
+        case.run(result)
+        return result
+
+    def test_required_but_unavailable_is_a_failure_not_a_skip(self):
+        boom = mock.Mock(side_effect=AssertionError("package_dmg was reached"))
+        with mock.patch.dict(os.environ, {"REQUIRE_DMG_MOUNT": "1"}), \
+                mock.patch(__name__ + "._has", return_value=False), \
+                mock.patch.object(package_roamux, "package_dmg", boom):
+            result = self._run_dmg_case()
+        self.assertEqual(1, len(result.failures), result.failures)
+        self.assertEqual([], result.skipped)
+        self.assertEqual([], result.errors)
+        # Assert WHICH failure — otherwise any unrelated later assertion would
+        # satisfy the count and this would stop testing the gate.
+        self.assertIn("REQUIRE_DMG_MOUNT", result.failures[0][1])
+        self.assertIn("hdiutil", result.failures[0][1])
+        boom.assert_not_called()
+
+    def test_required_and_available_reaches_packaging(self):
+        # The branch the other two cannot see: a preamble that skipped by
+        # default but failed EVERY opted-in run would keep them both green.
+        # Prove the opted-in path gets PAST the preamble by making the first
+        # step after it raise a distinctive sentinel — no image is ever built
+        # or mounted, so this stays hermetic and instant.
+        sentinel = mock.Mock(side_effect=RuntimeError("REACHED_PACKAGING"))
+        with mock.patch.dict(os.environ, {"REQUIRE_DMG_MOUNT": "1"}), \
+                mock.patch(__name__ + "._has", return_value=True), \
+                mock.patch.object(package_roamux, "package_dmg", sentinel):
+            result = self._run_dmg_case()
+        self.assertEqual([], result.skipped, "opted-in tier must not skip")
+        self.assertEqual([], result.failures, result.failures)
+        self.assertEqual(1, len(result.errors), result.errors)
+        self.assertIn("REACHED_PACKAGING", result.errors[0][1])
+        sentinel.assert_called_once()
+
+    def test_unset_skips_before_any_mounting_work(self):
+        # package_dmg raises if reached, so this also proves the gate short-
+        # circuits BEFORE the expensive work — not after building an image.
+        boom = mock.Mock(side_effect=AssertionError("package_dmg was reached"))
+        env = {k: v for k, v in os.environ.items()
+               if k != "REQUIRE_DMG_MOUNT"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(package_roamux, "package_dmg", boom):
+            result = self._run_dmg_case()
+        self.assertEqual(1, len(result.skipped), result.skipped)
+        self.assertEqual([], result.failures)
+        self.assertEqual([], result.errors)
+        boom.assert_not_called()
 
 
 class DmgMountHygieneTest(unittest.TestCase):

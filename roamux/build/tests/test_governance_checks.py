@@ -146,6 +146,32 @@ class PrePushDecisionTest(unittest.TestCase):
         self.assertEqual(src, str(d))
 
 
+class PrePushEnvSanitizationTest(unittest.TestCase):
+    """roam-261: `git push` must not mount a disk image, unconditionally.
+
+    The hook hands its own environment to the hermetic child, so a developer
+    with `REQUIRE_DMG_MOUNT=1` exported would silently pull the mount back onto
+    the push path — the very thing roam-261 removes. Strip it at the seam."""
+
+    def _child_env(self, environ):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "pre_push", str(CHECKS / "pre_push.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with mock.patch.dict(os.environ, environ, clear=True):
+            return mod._sanitized_child_env()
+
+    def test_require_dmg_mount_is_stripped(self):
+        env = self._child_env({"REQUIRE_DMG_MOUNT": "1", "PATH": "/usr/bin"})
+        self.assertNotIn("REQUIRE_DMG_MOUNT", env)
+
+    def test_unrelated_vars_survive(self):
+        env = self._child_env({"PATH": "/usr/bin", "HOME": "/tmp/x"})
+        self.assertEqual("/usr/bin", env.get("PATH"))
+        self.assertEqual("/tmp/x", env.get("HOME"))
+
+
 class PrePushReportingTest(unittest.TestCase):
     """roam-259: a blocked push must leave the failing test's output somewhere
     durable. Progress went to block-buffered stdout while failures went to
