@@ -120,6 +120,29 @@ class Tier2JobScriptTest(unittest.TestCase):
             self.assertIn("--test-launcher-retry-limit=", line,
                           f"suite run without an explicit retry limit: {line.strip()}")
 
+    def test_release_signing_run_opts_into_the_dmg_mount(self):
+        # roam-261: the disk-image mount is opt-in per tier (see
+        # dmg_mount_decision in test_release_signing.py). Tier-2 is one of its
+        # only two homes now that the hermetic push path skips it, and it lives
+        # here only because this line opts in — assert the opt-in explicitly so
+        # it cannot be dropped by a later edit to the invocation. Without it the
+        # case would silently run NOWHERE on this tier, which is the specific
+        # regression roam-261's acceptance guards against.
+        # Join backslash continuations so the whole invocation is ONE logical
+        # line — the env prefix and the module name are on separate physical
+        # lines, and asserting them apart would pass on an unrelated pairing.
+        joined = self.code.replace("\\\n", " ")
+        runs = [l for l in joined.splitlines()
+                if "unittest roamux.build.tests.test_release_signing" in l]
+        self.assertEqual(1, len(runs),
+                         f"expected exactly 1 test_release_signing run, got {runs}")
+        self.assertIn("REQUIRE_DMG_MOUNT=1", runs[0],
+                      "the test_release_signing run must set "
+                      "REQUIRE_DMG_MOUNT=1 (roam-261) or tier-2 silently "
+                      "stops exercising the disk-image mount")
+        self.assertIn("REQUIRE_SIGNING_PARTS=1", runs[0],
+                      "roam-97's checkout-backed gate must survive alongside it")
+
     def test_no_sudo_no_secret_use(self):
         self.assertNotIn("sudo", self.code)
         self.assertNotIn("secrets.", self.text)

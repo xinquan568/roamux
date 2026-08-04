@@ -17,9 +17,16 @@ GTEST_TARGET = "roamux_unittests"
 def _clean_git_env():
     # git exports GIT_DIR/GIT_INDEX_FILE/... into hooks; strip them so the fixture tests' throwaway
     # `git -C <tmp>` repos are not hijacked into the real repo.
+    #
+    # REQUIRE_DMG_MOUNT (roam-261): stripped so `git push` NEVER mounts a disk image, whatever the
+    # developer has exported. The mount is opt-in per tier and this tier does not opt in — it was
+    # 35-45% of this gate's wall clock. Deliberate: a shell-level opt-in reaching this child would
+    # silently restore the cost that roam-261 removed. Direct local runs
+    # (`REQUIRE_DMG_MOUNT=1 python3 -m unittest ...`) and both CI opt-ins are unaffected.
     return {k: v for k, v in os.environ.items()
             if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX",
-                         "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")}
+                         "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                         "REQUIRE_DMG_MOUNT")}
 
 
 def _log_path():

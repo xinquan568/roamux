@@ -13,8 +13,13 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Hermetic suite (always runs)
-        run: python3 -m unittest discover -s roamux/build/tests -v
+      # roam-261: the suite plus the disk-image mount case, which is opt-in per tier
+      # (REQUIRE_DMG_MOUNT). It is off the push path and off the required `lint` gate for
+      # wall-clock and hermeticity reasons, so this scheduled hosted run is its only home
+      # that does NOT depend on vars.ROAMUX_CI_CHROMIUM_RUNNER. Not purely hermetic by
+      # design — see dmg_mount_decision in test_release_signing.py.
+      - name: Hermetic suite + the opt-in disk-image mount (always runs)
+        run: REQUIRE_DMG_MOUNT=1 python3 -m unittest discover -s roamux/build/tests -v
 
   nightly-selfhosted:
     # ROAMUX_CHROMIUM_DEPENDENT: the nightly warm-base build + full Roamux suites (roam-36, §12.6).

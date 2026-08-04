@@ -47,6 +47,11 @@ These encode the tier-1 + release posture structurally, so every future workflow
       simulator matches only prefixes of the current stack, so a base left at a superseded
       stack (any patch-rewriting/deleting change since the last release) or carrying a prior
       release's rebrand mutations would otherwise fail — or silently contaminate — the build.
+  17. nightly.yml's hosted suite opts into the disk-image mount (REQUIRE_DMG_MOUNT=1, roam-261).
+      The mount is off the push path and off the required `lint` gate, so its only homes are
+      tier-2 and this scheduled hosted run — and tier-2 is conditional on the capability var
+      and unreachable for fork PRs (R15). Without this opt-in the one test covering the shipped
+      Roamux.dmg's symlink/exec-bit preservation would depend on a single conditional job.
 """
 
 import pathlib
@@ -176,6 +181,20 @@ class WorkflowInvariantsTest(unittest.TestCase):
         for block in blocks:
             self.assertIn(CAPABILITY_VAR, block,
                           "nightly Chromium work lacks the capability gate")
+
+    def test_nightly_hosted_suite_opts_into_the_dmg_mount(self):
+        # Invariant 17 (roam-261). The hosted nightly run is the mount's only
+        # home that is NOT conditional on vars.ROAMUX_CI_CHROMIUM_RUNNER, so
+        # dropping this opt-in would quietly reduce coverage of the shipped
+        # Roamux.dmg to a single conditional job.
+        text = _read("nightly.yml")
+        self.assertIsNotNone(text, "nightly.yml missing")
+        hosted = text.split("nightly-selfhosted")[0]
+        self.assertIn("REQUIRE_DMG_MOUNT=1", hosted,
+                      "nightly's hosted suite must opt into the disk-image "
+                      "mount (roam-261)")
+        self.assertIn("unittest discover", hosted,
+                      "the opt-in must sit on the hermetic-suite run")
 
     def test_release_binds_environment_and_tag_triggers_only(self):
         text = _read("release.yml")
