@@ -107,8 +107,18 @@ void InitialUrlRefreshScheduler::StartFromCursor() {
         // from here (C1b), so waiting out one more interval would be wrong.
         Finish();
       } else {
+        // Anchor the backstop to the PREVIOUS START, not to the moment
+        // StartItem returned. The delegate does real work — roam-269's
+        // StartItem resolves a TabHandle and calls LoadURLWithParams — and
+        // charging that time on top of `interval` would push every timeout
+        // start later than the rule allows, compounding across the run.
+        // §2.3 says "`interval` after the previous start", and the settle path
+        // below already measures from last_start_; this keeps the two paths
+        // anchored to the same instant.
         timer_.Start(
-            FROM_HERE, params_.interval,
+            FROM_HERE,
+            std::max(base::TimeDelta(),
+                     last_start_ + params_.interval - tick_clock_->NowTicks()),
             base::BindOnce(&InitialUrlRefreshScheduler::OnIntervalElapsed,
                            weak_factory_.GetWeakPtr()));
       }

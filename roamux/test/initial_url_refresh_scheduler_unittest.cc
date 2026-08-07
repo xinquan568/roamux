@@ -15,7 +15,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
@@ -31,11 +33,18 @@ constexpr base::TimeDelta kMinSpacing = base::Milliseconds(750);
 // script per-index eligibility, deferral, and a synchronous settle.
 class FakeDelegate : public InitialUrlRefreshScheduler::Delegate {
  public:
-  explicit FakeDelegate(const base::TickClock* clock) : clock_(clock) {}
+  FakeDelegate(const base::TickClock* clock,
+               base::test::TaskEnvironment* task_environment)
+      : clock_(clock), task_environment_(task_environment) {}
 
   // Delegate:
   bool StartItem(size_t index) override {
     starts_.push_back({index, clock_->NowTicks()});
+    // A real StartItem does work (roam-269 resolves a TabHandle and calls
+    // LoadURLWithParams), so let a test charge that time to the delegate.
+    if (!start_latency_.is_zero()) {
+      task_environment_->AdvanceClock(start_latency_);
+    }
     if (!eligible_.empty() && index < eligible_.size() && !eligible_[index]) {
       return false;
     }
@@ -52,6 +61,11 @@ class FakeDelegate : public InitialUrlRefreshScheduler::Delegate {
   void OnRunFinished() override {
     ++finish_count_;
     finish_time_ = clock_->NowTicks();
+    // §4.1 permits the delegate to destroy the scheduler from here (roam-269
+    // erases its run from the per-Browser map).
+    if (destroy_on_finish_) {
+      std::move(destroy_on_finish_).Run();
+    }
   }
 
   struct StartRecord {
@@ -63,6 +77,10 @@ class FakeDelegate : public InitialUrlRefreshScheduler::Delegate {
   void set_eligible(std::vector<bool> e) { eligible_ = std::move(e); }
   void set_defer(bool d) { defer_ = d; }
   void set_settle_synchronously(bool s) { settle_synchronously_ = s; }
+  void set_start_latency(base::TimeDelta d) { start_latency_ = d; }
+  void set_destroy_on_finish(base::OnceClosure c) {
+    destroy_on_finish_ = std::move(c);
+  }
 
   const std::vector<StartRecord>& starts() const { return starts_; }
   std::vector<size_t> started_indices() const {
@@ -78,11 +96,14 @@ class FakeDelegate : public InitialUrlRefreshScheduler::Delegate {
 
  private:
   raw_ptr<const base::TickClock> clock_;
+  raw_ptr<base::test::TaskEnvironment> task_environment_;
   raw_ptr<InitialUrlRefreshScheduler> scheduler_ = nullptr;
   std::vector<StartRecord> starts_;
   std::vector<bool> eligible_;
   bool defer_ = false;
   bool settle_synchronously_ = false;
+  base::TimeDelta start_latency_;
+  base::OnceClosure destroy_on_finish_;
   int finish_count_ = 0;
   int defer_checks_ = 0;
   base::TimeTicks finish_time_;
@@ -92,7 +113,7 @@ class InitialUrlRefreshSchedulerTest : public testing::Test {
  protected:
   InitialUrlRefreshSchedulerTest()
       : task_environment_(base::test::TaskEnvironment::TimeSource::MOCK_TIME),
-        delegate_(task_environment_.GetMockTickClock()) {}
+        delegate_(task_environment_.GetMockTickClock(), &task_environment_) {}
 
   // Builds the scheduler with the given knobs and points the fake back at it
   // (needed for the synchronous-settle case).
@@ -279,8 +300,9 @@ TEST_F(InitialUrlRefreshSchedulerTest,
   EXPECT_EQ((std::vector<size_t>{0u, 1u, 2u, 3u}), delegate_.started_indices());
 }
 
-// 8b. A queue where every item is skipped finishes in the first turn, with no
-//     timer ever armed.
+// 8, continued: a queue where EVERY item is skipped finishes in the first turn,
+// with no timer ever armed. Same property as above (a skip costs nothing), at
+// the boundary where the run never starts anything at all.
 TEST_F(InitialUrlRefreshSchedulerTest, AllSkippedQueueFinishesImmediately) {
   auto& scheduler = MakeScheduler();
   const base::TimeTicks t0 = Now();
@@ -291,6 +313,85 @@ TEST_F(InitialUrlRefreshSchedulerTest, AllSkippedQueueFinishesImmediately) {
   EXPECT_EQ(3u, delegate_.starts().size());
   EXPECT_EQ(1, delegate_.finish_count());
   EXPECT_EQ(t0, delegate_.finish_time());
+  EXPECT_FALSE(scheduler.is_running());
+
+  // Nothing was scheduled, so time passing changes nothing.
+  task_environment_.FastForwardBy(kInterval * 3);
+  EXPECT_EQ(3u, delegate_.starts().size());
+  EXPECT_EQ(1, delegate_.finish_count());
+}
+
+// 8c. An EMPTY run finishes immediately and exactly once (the Start(0) contract
+//     on the header).
+TEST_F(InitialUrlRefreshSchedulerTest,
+       EmptyRunFinishesImmediatelyAndExactlyOnce) {
+  auto& scheduler = MakeScheduler();
+  const base::TimeTicks t0 = Now();
+
+  scheduler.Start(0);
+
+  EXPECT_TRUE(delegate_.starts().empty());
+  EXPECT_EQ(1, delegate_.finish_count());
+  EXPECT_EQ(t0, delegate_.finish_time());
+  EXPECT_FALSE(scheduler.is_running());
+
+  task_environment_.FastForwardBy(kInterval * 3);
+  EXPECT_EQ(1, delegate_.finish_count());
+}
+
+// 8d. The interval backstop is anchored to the previous START, not to the
+//     moment StartItem returned. A delegate that consumes time must not push
+//     subsequent starts later than the rule allows, and that error must not
+//     compound across the run. (§2.3: "`interval` after the previous start".)
+TEST_F(InitialUrlRefreshSchedulerTest, SlowDelegateDoesNotPushOutTheInterval) {
+  auto& scheduler = MakeScheduler();
+  const base::TimeTicks t0 = Now();
+  constexpr base::TimeDelta kLatency = base::Seconds(2);
+  delegate_.set_start_latency(kLatency);
+
+  scheduler.Start(3);
+  task_environment_.FastForwardBy(kInterval * 3);
+
+  ASSERT_EQ(3u, delegate_.starts().size());
+  // Anchored: 0s, 5s, 10s. Anchoring to StartItem's RETURN instead would give
+  // 0s, 7s, 14s — the 2s latency charged on top of every interval.
+  EXPECT_EQ(t0, delegate_.starts()[0].at);
+  EXPECT_EQ(t0 + kInterval, delegate_.starts()[1].at);
+  EXPECT_EQ(t0 + kInterval * 2, delegate_.starts()[2].at);
+}
+
+// 8e. The delegate may destroy the scheduler from inside OnRunFinished — the
+//     §4.1 clause roam-269 relies on when it erases its run from the
+//     per-Browser map.
+TEST_F(InitialUrlRefreshSchedulerTest,
+       DelegateMayDestroySchedulerFromOnRunFinished) {
+  auto& scheduler = MakeScheduler();
+  delegate_.set_destroy_on_finish(base::BindLambdaForTesting([this] {
+    delegate_.set_scheduler(nullptr);
+    scheduler_.reset();
+  }));
+
+  // A single item: the run finishes as soon as that item's load STARTS.
+  scheduler.Start(1);
+
+  EXPECT_EQ(1, delegate_.finish_count());
+  EXPECT_FALSE(scheduler_) << "the delegate destroyed it from OnRunFinished";
+  task_environment_.FastForwardBy(kInterval * 3);
+  EXPECT_EQ(1, delegate_.finish_count());
+}
+
+// 8f. A synchronous settle on the FINAL item still finishes exactly once: the
+//     run is already finished when the posted settle would have been delivered.
+TEST_F(InitialUrlRefreshSchedulerTest,
+       FinalItemSynchronousSettleFinishesExactlyOnce) {
+  auto& scheduler = MakeScheduler();
+  delegate_.set_settle_synchronously(true);
+
+  scheduler.Start(2);
+  task_environment_.FastForwardBy(kInterval * 3);
+
+  EXPECT_EQ(2u, delegate_.starts().size());
+  EXPECT_EQ(1, delegate_.finish_count());
   EXPECT_FALSE(scheduler.is_running());
 }
 
@@ -414,6 +515,55 @@ TEST(InitialUrlRefreshSchedulerParamsTest, ValidationFollowsTheThreeStepOrder) {
     const Params p = Params::FromMilliseconds(1000, 2000);
     EXPECT_EQ(base::Milliseconds(1000), p.interval);
     EXPECT_EQ(base::Milliseconds(1000), p.min_spacing);
+  }
+
+  // The bounds are INCLUSIVE. Pin every endpoint exactly, so an implementation
+  // that made any of them exclusive fails here rather than passing the broad
+  // invariants below.
+  {
+    const Params p =
+        Params::FromMilliseconds(InitialUrlRefreshScheduler::kMinIntervalMs,
+                                 InitialUrlRefreshScheduler::kMinMinSpacingMs);
+    EXPECT_EQ(base::Milliseconds(InitialUrlRefreshScheduler::kMinIntervalMs),
+              p.interval);
+    EXPECT_EQ(base::Milliseconds(InitialUrlRefreshScheduler::kMinMinSpacingMs),
+              p.min_spacing);
+  }
+  {
+    const Params p =
+        Params::FromMilliseconds(InitialUrlRefreshScheduler::kMaxIntervalMs,
+                                 InitialUrlRefreshScheduler::kMaxMinSpacingMs);
+    EXPECT_EQ(base::Milliseconds(InitialUrlRefreshScheduler::kMaxIntervalMs),
+              p.interval);
+    // Both at max: equal, so the relational clamp is a no-op.
+    EXPECT_EQ(base::Milliseconds(InitialUrlRefreshScheduler::kMaxMinSpacingMs),
+              p.min_spacing);
+  }
+  // Just outside each inclusive bound falls back to the default.
+  {
+    const Params p = Params::FromMilliseconds(
+        InitialUrlRefreshScheduler::kMinIntervalMs - 1,
+        InitialUrlRefreshScheduler::kMinMinSpacingMs - 1);
+    EXPECT_EQ(kDefaultInterval, p.interval);
+    EXPECT_EQ(kDefaultMinSpacing, p.min_spacing);
+  }
+
+  // Mixed cases that pin the ORDER of the two steps: absolute validation runs
+  // first and yields defaults, and only then does the relational clamp apply.
+  {
+    // interval 100 is invalid -> default 5000; min_spacing 1000 is valid and
+    // below 5000, so it survives unclamped.
+    const Params p = Params::FromMilliseconds(100, 1000);
+    EXPECT_EQ(kDefaultInterval, p.interval);
+    EXPECT_EQ(base::Milliseconds(1000), p.min_spacing);
+  }
+  {
+    // min_spacing 0 is invalid -> default 750; interval 250 is valid, and the
+    // relational clamp then pulls 750 down to 250. Clipping 0 to the 100 ms
+    // bound instead would have produced 100 here.
+    const Params p = Params::FromMilliseconds(250, 0);
+    EXPECT_EQ(base::Milliseconds(250), p.interval);
+    EXPECT_EQ(base::Milliseconds(250), p.min_spacing);
   }
 
   // No configuration yields a zero-delay burst or a permanently stalled queue.

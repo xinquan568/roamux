@@ -74,6 +74,21 @@ TEST_F(ReloadInitialUrlPredicateTest, AgreesWhenTabHasNoInitialUrl) {
             CanReloadInitialUrlForContents(contents));
 }
 
+// The plain CAPTURED state: no SetUser/SetRestored call, just the roam-11
+// capture rule running on the tab's first user-intended navigation. This is the
+// state the refresh-all run will meet most often in the wild.
+TEST_F(ReloadInitialUrlPredicateTest, AgreesWhenInitialUrlWasCaptured) {
+  content::WebContents* contents = AddTabWithHelper(GURL(kOther));
+  ASSERT_TRUE(HelperFor(contents)->has_initial_url())
+      << "patch 0009 attaches the helper to every tab, so a first navigation "
+         "to a non-ignorable URL captures it";
+  EXPECT_EQ(GURL(kOther), HelperFor(contents)->initial_url());
+
+  EXPECT_TRUE(CanReloadInitialUrlForContents(contents));
+  EXPECT_EQ(CanReloadInitialUrl(browser()),
+            CanReloadInitialUrlForContents(contents));
+}
+
 TEST_F(ReloadInitialUrlPredicateTest, AgreesWhenInitialUrlIsUserSetAndLocked) {
   content::WebContents* contents = AddTabWithHelper(GURL(kOther));
   HelperFor(contents)->SetUserInitialUrl(GURL(kInitial));
