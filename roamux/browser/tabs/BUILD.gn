@@ -6,6 +6,8 @@
 
 source_set("tabs") {
   sources = [
+    "initial_url_refresh_scheduler.cc",
+    "initial_url_refresh_scheduler.h",
     "shortcut_registry.cc",
     "shortcut_registry.h",
     "tab_uid_service.cc",
