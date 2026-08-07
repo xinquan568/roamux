@@ -25,13 +25,26 @@ TabInitialUrlHelper* ActiveTabHelper(const Browser* browser) {
 
 }  // namespace
 
-bool CanReloadInitialUrl(const Browser* browser) {
+bool CanReloadInitialUrlForContents(content::WebContents* contents) {
   if (!base::FeatureList::IsEnabled(features::kInitialUrl)) {
     return false;
   }
-  TabInitialUrlHelper* helper = ActiveTabHelper(browser);
+  if (!contents) {
+    return false;
+  }
+  TabInitialUrlHelper* helper = TabInitialUrlHelper::FromWebContents(contents);
   return helper && helper->has_initial_url() &&
          helper->initial_url().is_valid();
+}
+
+bool CanReloadInitialUrl(const Browser* browser) {
+  // roam-268: the flag gate lives in the per-contents predicate above, so both
+  // entry points gate identically and this lift stays behaviour-preserving.
+  if (!browser) {
+    return false;
+  }
+  return CanReloadInitialUrlForContents(
+      browser->tab_strip_model()->GetActiveWebContents());
 }
 
 void ReloadInitialUrl(Browser* browser) {

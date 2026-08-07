@@ -70,6 +70,7 @@ test("roamux_unittests") {
     "test/edge_profile_reader_unittest.cc",
     "test/edge_secret_decryptor_unittest.mm",
     "test/external_open_profile_unittest.cc",
+    "test/initial_url_refresh_scheduler_unittest.cc",
     "test/roamux_appcast_verifier_unittest.cc",
     "test/roamux_edge_import_driver_unittest.cc",
     "test/roamux_features_unittest.cc",
@@ -135,6 +136,7 @@ test("roamux_unittests") {
 # so the target uses Chrome's canonical unit-test main, //chrome/test:test_support_unit.
 test("roamux_browser_unittests") {
   sources = [
+    "test/reload_initial_url_predicate_unittest.cc",
     "test/roamux_browser_prefs_hook_unittest.cc",
     "test/roamux_scheme_classifier_unittest.cc",
     "test/roamux_settings_private_prefs_unittest.cc",
@@ -145,6 +147,12 @@ test("roamux_browser_unittests") {
   deps = [
     "//base",
     "//chrome/browser",
+
+    # roam-268: UNCONDITIONAL. reload_initial_url_command.cc is compiled into
+    # //chrome/browser/ui by patch 0010, so the predicate suite needs this edge
+    # in every configuration — not only under roamux_enable_sparkle, where it
+    # used to be added as a side effect of the roam-160 native-row adapter.
+    "//chrome/browser/ui",
     "//chrome/test:test_support_unit",
     "//components/pref_registry",
     "//components/sync_preferences:test_support",
@@ -172,7 +180,8 @@ test("roamux_browser_unittests") {
       "browser/updates/roamux_version_updater.h",
       "test/roamux_version_updater_unittest.cc",
     ]
-    deps += [ "//chrome/browser/ui" ]
+
+    # //chrome/browser/ui is now an unconditional dep above (roam-268).
   }
 }
 
@@ -193,8 +202,6 @@ test("roamux_browsertests") {
     "test/roamux_external_open_settings_browsertest.cc",
     "test/roamux_frame_rtl_fullscreen_browsertest.cc",
     "test/roamux_hide_upstream_tab_controls_browsertest.cc",
-    "test/roamux_vertical_tabs_mode_notify_browsertest.cc",
-    "test/roamux_vertical_tabs_telemetry_browsertest.cc",
     "test/roamux_indexed_db_import_browsertest.cc",
     "test/roamux_initial_url_browsertest.cc",
     "test/roamux_initial_url_edit_browsertest.cc",
@@ -225,6 +232,8 @@ test("roamux_browsertests") {
     "test/roamux_vertical_strip_placement_browsertest.cc",
     "test/roamux_vertical_strip_roamux_only_menu_browsertest.mm",
     "test/roamux_vertical_strip_roamux_only_startup_browsertest.cc",
+    "test/roamux_vertical_tabs_mode_notify_browsertest.cc",
+    "test/roamux_vertical_tabs_telemetry_browsertest.cc",
     "test/support/roamux_browser_test.cc",
     "test/support/roamux_browser_test.h",
     "test/support/sso_test_server.cc",
@@ -257,8 +266,8 @@ test("roamux_browsertests") {
 
     # roam-240: RoamuxBrowserTest::SetUpCommandLine appends the exported
     # kDisableFieldTrialTestingConfig constant owned by this component.
-    "//components/variations",
     "//components/user_data_importer/common",
+    "//components/variations",
     "//content/test:test_support",
     "//google_apis",
     "//net:test_support",
