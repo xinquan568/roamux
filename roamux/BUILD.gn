@@ -209,6 +209,7 @@ test("roamux_browsertests") {
     "test/roamux_omnibox_icon_browsertest.cc",
     "test/roamux_origin_storage_import_browsertest.cc",
     "test/roamux_profile_creation_browsertest.cc",
+    "test/roamux_refresh_all_initial_urls_browsertest.mm",
     "test/roamux_reload_initial_url_browsertest.mm",
     "test/roamux_scheme_alias_browsertest.cc",
     "test/roamux_scheme_display_browsertest.cc",

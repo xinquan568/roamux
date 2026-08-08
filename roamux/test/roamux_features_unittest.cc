@@ -95,4 +95,16 @@ TEST(RoamuxFeaturesTest, ExternalOpenProfileEnabledByDefault) {
       roamux::features::kRoamuxExternalOpenProfile));
 }
 
+// roam-269: the refresh-all-initial-URLs feature ships DEFAULT-ON (its
+// chrome://flags entry, patch 0066, is the kill-switch), and its two tunable
+// params carry the §7.3 defaults when unset.
+TEST(RoamuxFeaturesTest, RefreshAllInitialUrlsShipsDefaultOn) {
+  EXPECT_TRUE(
+      base::FeatureList::IsEnabled(roamux::features::kRefreshAllInitialUrls));
+}
+
+TEST(RoamuxFeaturesTest, RefreshAllInitialUrlsParamDefaults) {
+  EXPECT_EQ(5000, roamux::features::kRefreshAllInitialUrlsIntervalMs.Get());
+  EXPECT_EQ(750, roamux::features::kRefreshAllInitialUrlsMinSpacingMs.Get());
+}
 }  // namespace
