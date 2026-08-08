@@ -126,17 +126,35 @@ bool InitialUrlRefreshRun::StartItem(size_t index) {
   content::NavigationController::LoadURLParams params(helper->initial_url());
   params.transition_type = ui::PageTransitionFromInt(
       ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
+
+  // Observe BEFORE starting the load. A browser-initiated navigation with no
+  // beforeunload handler — the common case — dispatches DidStartNavigation
+  // SYNCHRONOUSLY inside LoadURLWithParams. Observing afterwards misses it, so
+  // `attempt_started_` never flips, DidStopLoading is rejected by the §2.6 gate
+  // forever, and NO attempt ever settles: the completion accelerator dies
+  // silently and every run degrades to plain fixed-interval pacing (§2.2: ~40s
+  // becomes 3min15s for 40 fast tabs). Because the navigation id is only known
+  // once the call returns, a start seen during the call is BUFFERED here and
+  // reconciled against the returned handle below.
+  Observe(contents);
+  in_load_call_ = true;
+  buffered_start_id_ = 0;
   base::WeakPtr<content::NavigationHandle> handle =
       contents->GetController().LoadURLWithParams(params);
+  in_load_call_ = false;
+
   if (!handle) {
+    Observe(nullptr);
+    buffered_start_id_ = 0;
     return false;
   }
 
-  // §2.6: remember OUR navigation id and observe this tab. The attempt is
-  // Pending until DidStartNavigation matches that id; only then may
-  // DidStopLoading settle it.
   pending_navigation_id_ = handle->GetNavigationId();
-  Observe(contents);
+  // Reconcile the buffered synchronous start, if there was one.
+  if (buffered_start_id_ != 0 && buffered_start_id_ == pending_navigation_id_) {
+    attempt_started_ = true;
+  }
+  buffered_start_id_ = 0;
   return true;
 }
 
@@ -163,6 +181,12 @@ void InitialUrlRefreshRun::OnRunFinished() {
 void InitialUrlRefreshRun::DidStartNavigation(
     content::NavigationHandle* handle) {
   if (!handle->IsInPrimaryMainFrame()) {
+    return;
+  }
+  if (in_load_call_) {
+    // Fired synchronously from inside LoadURLWithParams: the id we are going to
+    // compare against has not been returned to us yet. Buffer and reconcile.
+    buffered_start_id_ = handle->GetNavigationId();
     return;
   }
   if (pending_navigation_id_ != 0 &&

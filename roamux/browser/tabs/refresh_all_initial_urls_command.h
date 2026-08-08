@@ -23,7 +23,7 @@ namespace roamux::tabs {
 // Browser derives from it, so one predicate serves both the command-controller
 // site and the shortcut_registry_mac event-window seam, which already resolves
 // BrowserWindowInterface* (the CanToggleTabStrip precedent, roam-214).
-bool CanRefreshAllInitialUrls(BrowserWindowInterface* browser);
+bool CanRefreshAllInitialUrls(const BrowserWindowInterface* browser);
 
 // Starts a run over `browser`'s tabs, or CANCELS the run already in flight for
 // that browser (§3.5 C1 — a second press cancels; the loading tab is left

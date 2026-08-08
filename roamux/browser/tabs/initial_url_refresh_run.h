@@ -79,6 +79,10 @@ class InitialUrlRefreshRun : public InitialUrlRefreshScheduler::Delegate,
   size_t current_index_ = 0;
   int64_t pending_navigation_id_ = 0;
   bool attempt_started_ = false;
+  // A DidStartNavigation seen synchronously from inside LoadURLWithParams,
+  // before the returned handle told us which id to expect.
+  bool in_load_call_ = false;
+  int64_t buffered_start_id_ = 0;
   FinishedCallback finished_callback_;
   base::CallbackListSubscription browser_close_subscription_;
   base::WeakPtrFactory<InitialUrlRefreshRun> weak_factory_{this};

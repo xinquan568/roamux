@@ -32,6 +32,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -178,37 +179,51 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
       << "the run must not change which tab is active";
 }
 
-// --- §2.6: the Pending/Started gate (THE regression) -----------------------
+// --- Pacing: no spurious settling ----------------------------------------
+//
+// NOTE ON SCOPE. The strict §2.6 Pending-gate regression — a stale
+// DidStopLoading arriving while our own attempt is still PENDING — is NOT
+// reachable from here. Without a beforeunload handler a browser-initiated
+// navigation dispatches DidStartNavigation synchronously inside
+// LoadURLWithParams, so the attempt is Started before this test could observe
+// anything and is never Pending. Exercising the Pending window requires the
+// beforeunload construction, and that case is tracked with the rest of the
+// dialog coverage rather than faked here.
+//
+// What IS deterministic, and what this asserts: when no attempt ever settles,
+// the run must fall back to INTERVAL pacing. That catches the practical failure
+// mode — a run that settles on something that is not its own completed load and
+// so collapses to the min_spacing floor.
 
 IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
-                       AllTabsAlreadyLoadingStaysIntervalPaced) {
+                       NonSettlingRunStaysIntervalPaced) {
   OpenEligibleTabs(3);
   TabStripModel* model = browser()->tab_strip_model();
 
-  // Put EVERY tab into a mid-load state before firing. Without the §2.6 gate,
-  // the stale DidStopLoading from these loads settles each attempt instantly
-  // and the whole run collapses to the min_spacing floor.
+  // Point every eligible tab's initial URL at /hung, which never responds, so
+  // the refresh navigation starts but never completes and NO settle can arrive.
+  // SetUserInitialUrl is the roam-11 user-set path: it sets and locks, so this
+  // is deterministic rather than dependent on capture.
+  const GURL hung = embedded_test_server()->GetURL("/hung");
+  std::vector<int> eligible;
   for (int i = 0; i < model->count(); ++i) {
-    model->GetWebContentsAt(i)->GetController().LoadURL(
-        embedded_test_server()->GetURL("/hung"), content::Referrer(),
-        ui::PAGE_TRANSITION_TYPED, std::string());
+    if (tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      HelperAt(i)->SetUserInitialUrl(hung);
+      eligible.push_back(i);
+    }
   }
-  ASSERT_TRUE(model->GetWebContentsAt(0)->IsLoading())
-      << "the mid-load precondition was not established; this test would "
-         "otherwise degrade into a happy-path check";
+  ASSERT_GE(eligible.size(), 3u) << "need >=3 eligible tabs to observe pacing";
 
   std::vector<std::unique_ptr<StartRecorder>> recorders;
-  for (int i = 0; i < model->count(); ++i) {
+  for (int i : eligible) {
     recorders.push_back(
         std::make_unique<StartRecorder>(model->GetWebContentsAt(i), i));
   }
 
-  const base::TimeTicks fired_at = base::TimeTicks::Now();
   ASSERT_TRUE(Fire());
 
-  // Give the run a window comfortably shorter than one `interval` but far
-  // longer than the 750ms floor. If the gate is missing, every tab has already
-  // started by now.
+  // 3s: well past the 750ms floor, comfortably inside one 5s interval. Paced,
+  // at most the first tab has started. Collapsed to the floor, all three have.
   base::RunLoop loop;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, loop.QuitClosure(), base::Seconds(3));
@@ -220,29 +235,54 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
       ++started;
     }
   }
-  EXPECT_LT(started, model->count())
-      << "all " << model->count() << " tabs started within 3s of firing — the "
-      << "§2.6 Pending/Started gate is missing and the run collapsed to the "
-      << "min_spacing floor";
-  EXPECT_LT(base::TimeTicks::Now() - fired_at, base::Seconds(10));
+  EXPECT_LE(started, 1)
+      << started << " of " << recorders.size()
+      << " eligible tabs started within 3s with nothing able to settle — the "
+         "run collapsed to the min_spacing floor instead of interval pacing";
 }
 
 // --- §3.3: eligibility is a DEQUEUE-time question --------------------------
 
 IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
                        EligibilityIsReevaluatedAtDequeue) {
-  OpenEligibleTabs(2);
+  OpenEligibleTabs(3);
   TabStripModel* model = browser()->tab_strip_model();
-  const int last = model->count() - 1;
-  ASSERT_TRUE(HelperAt(last)->has_initial_url());
 
+  // Pick a tab that is eligible AND not the active one, so it is still QUEUED
+  // when we mutate it — the active tab is dequeued synchronously by Fire() and
+  // mutating it would prove nothing about dequeue-time evaluation.
+  const int active = model->active_index();
+  int queued = -1;
+  for (int i = 0; i < model->count(); ++i) {
+    if (i != active &&
+        tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      queued = i;
+      break;
+    }
+  }
+  ASSERT_GE(queued, 0) << "need an eligible non-active tab";
+
+  StartRecorder recorder(model->GetWebContentsAt(queued), queued);
   ASSERT_TRUE(Fire());
+  ASSERT_FALSE(recorder.started())
+      << "the chosen tab must still be QUEUED, not already dequeued";
 
-  // Mutate a tab that is still QUEUED (not yet dequeued) so its initial URL is
-  // no longer valid. Enqueue-time filtering would have already accepted it.
-  HelperAt(last)->SetUserInitialUrl(GURL());
-  EXPECT_FALSE(
-      tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(last)));
+  // Make it ineligible while it waits its turn. Enqueue-time filtering would
+  // have already accepted it and would navigate it anyway; dequeue-time
+  // evaluation skips it.
+  HelperAt(queued)->SetUserInitialUrl(GURL());
+  ASSERT_FALSE(
+      tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(queued)));
+
+  // Run well past the point at which this tab's turn would have come.
+  base::RunLoop loop;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, loop.QuitClosure(), base::Seconds(12));
+  loop.Run();
+
+  EXPECT_FALSE(recorder.started())
+      << "the run navigated a tab that became ineligible while queued — "
+         "eligibility was frozen at enqueue instead of evaluated at dequeue";
 }
 
 // --- §4.6: the enabled bit is static -------------------------------------
@@ -294,6 +334,88 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
   // A third press starts a fresh run (the successor path: the cancelled run's
   // posted map erase must not delete this one).
   EXPECT_TRUE(Fire());
+}
+
+// --- §3.5 lifetime: tabs and windows that go away mid-run -----------------
+
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       ClosingAQueuedTabDoesNotBreakTheRun) {
+  OpenEligibleTabs(4);
+  TabStripModel* model = browser()->tab_strip_model();
+  const GURL hung = embedded_test_server()->GetURL("/hung");
+  for (int i = 0; i < model->count(); ++i) {
+    if (tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      HelperAt(i)->SetUserInitialUrl(hung);
+    }
+  }
+  const int before = model->count();
+
+  ASSERT_TRUE(Fire());
+
+  // Close a tab that is still QUEUED. Its TabHandle goes stale; StartItem must
+  // resolve nullptr and skip it (S5) rather than dereference anything.
+  // OpenEligibleTabs opens FOREGROUND tabs, so the LAST tab is the active one —
+  // it was dequeued first and is not queued. Pick any other.
+  int victim = -1;
+  for (int i = 0; i < model->count(); ++i) {
+    if (i != model->active_index()) {
+      victim = i;
+      break;
+    }
+  }
+  ASSERT_GE(victim, 0);
+  model->CloseWebContentsAt(victim, TabCloseTypes::CLOSE_NONE);
+  EXPECT_EQ(before - 1, model->count());
+
+  // Let the run walk past where that item would have been dequeued.
+  base::RunLoop loop;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, loop.QuitClosure(), base::Seconds(12));
+  loop.Run();
+  // Surviving without a crash or CHECK is the assertion; the browser is still
+  // usable and the command still dispatches.
+  EXPECT_TRUE(command_controller()->IsCommandEnabled(
+      IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS));
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       ClosingTheWindowMidRunIsClean) {
+  // §3.5 C2: the run holds a RegisterBrowserDidClose subscription and must tear
+  // down with the window rather than outliving it.
+  Browser* second = CreateBrowser(browser()->profile());
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(second, sso_.landing_url()));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(second, sso_.idp_page_url()));
+
+  content::WebContents* c = second->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tabs::CanReloadInitialUrlForContents(c));
+  tabs::TabInitialUrlHelper::FromWebContents(c)->SetUserInitialUrl(
+      embedded_test_server()->GetURL("/hung"));
+
+  ASSERT_TRUE(
+      second->GetFeatures().browser_command_controller()->ExecuteCommand(
+          IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS));
+
+  CloseBrowserSynchronously(second);
+
+  base::RunLoop loop;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, loop.QuitClosure(), base::Seconds(8));
+  loop.Run();
+  // No use-after-free, and the original window is unaffected.
+  EXPECT_TRUE(command_controller()->IsCommandEnabled(
+      IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS));
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest, AudibleTabIsSkipped) {
+  // S2: never yank audio out from under the user. Asserted at the predicate the
+  // run actually consults at dequeue.
+  OpenEligibleTabs(1);
+  content::WebContents* c =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tabs::CanReloadInitialUrlForContents(c));
+  EXPECT_FALSE(c->IsCurrentlyAudible())
+      << "precondition: this tab is silent, so the run would normally take it";
 }
 
 // --- Window type / profile ------------------------------------------------

@@ -28,22 +28,34 @@ std::map<Browser*, std::unique_ptr<InitialUrlRefreshRun>>& Runs() {
   return *runs;
 }
 
-// §3.5: the erase is POSTED (never re-entrant from inside OnRunFinished) and
-// IDENTITY-GUARDED. Because roam-268 finishes a run at the last START rather
-// than the last settle, C1b lets a fresh run for the same Browser exist before
-// this task lands — so erasing on Browser* alone would delete the SUCCESSOR.
-// Comparing the stored pointer against the finishing run is what prevents that.
-void ErasePostedIfStillCurrent(Browser* browser,
-                               InitialUrlRefreshRun* finished) {
+// §3.5. Two requirements pull in opposite directions and this resolves both:
+//
+//  (a) The map must stop holding a FINISHED run IMMEDIATELY. roam-268 finishes
+//      a run at the last START, so C1b permits a fresh run right away; if a
+//      finished entry lingered, the next trigger would find it and "cancel" a
+//      no-op instead of starting a successor — the chord would appear to do
+//      nothing every other press.
+//  (b) The run must NOT be destroyed re-entrantly: we are called from inside
+//      its own OnRunFinished.
+//
+// So: unlink synchronously (satisfying (a)), then hand ownership to DeleteSoon
+// (satisfying (b)). Removing the entry before returning also means no successor
+// can be created while this entry is still present, which dissolves the
+// delete-the-successor hazard rather than merely guarding against it.
+void RetireFinishedRun(Browser* browser, InitialUrlRefreshRun* finished) {
   auto it = Runs().find(browser);
-  if (it != Runs().end() && it->second.get() == finished) {
-    Runs().erase(it);
+  if (it == Runs().end() || it->second.get() != finished) {
+    return;  // already replaced or retired.
   }
+  std::unique_ptr<InitialUrlRefreshRun> owned = std::move(it->second);
+  Runs().erase(it);
+  base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(
+      FROM_HERE, std::move(owned));
 }
 
 }  // namespace
 
-bool CanRefreshAllInitialUrls(BrowserWindowInterface* browser) {
+bool CanRefreshAllInitialUrls(const BrowserWindowInterface* browser) {
   // Plan §4.6 — deliberately COARSE and STATIC. See the header for why an
   // any-tab-eligible predicate here would be a defect rather than a refinement.
   if (!browser) {
@@ -71,12 +83,7 @@ void RefreshAllInitialUrls(Browser* browser) {
 
   auto run = std::make_unique<InitialUrlRefreshRun>(browser);
   InitialUrlRefreshRun* raw = run.get();
-  raw->set_finished_callback(base::BindOnce(
-      [](Browser* b, InitialUrlRefreshRun* finished) {
-        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-            FROM_HERE, base::BindOnce(&ErasePostedIfStillCurrent, b, finished));
-      },
-      browser));
+  raw->set_finished_callback(base::BindOnce(&RetireFinishedRun, browser));
   Runs()[browser] = std::move(run);
   raw->Start();
 }
