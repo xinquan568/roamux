@@ -263,6 +263,18 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
   ASSERT_GE(queued, 0) << "need an eligible non-active tab";
 
   StartRecorder recorder(model->GetWebContentsAt(queued), queued);
+  // Watch every OTHER eligible tab, so the run's CONTINUATION past the skip is
+  // provable. Without this the test also passes against a run that simply
+  // stalled or was cancelled at the skipped item — which is not what it claims.
+  std::vector<std::unique_ptr<StartRecorder>> other_recorders;
+  for (int i = 0; i < model->count(); ++i) {
+    if (i != queued && i != active &&
+        tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      other_recorders.push_back(
+          std::make_unique<StartRecorder>(model->GetWebContentsAt(i), i));
+    }
+  }
+  ASSERT_FALSE(other_recorders.empty()) << "need another eligible tab";
   ASSERT_TRUE(Fire());
   ASSERT_FALSE(recorder.started())
       << "the chosen tab must still be QUEUED, not already dequeued";
@@ -283,6 +295,16 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
   EXPECT_FALSE(recorder.started())
       << "the run navigated a tab that became ineligible while queued — "
          "eligibility was frozen at enqueue instead of evaluated at dequeue";
+
+  int others_started = 0;
+  for (const auto& r : other_recorders) {
+    if (r->started()) {
+      ++others_started;
+    }
+  }
+  EXPECT_GT(others_started, 0)
+      << "the run stopped at the skipped item instead of continuing to the "
+         "remaining eligible tabs";
 }
 
 // --- §4.6: the enabled bit is static -------------------------------------
