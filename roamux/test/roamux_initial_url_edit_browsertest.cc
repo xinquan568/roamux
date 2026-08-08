@@ -4,7 +4,10 @@
 // persisted data is survived. Session-restore coverage is the PRE_ pair in
 // roamux_initial_url_restore_browsertest.cc.
 
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/profiles/profile.h"
@@ -14,10 +17,13 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
 #include "roamux/browser/tabs/refresh_all_initial_urls_command.h"
 #include "roamux/browser/tabs/reload_initial_url_command.h"
 #include "roamux/browser/tabs/shortcut_registry.h"
@@ -378,6 +384,99 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
       << "the menu shows a hard-coded chord instead of the registry's current "
          "binding, or the Carbon->KeyboardCode conversion is wrong";
   EXPECT_EQ(ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN, rebound.modifiers());
+}
+
+// A per-tab recorder of navigation STARTS. The run is asserted through start
+// times rather than IsLoading() sampling: with ordinary pages a load settles in
+// milliseconds, so a sampled "is it loading" check would race the very pacing
+// it is trying to observe.
+class NavStartRecorder : public content::WebContentsObserver {
+ public:
+  struct Start {
+    raw_ptr<content::WebContents> contents;
+    base::TimeTicks at;
+  };
+
+  NavStartRecorder(content::WebContents* contents,
+                   std::vector<Start>* sink,
+                   base::RepeatingClosure on_start)
+      : content::WebContentsObserver(contents),
+        sink_(sink),
+        on_start_(std::move(on_start)) {}
+
+  void DidStartNavigation(content::NavigationHandle* handle) override {
+    if (!handle->IsInPrimaryMainFrame()) {
+      return;
+    }
+    sink_->push_back({web_contents(), base::TimeTicks::Now()});
+    on_start_.Run();
+  }
+
+ private:
+  raw_ptr<std::vector<Start>> sink_;
+  base::RepeatingClosure on_start_;
+};
+
+// DEFECT IT EXCLUDES: deleting the ExecuteCommand branch entirely. Every other
+// test here inspects the model — none activates the item — so without this the
+// item could be inert and the whole suite would stay green.
+//
+// It asserts the CHORD'S run specifically, in two parts, because "a refresh
+// happened" is also true of an unpaced loop that reloads everything at once:
+//   1. §3.2 active-first — the ACTIVE tab is the first start, not tab 0.
+//   2. the §7.3 min_spacing floor (750ms) separates the first two starts.
+// The active tab is deliberately NOT index 0, so part 1 fails against an
+// in-order loop as well as against no ordering at all.
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
+                       RefreshAllActivationRunsThePacedChordOperation) {
+  const GURL page = embedded_test_server()->GetURL("/title1.html");
+  ASSERT_TRUE(AddTabAtIndex(1, page, ui::PAGE_TRANSITION_TYPED));
+
+  TabStripModel* model = browser()->tab_strip_model();
+  ASSERT_EQ(2, model->count());
+  model->ActivateTabAt(1);
+  content::WebContents* const active = model->GetActiveWebContents();
+  content::WebContents* const other = model->GetWebContentsAt(0);
+  ASSERT_EQ(model->GetWebContentsAt(1), active);
+
+  for (int i = 0; i < model->count(); ++i) {
+    content::WebContents* c = model->GetWebContentsAt(i);
+    tabs::TabInitialUrlHelper::MaybeCreateForWebContents(c);
+    tabs::TabInitialUrlHelper::FromWebContents(c)->SetUserInitialUrl(page);
+  }
+
+  std::vector<NavStartRecorder::Start> starts;
+  base::RunLoop loop;
+  base::RepeatingClosure on_start = base::BindLambdaForTesting([&]() {
+    if (starts.size() >= 2u) {
+      loop.Quit();
+    }
+  });
+  NavStartRecorder r_active(active, &starts, on_start);
+  NavStartRecorder r_other(other, &starts, on_start);
+
+  ui::SimpleMenuModel parent(nullptr);
+  std::unique_ptr<ui::SimpleMenuModel> menu =
+      tabs::MaybeAppendInitialUrlSubMenu(&parent, active);
+  ASSERT_NE(nullptr, menu);
+  ASSERT_TRUE(menu->IsEnabledAt(3));
+
+  menu->ActivatedAt(3);
+  loop.Run();
+
+  ASSERT_EQ(2u, starts.size());
+  EXPECT_EQ(active, starts[0].contents)
+      << "the first start was not the ACTIVE tab: activation is inert, does "
+         "not route to RefreshAllInitialUrls, or ignores §3.2 active-first";
+  EXPECT_EQ(other, starts[1].contents);
+
+  // Floor is 750ms; assert well below it so timer coarseness cannot flake the
+  // test, while staying far above the ~0ms an unpaced loop would produce.
+  const base::TimeDelta gap = starts[1].at - starts[0].at;
+  EXPECT_GE(gap, base::Milliseconds(500))
+      << "second tab started " << gap.InMilliseconds()
+      << "ms after the first — activation ran an unpaced refresh loop rather "
+         "than the chord's paced run";
 }
 
 // DEFECT IT EXCLUDES: the item silently surviving its own kill-switch, and a

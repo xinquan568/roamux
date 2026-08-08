@@ -148,8 +148,15 @@ class InitialUrlMenuModel : public ui::SimpleMenuModel,
     if (dom_code == ui::DomCode::NONE) {
       return false;
     }
-    *accelerator =
-        ui::Accelerator(ui::DomCodeToUsLayoutKeyboardCode(dom_code), modifiers);
+    const ui::KeyboardCode key = ui::DomCodeToUsLayoutKeyboardCode(dom_code);
+    if (key == ui::VKEY_UNKNOWN) {
+      // A Carbon code can have a DomCode but no US-layout KeyboardCode. With
+      // modifiers set the accelerator is non-empty, so it would reach Cocoa —
+      // which DCHECKs on VKEY_UNKNOWN. Rendering no accelerator is the correct
+      // degradation; crashing is not.
+      return false;
+    }
+    *accelerator = ui::Accelerator(key, modifiers);
     return true;
   }
 

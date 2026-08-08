@@ -214,7 +214,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlMenuGuardTest,
   TabContextMenuController controller(0, &fake);
 
   for (int id = tabs::kInitialUrlSubMenuCommandId;
-       id <= tabs::kSetInitialUrlToCurrentPageCommandId; ++id) {
+       id <= tabs::kRefreshAllInitialUrlsCommandId; ++id) {
     EXPECT_TRUE(controller.IsCommandIdEnabled(id));
     EXPECT_FALSE(controller.IsCommandIdChecked(id));
     EXPECT_FALSE(controller.IsCommandIdAlerted(id));
