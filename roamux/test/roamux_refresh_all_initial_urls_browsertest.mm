@@ -518,6 +518,72 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest, WorksInIncognito) {
       << "is_type_normal() is orthogonal to off-the-record";
 }
 
+// §4.6: the enabled bit is `flag && is_type_normal()`. A popup/app window is
+// not a normal tabbed window, so the command must be disabled there — the other
+// half of WorksInIncognito, which pins that OTR is orthogonal to window type.
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       DisabledInPopupWindows) {
+  Browser* popup = Browser::Create(Browser::CreateParams(
+      Browser::TYPE_POPUP, browser()->profile(), /*user_gesture=*/true));
+  ASSERT_TRUE(popup);
+  EXPECT_FALSE(
+      popup->GetFeatures().browser_command_controller()->IsCommandEnabled(
+          IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS))
+      << "a popup is not a normal tabbed window";
+}
+
+// WorksInIncognito only asserts the command is ENABLED off-the-record. This
+// asserts an OTR window actually refreshes, which is the behaviour that
+// matters.
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       OtrWindowActuallyRefreshes) {
+  Browser* otr = CreateIncognitoBrowser();
+  ASSERT_TRUE(otr);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(otr, sso_.landing_url()));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(otr, sso_.idp_page_url()));
+
+  content::WebContents* c = otr->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tabs::CanReloadInitialUrlForContents(c));
+  StartRecorder recorder(c, 0);
+
+  ASSERT_TRUE(otr->GetFeatures().browser_command_controller()->ExecuteCommand(
+      IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS));
+  EXPECT_TRUE(recorder.started())
+      << "the OTR window's active tab was never navigated";
+  ASSERT_TRUE(content::WaitForLoadStop(c));
+  EXPECT_EQ(sso_.landing_url(), c->GetLastCommittedURL());
+}
+
+// §3.5 C1b: a run that ended by FINISHING (not by cancel) must leave the map
+// clean, so a later trigger starts a genuinely new run rather than being
+// swallowed. Distinct from SecondPressCancels…, which covers the cancel path.
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       RestartAfterNaturalCompletionStartsAFreshRun) {
+  OpenEligibleTabs(1);
+  content::WebContents* active =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tabs::CanReloadInitialUrlForContents(active));
+
+  ASSERT_TRUE(Fire());
+  ASSERT_TRUE(content::WaitForLoadStop(active));
+
+  // Let the finishing run's posted retire task land.
+  base::RunLoop settle;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, settle.QuitClosure(), base::Seconds(2));
+  settle.Run();
+
+  // Navigate away again so there is real work for the second run.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), sso_.idp_page_url()));
+  StartRecorder second(active, 0);
+  ASSERT_TRUE(Fire());
+  EXPECT_TRUE(second.started())
+      << "the second run never started — a finished run was still occupying "
+         "the per-Browser map and swallowed this trigger as a cancel";
+  ASSERT_TRUE(content::WaitForLoadStop(active));
+  EXPECT_EQ(sso_.landing_url(), active->GetLastCommittedURL());
+}
+
 // --- Chord / registry -----------------------------------------------------
 
 #if BUILDFLAG(IS_MAC)
