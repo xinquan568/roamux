@@ -22,6 +22,7 @@
 //     notifies no observer, so an "improved" responsive enabled bit would leave
 //     the chord permanently inert.
 
+#import <Cocoa/Cocoa.h>
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
@@ -48,10 +49,14 @@
 #include "roamux/browser/tabs/reload_initial_url_command.h"
 #include "roamux/browser/tabs/shortcut_registry.h"
 #include "roamux/browser/tabs/tab_initial_url_helper.h"
+#include "roamux/browser/ui/tabs/initial_url_menu.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/test/support/roamux_browser_test.h"
 #include "roamux/test/support/sso_test_server.h"
+#include "testing/gtest_mac.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/menus/cocoa/menu_controller.h"
+#include "ui/menus/simple_menu_model.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "roamux/browser/tabs/shortcut_registry_mac.h"
@@ -725,6 +730,53 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsFlagOffTest,
   EXPECT_EQ(-1, tabs::CommandForChord(browser()->profile()->GetPrefs(),
                                       tabs::AllShortcuts(), ours))
       << "flag-off must leave the chord unclaimed (stock behaviour restored)";
+}
+
+// roam-270 finding 3, mechanised. Every other assertion about the chord stops
+// at the MenuModel: the force-show bit is set and GetAcceleratorAt returns
+// Ctrl+Opt+Cmd+R. None of that proves the chord REACHES AppKit — Mac context
+// menus suppress accelerators unless force-show is honoured, and the model
+// being right while the NSMenuItem renders blank is precisely the failure this
+// issue exists to prevent.
+//
+// menu_controller.mm builds submenus EAGERLY (menuFromModel: recursion), so the
+// real NSMenu is fully constructed here without opening anything on screen, and
+// the translation force-show -> keyEquivalent is exercised for real.
+//
+// What this still does NOT cover: that AppKit paints the glyphs. A correctly
+// configured NSMenuItem rendering is OS behaviour that roam-270 cannot break,
+// so the residual risk is upstream's, not this change's.
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       RefreshAllChordReachesTheCocoaMenuItem) {
+  ui::SimpleMenuModel parent(nullptr);
+  std::unique_ptr<ui::SimpleMenuModel> submenu_model =
+      tabs::MaybeAppendInitialUrlSubMenu(
+          &parent, browser()->tab_strip_model()->GetActiveWebContents());
+  ASSERT_NE(nullptr, submenu_model);
+  MenuControllerCocoa* controller =
+      [[MenuControllerCocoa alloc] initWithModel:&parent delegate:nil];
+  NSMenu* root = controller.menu;
+  ASSERT_TRUE(root);
+  ASSERT_GT(root.numberOfItems, 0);
+  NSMenuItem* anchor = [root itemAtIndex:0];
+  ASSERT_TRUE(anchor.hasSubmenu) << "the Initial URL anchor lost its submenu";
+  NSMenu* submenu = anchor.submenu;
+  ASSERT_EQ(4, submenu.numberOfItems)
+      << "expected the three original entries plus the refresh-all item";
+  NSMenuItem* refresh_all = [submenu itemAtIndex:3];
+  EXPECT_NSEQ(@"r", refresh_all.keyEquivalent)
+      << "the Cocoa menu item carries NO key equivalent: the force-show bit is "
+         "not reaching menu_controller.mm, so the chord renders blank and the "
+         "item is undiscoverable — roam-270's entire purpose";
+  const NSEventModifierFlags kWanted = NSEventModifierFlagCommand |
+                                       NSEventModifierFlagControl |
+                                       NSEventModifierFlagOption;
+  EXPECT_EQ(kWanted, refresh_all.keyEquivalentModifierMask & kWanted)
+      << "modifier mask is wrong — the Carbon->KeyboardCode->Cocoa conversion "
+         "dropped or mistranslated a modifier";
+  EXPECT_EQ(0u,
+            refresh_all.keyEquivalentModifierMask & NSEventModifierFlagShift)
+      << "a stray Shift would advertise a chord that does not invoke the item";
 }
 
 }  // namespace
