@@ -18,6 +18,7 @@
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "roamux/browser/tabs/initial_url_refresh_scheduler.h"
+#include "roamux/browser/tabs/navigation_settle_gate.h"
 
 class Browser;
 class BrowserWindowInterface;
@@ -77,12 +78,13 @@ class InitialUrlRefreshRun : public InitialUrlRefreshScheduler::Delegate,
   std::vector<::tabs::TabHandle> snapshot_;
   InitialUrlRefreshScheduler scheduler_;
   size_t current_index_ = 0;
-  int64_t pending_navigation_id_ = 0;
-  bool attempt_started_ = false;
-  // A DidStartNavigation seen synchronously from inside LoadURLWithParams,
-  // before the returned handle told us which id to expect.
-  bool in_load_call_ = false;
-  int64_t buffered_start_id_ = 0;
+  // Retained so a navigation discarded before it starts can be reported to the
+  // gate (§2.6's last clause).
+  base::WeakPtr<content::NavigationHandle> pending_handle_;
+  // The §2.6 state machine, extracted so it is unit-testable without a browser
+  // (roam-269; see navigation_settle_gate.h for why the browser cannot reach
+  // the case that motivates it).
+  NavigationSettleGate settle_gate_;
   FinishedCallback finished_callback_;
   base::CallbackListSubscription browser_close_subscription_;
   base::WeakPtrFactory<InitialUrlRefreshRun> weak_factory_{this};

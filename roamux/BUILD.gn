@@ -71,6 +71,7 @@ test("roamux_unittests") {
     "test/edge_secret_decryptor_unittest.mm",
     "test/external_open_profile_unittest.cc",
     "test/initial_url_refresh_scheduler_unittest.cc",
+    "test/navigation_settle_gate_unittest.cc",
     "test/roamux_appcast_verifier_unittest.cc",
     "test/roamux_edge_import_driver_unittest.cc",
     "test/roamux_features_unittest.cc",

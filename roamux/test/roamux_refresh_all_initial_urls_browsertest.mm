@@ -336,6 +336,74 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
   EXPECT_TRUE(Fire());
 }
 
+// NOTE: the §2.6 Pending/Started gate is covered by
+// roamux/test/navigation_settle_gate_unittest.cc, NOT here. Its motivating
+// scenario is not constructible through Chromium navigation semantics — a
+// beforeunload-blocked NavigationRequest keeps the frame tree loading, so the
+// superseded load's completion emits no DidStopLoading at all — which defeated
+// three browsertest attempts. The state machine was extracted instead (the
+// roam-268 move) and every path is asserted directly at unit level.
+
+// §3.2 in full: active-tab-first, then strip-index order with the active tab
+// skipped. StartOrderIsActiveFirstThenStripOrder pins only the FIRST element;
+// this pins the whole sequence, which is what a wrong snapshot (plain strip
+// order, or the active tab enqueued twice) would break without failing
+// anything else.
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       FullStartOrderIsActiveThenStripOrderSkippingActive) {
+  OpenEligibleTabs(3);
+  TabStripModel* model = browser()->tab_strip_model();
+  ASSERT_GE(model->count(), 4);
+
+  // A MIDDLE tab, so "active first" and "index 0 first" differ and the
+  // skip-the-active-tab clause is observable rather than incidental.
+  model->ActivateTabAt(2);
+  const int active = model->active_index();
+  ASSERT_EQ(2, active);
+
+  std::vector<int> eligible;
+  for (int i = 0; i < model->count(); ++i) {
+    if (tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      eligible.push_back(i);
+    }
+  }
+  ASSERT_GE(eligible.size(), 3u);
+
+  std::vector<int> expected{active};
+  for (int i : eligible) {
+    if (i != active) {
+      expected.push_back(i);
+    }
+  }
+
+  std::map<int, std::unique_ptr<StartRecorder>> recorders;
+  for (int i : eligible) {
+    recorders[i] =
+        std::make_unique<StartRecorder>(model->GetWebContentsAt(i), i);
+  }
+
+  ASSERT_TRUE(Fire());
+
+  // Long enough for every eligible tab to have had its turn even at the
+  // interval, so a run that merely stalls fails rather than passes.
+  base::RunLoop loop;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, loop.QuitClosure(), base::Seconds(20));
+  loop.Run();
+
+  for (int i : expected) {
+    ASSERT_TRUE(recorders[i]->started())
+        << "eligible tab " << i << " never started; the run did not complete";
+  }
+  std::vector<int> actual = expected;
+  std::sort(actual.begin(), actual.end(), [&](int a, int b) {
+    return recorders[a]->first_start() < recorders[b]->first_start();
+  });
+  EXPECT_EQ(expected, actual)
+      << "start order violated §3.2 (active tab first, then strip order with "
+         "the active tab skipped)";
+}
+
 // --- §3.5 lifetime: tabs and windows that go away mid-run -----------------
 
 IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,

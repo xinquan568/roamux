@@ -8,6 +8,8 @@ source_set("tabs") {
   sources = [
     "initial_url_refresh_scheduler.cc",
     "initial_url_refresh_scheduler.h",
+    "navigation_settle_gate.cc",
+    "navigation_settle_gate.h",
     "shortcut_registry.cc",
     "shortcut_registry.h",
     "tab_uid_service.cc",

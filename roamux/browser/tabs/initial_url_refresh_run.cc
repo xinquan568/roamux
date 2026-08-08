@@ -91,8 +91,8 @@ bool InitialUrlRefreshRun::StartItem(size_t index) {
   }
   current_index_ = index;
   Observe(nullptr);
-  pending_navigation_id_ = 0;
-  attempt_started_ = false;
+  pending_handle_ = nullptr;
+  settle_gate_.Reset();
 
   // Resolve the CONTENTS at dequeue, from the handle. Discard replaces the
   // WebContents (which is why TabInitialUrlHelper::WillDiscardContents exists),
@@ -127,34 +127,22 @@ bool InitialUrlRefreshRun::StartItem(size_t index) {
   params.transition_type = ui::PageTransitionFromInt(
       ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
 
-  // Observe BEFORE starting the load. A browser-initiated navigation with no
-  // beforeunload handler — the common case — dispatches DidStartNavigation
-  // SYNCHRONOUSLY inside LoadURLWithParams. Observing afterwards misses it, so
-  // `attempt_started_` never flips, DidStopLoading is rejected by the §2.6 gate
-  // forever, and NO attempt ever settles: the completion accelerator dies
-  // silently and every run degrades to plain fixed-interval pacing (§2.2: ~40s
-  // becomes 3min15s for 40 fast tabs). Because the navigation id is only known
-  // once the call returns, a start seen during the call is BUFFERED here and
-  // reconciled against the returned handle below.
+  // Observe BEFORE starting the load, and open the gate's attempt window
+  // first: a browser-initiated navigation with no beforeunload handler
+  // dispatches DidStartNavigation SYNCHRONOUSLY inside LoadURLWithParams, and
+  // the gate buffers that start until the returned id identifies it.
   Observe(contents);
-  in_load_call_ = true;
-  buffered_start_id_ = 0;
+  settle_gate_.BeginAttempt();
   base::WeakPtr<content::NavigationHandle> handle =
       contents->GetController().LoadURLWithParams(params);
-  in_load_call_ = false;
 
   if (!handle) {
+    settle_gate_.AttemptIssued(0);
     Observe(nullptr);
-    buffered_start_id_ = 0;
     return false;
   }
-
-  pending_navigation_id_ = handle->GetNavigationId();
-  // Reconcile the buffered synchronous start, if there was one.
-  if (buffered_start_id_ != 0 && buffered_start_id_ == pending_navigation_id_) {
-    attempt_started_ = true;
-  }
-  buffered_start_id_ = 0;
+  pending_handle_ = handle;
+  settle_gate_.AttemptIssued(handle->GetNavigationId());
   return true;
 }
 
@@ -183,28 +171,20 @@ void InitialUrlRefreshRun::DidStartNavigation(
   if (!handle->IsInPrimaryMainFrame()) {
     return;
   }
-  if (in_load_call_) {
-    // Fired synchronously from inside LoadURLWithParams: the id we are going to
-    // compare against has not been returned to us yet. Buffer and reconcile.
-    buffered_start_id_ = handle->GetNavigationId();
-    return;
-  }
-  if (pending_navigation_id_ != 0 &&
-      handle->GetNavigationId() == pending_navigation_id_) {
-    attempt_started_ = true;
-  }
+  settle_gate_.OnNavigationStarted(handle->GetNavigationId());
 }
 
 void InitialUrlRefreshRun::DidStopLoading() {
-  // THE GATE. A stale stop from the load that was already in flight when we
-  // dequeued this tab arrives while we are still Pending and is ignored.
-  // Without this, a window where every tab is mid-load settles all of them
-  // instantly and the run collapses to the min_spacing floor.
-  if (!attempt_started_) {
+  // §2.6's last clause: if our navigation went away before it started, stop
+  // treating the attempt as Pending — the interval timer is the only thing that
+  // will advance us now.
+  if (!pending_handle_) {
+    settle_gate_.OnAttemptDiscarded();
+  }
+  if (!settle_gate_.OnStopLoading()) {
     return;
   }
-  attempt_started_ = false;
-  pending_navigation_id_ = 0;
+  pending_handle_ = nullptr;
   Observe(nullptr);
   scheduler_.NotifyItemSettled(current_index_);
 }
