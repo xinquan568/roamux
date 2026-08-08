@@ -31,6 +31,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -553,6 +554,57 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest, AudibleTabIsSkipped) {
   ASSERT_TRUE(tabs::CanReloadInitialUrlForContents(c));
   EXPECT_FALSE(c->IsCurrentlyAudible())
       << "precondition: this tab is silent, so the run would normally take it";
+}
+
+// S5: a tab that leaves this run's Browser is NOT ours to navigate. The run
+// snapshots TabHandles unfiltered and re-checks ownership at dequeue, so a tab
+// dragged to another window mid-run must be skipped — not followed into the
+// new window, and not dereferenced through a stale handle.
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       TabMovedToAnotherWindowIsSkipped) {
+  OpenEligibleTabs(3);
+  TabStripModel* model = browser()->tab_strip_model();
+
+  // Hung initial URLs: nothing settles, so the run stays interval-paced and
+  // there is real time to move a tab before its turn comes.
+  const GURL hung = embedded_test_server()->GetURL("/hung");
+  for (int i = 0; i < model->count(); ++i) {
+    if (tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      HelperAt(i)->SetUserInitialUrl(hung);
+    }
+  }
+
+  // A queued, non-active tab — the active one is dequeued immediately.
+  const int active = model->active_index();
+  int victim = -1;
+  for (int i = 0; i < model->count(); ++i) {
+    if (i != active &&
+        tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      victim = i;
+      break;
+    }
+  }
+  ASSERT_GE(victim, 0);
+  content::WebContents* moved = model->GetWebContentsAt(victim);
+  StartRecorder recorder(moved, victim);
+
+  ASSERT_TRUE(Fire());
+  ASSERT_FALSE(recorder.started()) << "the victim must still be QUEUED";
+
+  // Move it out of this run's Browser while it waits its turn.
+  chrome::MoveTabsToNewWindow(browser(), {victim});
+  EXPECT_EQ(model->GetIndexOfWebContents(moved), TabStripModel::kNoTab)
+      << "the tab did not actually leave this window";
+
+  // Run well past the point at which its turn would have come.
+  base::RunLoop loop;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, loop.QuitClosure(), base::Seconds(14));
+  loop.Run();
+
+  EXPECT_FALSE(recorder.started())
+      << "the run navigated a tab that had moved to another window (S5): "
+         "ownership is not being re-checked at dequeue";
 }
 
 // --- Window type / profile ------------------------------------------------
