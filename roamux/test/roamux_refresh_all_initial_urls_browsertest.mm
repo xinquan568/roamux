@@ -241,6 +241,53 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
          "run collapsed to the min_spacing floor instead of interval pacing";
 }
 
+// The DIRECT assertion that the completion accelerator fires.
+//
+// A mutation check (Observe() moved back after LoadURLWithParams — the bug that
+// shipped in 2e19de5 and passed tier-2 green) proved the suite catches that
+// defect, but only via RestartAfterNaturalCompletionStartsAFreshRun, i.e.
+// through a downstream symptom: nothing settles, so the run never finishes, so
+// the map still holds it, so the next trigger is swallowed as a cancel. This
+// test fails on the defect ITSELF, which is a far more legible signal.
+//
+// With fast initial URLs every attempt settles quickly, so the scheduler
+// advances at the 750ms FLOOR. If nothing settles, each gap silently becomes
+// the 5s interval instead. Only the timing distinguishes the two.
+IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
+                       FastLoadsSettleAndAdvanceAtTheFloorNotTheInterval) {
+  OpenEligibleTabs(2);
+  TabStripModel* model = browser()->tab_strip_model();
+
+  std::vector<std::unique_ptr<StartRecorder>> recorders;
+  for (int i = 0; i < model->count(); ++i) {
+    if (tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(i))) {
+      recorders.push_back(
+          std::make_unique<StartRecorder>(model->GetWebContentsAt(i), i));
+    }
+  }
+  ASSERT_GE(recorders.size(), 2u) << "need >=2 eligible tabs to observe pacing";
+
+  ASSERT_TRUE(Fire());
+
+  // 3s: far beyond the 750ms floor, comfortably inside one 5s interval.
+  base::RunLoop loop;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, loop.QuitClosure(), base::Seconds(3));
+  loop.Run();
+
+  int started = 0;
+  for (const auto& r : recorders) {
+    if (r->started()) {
+      ++started;
+    }
+  }
+  EXPECT_GE(started, 2)
+      << "only " << started << " of " << recorders.size()
+      << " fast tabs started within 3s — no attempt settled, so the run fell "
+         "back to the 5s interval: the completion accelerator is not firing "
+         "(check that Observe() precedes LoadURLWithParams)";
+}
+
 // --- §3.3: eligibility is a DEQUEUE-time question --------------------------
 
 IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
