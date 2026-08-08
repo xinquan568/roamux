@@ -6,6 +6,7 @@
 
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -17,12 +18,17 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/dns/mock_host_resolver.h"
+#include "roamux/browser/tabs/refresh_all_initial_urls_command.h"
+#include "roamux/browser/tabs/reload_initial_url_command.h"
+#include "roamux/browser/tabs/shortcut_registry.h"
 #include "roamux/browser/tabs/tab_initial_url_helper.h"
 #include "roamux/browser/tabs/tab_uid_tab_helper.h"
 #include "roamux/browser/ui/tabs/edit_initial_url_dialog.h"
 #include "roamux/browser/ui/tabs/initial_url_menu.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/test/support/roamux_browser_test.h"
+#include "ui/base/accelerators/accelerator.h"
+#include "ui/base/window_open_disposition.h"
 #include "ui/menus/simple_menu_model.h"
 
 namespace roamux {
@@ -154,12 +160,22 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
 
 IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
                        SubMenuAppearsAndDrivesActions) {
-  // The submenu appears (flag on) and carries the two §4.5 actions.
+  // The submenu appears (flag on) and carries the two §4.5 actions, plus
+  // roam-270's separator + "Refresh all tabs to initial URLs" while
+  // kRefreshAllInitialUrls is on (it ships enabled). Asserted by COMMAND ID
+  // rather than by count alone: a bare count would be satisfied by any four
+  // rows in any order, and the §4.5 actions must stay at indices 0 and 1 —
+  // the "Set to current page" enablement check below indexes by position.
   ui::SimpleMenuModel parent(nullptr);
   std::unique_ptr<ui::SimpleMenuModel> submenu =
       tabs::MaybeAppendInitialUrlSubMenu(&parent, active_contents());
   ASSERT_NE(nullptr, submenu);
-  ASSERT_EQ(2u, submenu->GetItemCount());
+  ASSERT_EQ(4u, submenu->GetItemCount());
+  EXPECT_EQ(tabs::kEditInitialUrlCommandId, submenu->GetCommandIdAt(0));
+  EXPECT_EQ(tabs::kSetInitialUrlToCurrentPageCommandId,
+            submenu->GetCommandIdAt(1));
+  EXPECT_EQ(ui::MenuModel::TYPE_SEPARATOR, submenu->GetTypeAt(2));
+  EXPECT_EQ(tabs::kRefreshAllInitialUrlsCommandId, submenu->GetCommandIdAt(3));
 
   // On about:blank, "Set to current page" (index 1) is disabled…
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("about:blank")));
@@ -259,4 +275,139 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditFlagOffTest, NoSubmenuWhenFlagOff) {
 }
 
 }  // namespace
+
+// --- roam-270: the refresh-all item -----------------------------------------
+//
+// Each case below is specified by the defect it must FAIL against. A Step-5
+// review rejected the first draft of all three because every one would have
+// passed against the bug it was named for.
+
+// DEFECT IT EXCLUDES: a clicked-tab-only predicate. The model holds exactly one
+// WebContents, so "is THIS tab eligible" is the natural wrong implementation
+// and is indistinguishable from the correct one unless the owning tab is
+// ineligible while another tab is not.
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
+                       RefreshAllEnabledByAnyTabInWindowNotTheClickedTab) {
+  // The owning tab is an ignorable start: no initial URL, so INELIGIBLE.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("about:blank")));
+  content::WebContents* owner = active_contents();
+  ASSERT_FALSE(tabs::CanReloadInitialUrlForContents(owner));
+
+  {
+    ui::SimpleMenuModel parent(nullptr);
+    std::unique_ptr<ui::SimpleMenuModel> menu =
+        tabs::MaybeAppendInitialUrlSubMenu(&parent, owner);
+    ASSERT_NE(nullptr, menu);
+    EXPECT_FALSE(menu->IsEnabledAt(3))
+        << "enabled with no eligible tab anywhere in the window";
+  }
+
+  // Make a DIFFERENT tab eligible; the owning tab stays ineligible.
+  ASSERT_TRUE(ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL("https://example.test/start"),
+      WindowOpenDisposition::NEW_BACKGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP));
+  content::WebContents* other =
+      browser()->tab_strip_model()->GetWebContentsAt(1);
+  tabs::TabInitialUrlHelper::MaybeCreateForWebContents(other);
+  tabs::TabInitialUrlHelper::FromWebContents(other)->SetUserInitialUrl(
+      GURL("https://example.test/start"));
+  ASSERT_TRUE(tabs::CanReloadInitialUrlForContents(other));
+  ASSERT_FALSE(tabs::CanReloadInitialUrlForContents(owner))
+      << "the owning tab must stay ineligible or this proves nothing";
+
+  // Rebuilt menu (menus rebuild on every open) now enables the item.
+  ui::SimpleMenuModel parent2(nullptr);
+  std::unique_ptr<ui::SimpleMenuModel> menu2 =
+      tabs::MaybeAppendInitialUrlSubMenu(&parent2, owner);
+  ASSERT_NE(nullptr, menu2);
+  EXPECT_TRUE(menu2->IsEnabledAt(3))
+      << "still disabled although another tab in the window is eligible — the "
+         "predicate is scoped to the clicked tab instead of the window";
+}
+
+// DEFECT IT EXCLUDES: a hard-coded accelerator, and a correct accelerator that
+// Cocoa never renders. Asserting only that the display "changed" after a rebind
+// passes with a broken Carbon->KeyboardCode conversion, since a wrong cast
+// still yields two different wrong answers — so assert EXACT values.
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest,
+                       RefreshAllAcceleratorIsExactAndFollowsRebind) {
+  ui::SimpleMenuModel parent(nullptr);
+  std::unique_ptr<ui::SimpleMenuModel> menu =
+      tabs::MaybeAppendInitialUrlSubMenu(&parent, active_contents());
+  ASSERT_NE(nullptr, menu);
+
+  // Without the force-show bit a Cocoa context menu renders NO accelerator,
+  // however correct GetAcceleratorForCommandId is — and the chord being visible
+  // is this issue's entire purpose. Independent of the value assertions below.
+  EXPECT_TRUE(menu->GetForceShowAcceleratorForItemAt(3))
+      << "the accelerator will not render in a Cocoa context menu";
+
+  ui::Accelerator accel;
+  ASSERT_TRUE(menu->GetAcceleratorAt(3, &accel));
+  EXPECT_EQ(ui::VKEY_R, accel.key_code());
+  EXPECT_EQ(ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
+            accel.modifiers());
+
+  // Rebind, rebuild, and assert the EXACT new chord — not merely that it moved.
+  const tabs::RoamuxShortcut* row = nullptr;
+  for (const tabs::RoamuxShortcut& entry : tabs::AllShortcuts()) {
+    // The registry keys on the CHROME command id (33013), not this menu's
+    // submenu id (2113) — the same two-id-space trap that hid the production
+    // bug this test caught.
+    if (entry.command_id == IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS) {
+      row = &entry;
+      break;
+    }
+  }
+  ASSERT_TRUE(row);
+  tabs::StoreRebind(browser()->profile()->GetPrefs(), *row,
+                    tabs::Chord{.cmd = true,
+                                .shift = true,
+                                .ctrl = false,
+                                .opt = false,
+                                .keycode = 0x11});  // kVK_ANSI_T
+
+  ui::SimpleMenuModel parent2(nullptr);
+  std::unique_ptr<ui::SimpleMenuModel> menu2 =
+      tabs::MaybeAppendInitialUrlSubMenu(&parent2, active_contents());
+  ASSERT_NE(nullptr, menu2);
+  ui::Accelerator rebound;
+  ASSERT_TRUE(menu2->GetAcceleratorAt(3, &rebound));
+  EXPECT_EQ(ui::VKEY_T, rebound.key_code())
+      << "the menu shows a hard-coded chord instead of the registry's current "
+         "binding, or the Carbon->KeyboardCode conversion is wrong";
+  EXPECT_EQ(ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN, rebound.modifiers());
+}
+
+// DEFECT IT EXCLUDES: the item silently surviving its own kill-switch, and a
+// flag-off path that removes more than it should.
+//
+// The override lives in the FIXTURE CONSTRUCTOR, not the test body:
+// BrowserTestBase DCHECKs that FeatureList overrides happen before SetUp()
+// runs, so a ScopedFeatureList inside a browsertest body — fine in a unit test
+// — crashes the process here.
+class RoamuxInitialUrlRefreshAllFlagOffTest : public RoamuxInitialUrlEditTest {
+ public:
+  RoamuxInitialUrlRefreshAllFlagOffTest() {
+    flag_off_.InitAndDisableFeature(features::kRefreshAllInitialUrls);
+  }
+
+ private:
+  base::test::ScopedFeatureList flag_off_;
+};
+
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlRefreshAllFlagOffTest,
+                       RemovesOnlyThatItem) {
+  ui::SimpleMenuModel parent(nullptr);
+  std::unique_ptr<ui::SimpleMenuModel> menu =
+      tabs::MaybeAppendInitialUrlSubMenu(&parent, active_contents());
+  ASSERT_NE(nullptr, menu);
+  EXPECT_EQ(2u, menu->GetItemCount())
+      << "flag-off must drop the separator and the item, and nothing else";
+  EXPECT_EQ(tabs::kEditInitialUrlCommandId, menu->GetCommandIdAt(0));
+  EXPECT_EQ(tabs::kSetInitialUrlToCurrentPageCommandId,
+            menu->GetCommandIdAt(1));
+}
+
 }  // namespace roamux

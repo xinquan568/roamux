@@ -248,4 +248,37 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabMenuGuardFlagOffTest, FlagOffMenuIsStock) {
 }
 
 }  // namespace
+
+// --- roam-270: the range invariant, extended for the refresh-all item -------
+//
+// IsInitialUrlCommandId's declared contract is that it identifies EVERY
+// roamux-owned id in this family. roam-270 adds 2113, and the predicate's upper
+// bound must move with it.
+//
+// Note what this is NOT: 2113 is an INTERIOR item of InitialUrlMenuModel, which
+// is its own SimpleMenuModel::Delegate, and the parent menu receives only the
+// 2110 anchor via AddSubMenu. So an id outside the predicate does not reach
+// upstream's blind static_cast and does not reproduce roam-181. The cost is
+// latent instead: patch 0005's guard is written against this contract, and any
+// future consumer of the predicate would inherit an id it silently disowns.
+// Nothing in the compiler, the linker, or a running browser surfaces that —
+// this assertion is the only mechanical guard.
+TEST(RoamuxInitialUrlCommandRangeTest, CoversTheRefreshAllItem) {
+  EXPECT_TRUE(tabs::IsInitialUrlCommandId(tabs::kInitialUrlSubMenuCommandId));
+  EXPECT_TRUE(tabs::IsInitialUrlCommandId(tabs::kEditInitialUrlCommandId));
+  EXPECT_TRUE(
+      tabs::IsInitialUrlCommandId(tabs::kSetInitialUrlToCurrentPageCommandId));
+  EXPECT_TRUE(
+      tabs::IsInitialUrlCommandId(tabs::kRefreshAllInitialUrlsCommandId))
+      << "the refresh-all id escaped IsInitialUrlCommandId — its upper bound "
+         "was not moved with the new id, breaking the predicate's contract "
+         "that it is total over this family";
+
+  // Range-scoped, not blanket: the neighbours stay outside.
+  EXPECT_FALSE(
+      tabs::IsInitialUrlCommandId(tabs::kInitialUrlSubMenuCommandId - 1));
+  EXPECT_FALSE(
+      tabs::IsInitialUrlCommandId(tabs::kRefreshAllInitialUrlsCommandId + 1));
+}
+
 }  // namespace roamux::test

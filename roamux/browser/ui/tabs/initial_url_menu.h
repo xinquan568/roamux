@@ -21,16 +21,25 @@ namespace roamux::tabs {
 inline constexpr int kInitialUrlSubMenuCommandId = 2110;
 inline constexpr int kEditInitialUrlCommandId = 2111;
 inline constexpr int kSetInitialUrlToCurrentPageCommandId = 2112;
+// roam-270. NOTE: this id and IsInitialUrlCommandId's upper bound below MUST
+// change together — the predicate's contract is that it is TOTAL over this
+// family, and patch 0005's guard is written against that contract. An id
+// outside it is not an immediate crash (2113 is an interior item of
+// InitialUrlMenuModel, which is its own delegate; the parent menu only ever
+// sees the 2110 anchor), but nothing in the compiler, the linker, or a running
+// browser would surface the gap — see
+// RoamuxInitialUrlCommandRangeTest.CoversTheRefreshAllItem.
+inline constexpr int kRefreshAllInitialUrlsCommandId = 2113;
 
 // roam-194: true for every command id this submenu owns (the anchor 2110 and
-// the items 2111-2112). Single source of truth for the guard in upstream
+// the items 2111-2113). Single source of truth for the guard in upstream
 // TabContextMenuController (patch 0005): without it the anchor id reaches the
 // upstream delegate's blind static_cast to TabStripModel::ContextMenuCommand
 // and dies on fatal NOTREACHED()/CHECK paths — the roam-181 mechanism, one
 // bare right-click with RoamuxInitialUrl enabled.
 inline constexpr bool IsInitialUrlCommandId(int command_id) {
   return command_id >= kInitialUrlSubMenuCommandId &&
-         command_id <= kSetInitialUrlToCurrentPageCommandId;
+         command_id <= kRefreshAllInitialUrlsCommandId;
 }
 
 // Patch-0012 entry point (roam-14, §4.5): appends the flag-gated
