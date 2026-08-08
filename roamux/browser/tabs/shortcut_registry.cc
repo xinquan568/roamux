@@ -17,6 +17,8 @@ constexpr int kIdcTabVisitBack = 33010;
 constexpr int kIdcTabVisitForward = 33011;
 // Keep in sync with chrome/app/chrome_command_ids.h (roam-214 patch 0053).
 constexpr int kIdcToggleTabStrip = 33012;
+// Keep in sync with chrome/app/chrome_command_ids.h (roam-269 patch 0065).
+constexpr int kIdcRefreshAllInitialUrls = 33013;
 // kVK_ANSI_R.
 constexpr int kVkAnsiR = 0x0F;
 // kVK_ANSI_LeftBracket / kVK_ANSI_RightBracket.
@@ -64,6 +66,18 @@ constexpr RoamuxShortcut kShortcuts[] = {
       .ctrl = true,
       .opt = false,
       .keycode = kVkAnsiT}},
+    // roam-269: refresh every tab in the window to its initial URL.
+    // Ctrl+Opt+Cmd+R. The `opt` modifier is what keeps this clear of the
+    // Ctrl+Cmd+R reload-initial-URL row above (Chord equality compares opt).
+    {kIdcRefreshAllInitialUrls,
+     "refresh_all_initial_urls",
+     "Refresh all initial URLs",
+     &features::kRefreshAllInitialUrls,
+     {.cmd = true,
+      .shift = false,
+      .ctrl = true,
+      .opt = true,
+      .keycode = kVkAnsiR}},
 };
 
 }  // namespace

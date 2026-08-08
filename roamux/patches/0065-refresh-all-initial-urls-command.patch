@@ -1,0 +1,131 @@
+# roam-269: IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS (33013) — Ctrl+Opt+Cmd+R refreshes
+# every eligible tab in the window to its initial URL, paced by roam-268's
+# InitialUrlRefreshScheduler. Structural precedent: patch 0053 (roam-214).
+#
+# THREE hunks and no more:
+#   1. chrome/app/chrome_command_ids.h — the IDC. 33013 is the next free id in the
+#      roamux block (33010-33012 taken); upstream's next section starts at 34000.
+#   2. chrome/browser/ui/BUILD.gn — `sources +=` the four chrome-facing files, and
+#      `deps += [ "//roamux/browser/tabs" ]`. That edge does NOT exist today and is
+#      required because the run links roam-268's pure scheduler. It runs
+#      //chrome/browser/ui -> //roamux/browser/tabs; the reverse would be a GN cycle.
+#   3. chrome/browser/ui/browser_command_controller.cc — include, one `case`, and a
+#      SINGLE STATIC UpdateCommandEnabled in InitCommandState.
+#
+# NO accelerators_cocoa.mm row. Dispatch is registry-only (the roam-214/0053
+# precedent); the only discoverable surface for the chord is roam-270's menu item.
+#
+# The enabled bit is STATIC BY DESIGN (plan §4.6). An any-tab-eligible predicate
+# refreshed on tab-strip changes would be a defect, not an improvement:
+# BrowserCommandController::ExecuteCommandWithDisposition returns early when
+# !IsCommandEnabled(id) BEFORE dispatch, and a direct initial-URL edit notifies no
+# observer — so a stale-false bit makes the chord permanently inert and no
+# execution-time recompute can rescue it. Eligibility is evaluated in the run, at
+# dequeue (§3.3).
+#
+# Flag-off parity: the command is registered but disabled (CanRefreshAllInitialUrls
+# gates on roamux::features::kRefreshAllInitialUrls), the registry drops the row, and
+# CommandForChord returns -1 — the chord is unclaimed and behaviour is stock.
+#
+# COLLISION AUDIT for Ctrl+Opt+Cmd+R — verified 2026-08-07 against M149, RE-RUN ON UPREV:
+#   * accelerators_cocoa.mm: VKEY_R carries only Cmd+R, Cmd+Shift+R, Cmd+Ctrl+R — clear.
+#   * GetShortcutsNotPresentInMainMenu: its one kVK_ANSI_R row is Cmd+Opt+R (reading
+#     mode) — clear.
+#   * roamux registry: every pre-existing row's DEFAULT has opt=false, so the opt
+#     modifier is what keeps this clear of row 0's Ctrl+Cmd+R. Pinned by
+#     ShortcutRegistryTest.ProductionTableShape, which asserts the two rows share a
+#     keycode and differ in `opt`.
+#   * The operator confirmed no system/third-party launcher claims the chord on the
+#     target Mac. That is environmental and date-bound, unlike the three above.
+#
+# KNOWN, DOCUMENTED, NOT FIXED — persisted-rebinding shadowing (roam-269 analysis R10):
+# GetCurrentChord() prefers a stored roamux.shortcuts override over a row's default and
+# CommandForChord() returns the FIRST table entry whose EFFECTIVE chord matches. A user
+# who bound an existing command to Ctrl+Opt+Cmd+R in a shipped build keeps that binding
+# across upgrade; the pre-existing rows precede this one in table order, so the stored
+# binding wins and this command is silently unreachable — no error, no revalidation at
+# startup. The collision audit above reasons over shipped DEFAULTS only and does not
+# cover it. ValidateRebind blocks NEW conflicting rebinds, so only a binding stored
+# before this shipped can shadow. Operator decision (2026-08-08): DOCUMENT ONLY, no
+# migration code and no pref mutation. Revisit if a user reports a dead chord.
+diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
+index 4cc80a9870..6834113547 100644
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -38,6 +38,9 @@
+ // Roamux (roam-214): vertical-tab-strip pin/peek toggle (kept in sync with
+ // roamux/browser/tabs/shortcut_registry.cc).
+ #define IDC_ROAMUX_TOGGLE_TAB_STRIP     33012
++// Roamux (roam-269): refresh every tab in the window to its initial URL
++// (kept in sync with roamux/browser/tabs/shortcut_registry.cc).
++#define IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS 33013
+ 
+ // Window management commands
+ #define IDC_NEW_WINDOW                  34000
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index ec51178194..226b3c8349 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -5724,6 +5724,23 @@ static_library("ui") {
+     "//roamux/browser/ui/views/tabs/tab_strip_toggle_command.h",
+   ]
+ 
++  # Roamux (roam-269): the refresh-all-initial-URLs run + command. Chrome-facing
++  # halves of roam-268's scheduler seam — they need Browser/content:: and the
++  # app-modal dialog queue, so they are compiled INTO this target rather than
++  # joining the pure //roamux/browser/tabs source_set (which must stay free of
++  # //chrome deps to remain unit-testable without browser bring-up).
++  sources += [
++    "//roamux/browser/tabs/initial_url_refresh_run.cc",
++    "//roamux/browser/tabs/initial_url_refresh_run.h",
++    "//roamux/browser/tabs/refresh_all_initial_urls_command.cc",
++    "//roamux/browser/tabs/refresh_all_initial_urls_command.h",
++  ]
++
++  # Roamux (roam-269): the run links roam-268's pure InitialUrlRefreshScheduler,
++  # so this edge is required. It runs //chrome/browser/ui -> //roamux/browser/tabs
++  # and never the reverse; the reverse would be a GN cycle.
++  deps += [ "//roamux/browser/tabs" ]
++
+   # Roamux (roam-214, patch 0054): the pin/peek views glue + the notify-only
+   # observer seam header the region view includes.
+   sources += [
+diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
+index c07e916bc1..7519b1977e 100644
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -54,6 +54,7 @@
+ #include "chrome/browser/ui/browser.h"
+ #include "chrome/browser/ui/browser_actions.h"
+ #include "chrome/browser/ui/browser_commands.h"
++#include "roamux/browser/tabs/refresh_all_initial_urls_command.h"
+ #include "roamux/browser/tabs/reload_initial_url_command.h"
+ #include "roamux/browser/tab_visit/tab_visit_command.h"
+ #include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
+@@ -678,6 +679,9 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
+     case IDC_ROAMUX_TOGGLE_TAB_STRIP:
+       roamux::tabs_toggle::ToggleTabStrip(browser_);
+       break;
++    case IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS:
++      roamux::tabs::RefreshAllInitialUrls(browser_);
++      break;
+     case IDC_VERTICAL_TABS_SEND_FEEDBACK:
+       chrome::ShowFeedbackPage(browser_, feedback::kFeedbackSourceVerticalTabs,
+                                /*description_template=*/"",
+@@ -1630,6 +1634,16 @@ void BrowserCommandController::InitCommandState() {
+   command_updater_.UpdateCommandEnabled(
+       IDC_ROAMUX_TOGGLE_TAB_STRIP,
+       roamux::tabs_toggle::CanToggleTabStrip(browser_));
++  // Roamux (roam-269): STATIC on purpose, set once here and never recomputed
++  // (plan §4.6). An any-tab-eligible predicate would be wrong, not merely
++  // expensive: ExecuteCommandWithDisposition returns early when
++  // !IsCommandEnabled(id) BEFORE dispatch, and a direct initial-URL edit
++  // notifies no observer — so a stale-false bit would leave the chord
++  // permanently inert with no execution-time recompute able to rescue it.
++  // Eligibility is evaluated inside the run, at dequeue.
++  command_updater_.UpdateCommandEnabled(
++      IDC_ROAMUX_REFRESH_ALL_INITIAL_URLS,
++      roamux::tabs::CanRefreshAllInitialUrls(browser_));
+ #if BUILDFLAG(IS_CHROMEOS)
+   command_updater_.UpdateCommandEnabled(IDC_TOGGLE_MULTITASK_MENU, true);
+   command_updater_.UpdateCommandEnabled(IDC_MINIMIZE_WINDOW, true);

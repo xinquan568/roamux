@@ -11,6 +11,7 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/cocoa/accelerators_cocoa.h"
+#include "roamux/browser/tabs/refresh_all_initial_urls_command.h"
 #include "roamux/browser/ui/views/tabs/tab_strip_toggle_command.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/base_window.h"
@@ -25,6 +26,8 @@ namespace {
 // Keep in sync with chrome/app/chrome_command_ids.h (roam-214 patch 0053)
 // and shortcut_registry.cc.
 constexpr int kIdcToggleTabStrip = 33012;
+// Keep in sync with chrome/app/chrome_command_ids.h (roam-269 patch 0065).
+constexpr int kIdcRefreshAllInitialUrls = 33013;
 
 Chord ChordFromEvent(NSEvent* event) {
   const NSUInteger modifiers = [event modifierFlags];
@@ -82,6 +85,28 @@ BrowserWindowInterface* BrowserForEventWindow(NSEvent* event) {
   return nullptr;
 }
 
+// roam-269 (§4.5): the set of commands resolved against the EVENT's window
+// rather than the last-active browser. roam-214 hard-coded the single toggle
+// id at two sites; generalising is not tidying — a misrouted toggle flips the
+// wrong strip, but a misrouted refresh-all re-navigates every tab of a window
+// that never bound the chord, possibly in another profile.
+bool IsEventWindowResolved(int command_id) {
+  return command_id == kIdcToggleTabStrip ||
+         command_id == kIdcRefreshAllInitialUrls;
+}
+
+// Availability of an event-window-resolved command against its target window.
+bool IsAvailableForTarget(int command_id, BrowserWindowInterface* target) {
+  switch (command_id) {
+    case kIdcToggleTabStrip:
+      return tabs_toggle::CanToggleTabStrip(target);
+    case kIdcRefreshAllInitialUrls:
+      return CanRefreshAllInitialUrls(target);
+    default:
+      return true;
+  }
+}
+
 }  // namespace
 
 int CommandForKeyEventOverride(NSEvent* event) {
@@ -97,8 +122,8 @@ int CommandForKeyEventOverride(NSEvent* event) {
   if (BrowserWindowInterface* target = BrowserForEventWindow(event)) {
     const int target_id = CommandForChord(target->GetProfile()->GetPrefs(),
                                           AllShortcuts(), chord);
-    if (target_id == kIdcToggleTabStrip) {
-      return tabs_toggle::CanToggleTabStrip(target) ? target_id : -1;
+    if (IsEventWindowResolved(target_id)) {
+      return IsAvailableForTarget(target_id, target) ? target_id : -1;
     }
   }
 
@@ -107,11 +132,12 @@ int CommandForKeyEventOverride(NSEvent* event) {
   }
   const int command_id = CommandForChord(last_active->GetProfile()->GetPrefs(),
                                          AllShortcuts(), chord);
-  if (command_id == kIdcToggleTabStrip) {
-    // The last-active profile binds this chord to the toggle, but the
-    // event's window did not resolve it (different profile/binding or
-    // unmappable): never execute the toggle against a window that did not
-    // bind it.
+  if (IsEventWindowResolved(command_id)) {
+    // The last-active profile binds this chord to an event-window-resolved
+    // command, but the event's window did not resolve it (different
+    // profile/binding, or unmappable): never execute against a window that
+    // did not bind it. For roam-269 that would mean re-navigating every tab
+    // of the wrong window.
     return -1;
   }
   return command_id;

@@ -126,7 +126,10 @@ TEST_F(ShortcutRegistryTest, ProductionTableShape) {
   // The tripwire: every production-table change must update this consciously.
   // Row 0 = roam-12 reload-initial-url; rows 1-2 = roam-25 tab-visit
   // traversal (Ctrl+Cmd+[ / Ctrl+Cmd+], Carbon keycodes 0x21 / 0x1E);
-  // row 3 = roam-214 tab-strip pin/peek toggle (Ctrl+Cmd+T, 0x11).
+  // row 3 = roam-214 tab-strip pin/peek toggle (Ctrl+Cmd+T, 0x11);
+  // row 4 = roam-269 refresh-all-initial-urls (Ctrl+OPT+Cmd+R, 0x0F) — the
+  // first row with opt=true, which is exactly what keeps it clear of row 0's
+  // Ctrl+Cmd+R (Chord equality compares opt).
   constexpr Chord kCtrlCmdLeftBracket{
       .cmd = true, .ctrl = true, .keycode = 0x21};
   constexpr Chord kCtrlCmdRightBracket{
@@ -134,7 +137,7 @@ TEST_F(ShortcutRegistryTest, ProductionTableShape) {
   // kCtrlCmdT is the file-scope constant (0x11) — also the roam-214 default.
 
   auto table = AllShortcuts();
-  ASSERT_EQ(4u, table.size());
+  ASSERT_EQ(5u, table.size());
 
   EXPECT_EQ(34059, table[0].command_id);
   EXPECT_STREQ("reload_initial_url", table[0].pref_key);
@@ -155,6 +158,85 @@ TEST_F(ShortcutRegistryTest, ProductionTableShape) {
   EXPECT_STREQ("toggle_tab_strip", table[3].pref_key);
   EXPECT_EQ(&features::kTabStripToggleShortcut, table[3].feature);
   EXPECT_EQ(kCtrlCmdT, table[3].default_chord);
+
+  EXPECT_EQ(33013, table[4].command_id);
+  EXPECT_STREQ("refresh_all_initial_urls", table[4].pref_key);
+  EXPECT_EQ(&features::kRefreshAllInitialUrls, table[4].feature);
+  EXPECT_EQ((Chord{.cmd = true,
+                   .shift = false,
+                   .ctrl = true,
+                   .opt = true,
+                   .keycode = 0x0F}),
+            table[4].default_chord);
+
+  // The roam-269 invariant this tripwire is really guarding: row 4 differs
+  // from row 0 ONLY in `opt`. If a future change dropped that modifier the two
+  // rows would collide and CommandForChord would silently return row 0.
+  EXPECT_EQ(table[0].default_chord.keycode, table[4].default_chord.keycode);
+  EXPECT_NE(table[0].default_chord.opt, table[4].default_chord.opt);
+}
+
+// --- roam-269: the refresh-all-initial-URLs row, asserted against the REAL
+// shipped table (AllShortcuts()), not the fake test table — the point is that
+// the row is actually registered and gates on its own feature.
+
+TEST_F(ShortcutRegistryTest,
+       RefreshAllInitialUrlsRowDefaultChordIsCtrlOptCmdR) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(features::kRefreshAllInitialUrls);
+
+  const RoamuxShortcut* row = nullptr;
+  for (const RoamuxShortcut& entry : AllShortcuts()) {
+    if (entry.feature == &features::kRefreshAllInitialUrls) {
+      row = &entry;
+      break;
+    }
+  }
+  ASSERT_TRUE(row) << "roam-269 registry row is missing from AllShortcuts()";
+
+  const Chord expected{.cmd = true,
+                       .shift = false,
+                       .ctrl = true,
+                       .opt = true,
+                       .keycode = 0x0F};  // kVK_ANSI_R
+  EXPECT_EQ(expected, GetCurrentChord(&pref_service_, *row));
+  EXPECT_EQ(expected, row->default_chord);
+}
+
+TEST_F(ShortcutRegistryTest, RefreshAllInitialUrlsHasNoIntraRegistryConflict) {
+  // Every shipped row enabled: the new chord must not collide with any other
+  // row's default. Chord equality compares `opt`, and the pre-existing rows are
+  // all opt=false, which is what makes Ctrl+Opt+Cmd+R free.
+  base::test::ScopedFeatureList features;
+  features.InitWithFeatures(
+      {features::kInitialUrl, features::kTabVisitNav,
+       features::kTabStripToggleShortcut, features::kRefreshAllInitialUrls},
+      {});
+  const Chord chord{
+      .cmd = true, .shift = false, .ctrl = true, .opt = true, .keycode = 0x0F};
+
+  int matches = 0;
+  for (const RoamuxShortcut* entry : EnabledShortcuts(AllShortcuts())) {
+    if (GetCurrentChord(&pref_service_, *entry) == chord) {
+      ++matches;
+    }
+  }
+  EXPECT_EQ(1, matches) << "Ctrl+Opt+Cmd+R must resolve to exactly one command";
+}
+
+TEST_F(ShortcutRegistryTest, RefreshAllInitialUrlsFlagOffRemovesTheRow) {
+  base::test::ScopedFeatureList features;
+  features.InitWithFeatures(/*enabled=*/{},
+                            /*disabled=*/{features::kRefreshAllInitialUrls});
+
+  for (const RoamuxShortcut* entry : EnabledShortcuts(AllShortcuts())) {
+    EXPECT_NE(&features::kRefreshAllInitialUrls, entry->feature)
+        << "flag-off must remove the row from EnabledShortcuts";
+  }
+  const Chord chord{
+      .cmd = true, .shift = false, .ctrl = true, .opt = true, .keycode = 0x0F};
+  EXPECT_EQ(-1, CommandForChord(&pref_service_, AllShortcuts(), chord))
+      << "flag-off leaves the chord unclaimed (stock behaviour restored)";
 }
 
 }  // namespace
