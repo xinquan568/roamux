@@ -207,6 +207,7 @@ test("roamux_browsertests") {
     "test/roamux_initial_url_browsertest.cc",
     "test/roamux_initial_url_edit_browsertest.cc",
     "test/roamux_initial_url_restore_browsertest.cc",
+    "test/roamux_new_tab_active_group_browsertest.cc",
     "test/roamux_omnibox_icon_browsertest.cc",
     "test/roamux_origin_storage_import_browsertest.cc",
     "test/roamux_profile_creation_browsertest.cc",

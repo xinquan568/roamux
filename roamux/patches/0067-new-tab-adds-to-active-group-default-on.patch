@@ -1,0 +1,47 @@
+# roam-275: ship upstream kNewTabAddsToActiveGroup ENABLED by default — Cmd+T
+# (and both new-tab buttons; every route converges on chrome::NewTab) opens the
+# new tab inside the active tab's group, at the group's end. When the active
+# tab is ungrouped the stock end-of-strip append is unchanged
+# (DetermineInsertionIndex untouched — adjacent-to-active placement exists
+# upstream only for link opens and "New tab to the right").
+#
+# WHY: ADR 0002 (roam-241) disabled the fieldtrial testing config in shipped
+# and dev builds, which silently turned this behavior OFF (upstream enables it
+# for testing via study TabGroupInteractionsDesktop2, arm
+# Enabled_NewTabsAddToActiveGroup). This patch is the ADR 0002 follow-through:
+# promote the wanted behavior to an explicit compiled default instead of a
+# field-trial accident.
+#
+# OPT-OUT (M149): chrome://flags/#new-tab-adds-to-active-group and
+# --disable-features=NewTabAddsToActiveGroup. A user's explicit flags choice
+# from an earlier build keeps winning over this default (Local State).
+# UPREV CAVEAT: upstream flag-metadata.json sets expiry_milestone 150 for the
+# flags entry — at the next repin, reassess the opt-out story (the entry, or
+# the feature itself, may be gone; --disable-features works while it exists).
+#
+# ADR 0003 NOTE: the dedicated upstream suite
+# (browser_tab_strip_controller_browsertest.cc) pins this feature explicitly in
+# BOTH directions and is immune to the default flip. Any other upstream test
+# that groups tabs, opens one via the chrome::NewTab gate and asserts
+# end-of-strip placement without pinning would now observe grouped placement —
+# tier-2 does not run upstream browser_tests, so triage per ADR 0003's
+# applicability test if one surfaces at an uprev; do not blanket-pin.
+#
+# Coverage: roamux/test/roamux_new_tab_active_group_browsertest.cc — an
+# unpinned compiled-default sentinel (RED before this patch, GREEN after) plus
+# explicitly pinned enabled/disabled behavioral fixtures (4-tab topology with a
+# trailing ungrouped tab so the group-range clamp in TabStripModel::AddTab is
+# positionally observable: in-group insert lands BEFORE the trailing tab).
+diff --git a/chrome/browser/ui/ui_features.cc b/chrome/browser/ui/ui_features.cc
+index 80d24acaca..2b4d960c76 100644
+--- a/chrome/browser/ui/ui_features.cc
++++ b/chrome/browser/ui/ui_features.cc
+@@ -363,7 +363,7 @@ BASE_FEATURE_PARAM(bool,
+ #endif
+ 
+ #if !BUILDFLAG(IS_ANDROID)
+-BASE_FEATURE(kNewTabAddsToActiveGroup, base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kNewTabAddsToActiveGroup, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ bool IsNewTabAddsToActiveGroupEnabled() {
+   return base::FeatureList::IsEnabled(kNewTabAddsToActiveGroup);
