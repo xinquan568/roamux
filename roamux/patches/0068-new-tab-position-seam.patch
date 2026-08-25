@@ -1,0 +1,101 @@
+# roam-277: the new-tab position seam — chrome::NewTab() asks TabStripModel for
+# the (index, group) that roamux.tabs.new_tab_position selects: 0 end_of_strip
+# (stock pre-roam-275), 1 end_of_active_group (today's default — patch 0067 /
+# upstream kNewTabAddsToActiveGroup), 2 after_active_tab (new: directly after
+# the active tab, in its group; ungrouped when the active tab is ungrouped).
+#
+# TWO hunks in chrome/browser/ui/browser_commands.cc (a file patch 0012
+# already touches — ORDERING DEPENDENCY: this patch stays AFTER 0012 in name
+# order; the includes sit at their alphabetical slot with upstream-only
+# context, never adjacent to 0012's include): (1) three roamux includes;
+# (2) a pure INSERTION in NewTab() before the stock
+# IsNewTabAddsToActiveGroupEnabled() block, guarded by
+# `context != NewTabTypes::kNoUserAction && kNewTabPosition`. The stock lines
+# are byte-identical, so flag-OFF (chrome://flags/#roamux-new-tab-position,
+# patch 0069) never reads the pref and is exactly patch-0067 behaviour.
+# All policy is additive: roamux::GetNewTabPosition (//roamux/common, total
+# over null/unregistered/out-of-range) + roamux::tabs::ComputeNewTabPlacement
+# (//roamux/browser/tabs, pure, no //chrome). No BUILD.gn hunk — the
+# //chrome/browser/ui edges to //roamux/common (0006) and //roamux/browser/tabs
+# (0065) already exist. TabStripModel is untouched: pinned (ConstrainInsertionIndex),
+# split (InsertionBreaksSplitContiguity) and group-range clamps are upstream's.
+#
+# GATE = every NewTabTypes value except kNoUserAction. Audited M149 producers:
+# kNewTabCommand (IDC_NEW_TAB: Cmd+T, File > New Tab, app menu, the new-tab
+# button's context menu "New tab", the kActionNewTab action item, AppleScript,
+# chrome.tabs.create into a NEW window, CreateNewTabGroup, and ONE automatic
+# caller — web_app_launch_utils.cc's survival tab), kNewTabButton (the "+"),
+# kNewTabButtonInToolbarForTouch. kNewTabContextMenu / kNewTabButtonInWebuiTabStrip
+# have no NewTab() producer at M149. Bypasses (unchanged by construction): the
+# collapse-group fallbacks call delegate()->AddTabAt directly; link opens
+# (DetermineInsertionIndex), Alt+Enter, extension in-window creates, session
+# restore, IDC_NEW_TAB_TO_RIGHT never enter NewTab().
+#
+# ACCEPTED AFFECTED CONSUMERS (maintainer-visible, covered by browsertests):
+# (a) CreateNewTabGroup = NewTab() + group-the-new-tab; AddToNewGroupImpl
+#     forms the new group where the new tab landed (adjacent under mode 2
+#     from an ungrouped active tab; strip end under mode 0; after the active
+#     group when it was grouped — as today).
+# (b) the web-app survival tab on a one-tab grouped strip is ungrouped under
+#     mode 0 (grouped under modes 1-2, as today); the departing tab is closed.
+#
+# OPENER POLICY unchanged: NO ADD_INHERIT_OPENER (Navigate() already sets the
+# opener for user-gesture tabs; InsertTabAtImpl would ForgetAllOpeners()), and
+# IsNewTabAtEndOfTabStrip is not widened — a non-end new tab that receives a
+# typed URL forgets openers strip-wide, so close-after-navigation selects a
+# neighbour (already true of mode 1 whenever the group is not last).
+#
+# UPREV CAVEAT (M150): upstream's #new-tab-adds-to-active-group flags entry
+# expires at M150 and mode 1 consults that feature. At the re-pin decide
+# whether patch 0067 and this enum collapse into a single Roamux-owned
+# switch, or keep both (mode 1 honouring the upstream opt-out as today).
+#
+# Coverage: roamux/test/roamux_new_tab_position_browsertest.cc (44 tests —
+# per mode x topology, repeated Cmd+T ordering, pinned/split/collapsed, opener
+# close-selection, both flag-precedence cells, the NewTabTypes gate, the two
+# affected consumers, vertical-strip scroll sanity; 20 of the 44 were RED
+# before this patch, plus 5 of the 6 Settings tests behind patch 0070 — the
+# 25 filtered failures the RED gate matched exactly),
+# roamux_new_tab_active_group_browsertest.cc
+# (re-pinned: kNewTabPosition OFF + pref 1 in the behavioural fixtures), and
+# the helper table in roamux/test/new_tab_placement_unittest.cc.
+diff --git a/chrome/browser/ui/browser_commands.cc b/chrome/browser/ui/browser_commands.cc
+index 9eb5c5ad4e..3d37857b1d 100644
+--- a/chrome/browser/ui/browser_commands.cc
++++ b/chrome/browser/ui/browser_commands.cc
+@@ -192,6 +192,9 @@
+ #include "pdf/buildflags.h"
+ #include "printing/buildflags/buildflags.h"
+ #include "rlz/buildflags/buildflags.h"
++#include "roamux/browser/tabs/new_tab_placement.h"
++#include "roamux/common/new_tab_position.h"
++#include "roamux/common/roamux_features.h"
+ #include "ui/base/clipboard/clipboard.h"
+ #include "ui/base/clipboard/clipboard_buffer.h"
+ #include "ui/base/clipboard/scoped_clipboard_writer.h"
+@@ -1147,6 +1150,25 @@ content::WebContents& NewTab(BrowserWindowInterface* browser,
+           Browser::WindowFeature::kFeatureTabStrip)) {
+     std::optional<tab_groups::TabGroupId> group_id = std::nullopt;
+ 
++    // Roamux (roam-277): the new-tab position setting
++    // (roamux.tabs.new_tab_position: end of strip / end of active group /
++    // after active tab). Explicit routes only — kNoUserAction safety tabs stay
++    // on the stock path below. Flag OFF never reads the pref and falls through
++    // to the unchanged patch-0067 request. Pinned / split / group-range
++    // clamping stays in TabStripModel; the helper only states the request.
++    if (context != NewTabTypes::kNoUserAction &&
++        base::FeatureList::IsEnabled(roamux::features::kNewTabPosition)) {
++      TabStripModel* const model = browser->GetTabStripModel();
++      const int active = model->active_index();
++      const roamux::tabs::NewTabPlacement placement =
++          roamux::tabs::ComputeNewTabPlacement(
++              roamux::GetNewTabPosition(browser->GetProfile()->GetPrefs()),
++              model->count(), active, model->GetTabGroupForTab(active),
++              features::IsNewTabAddsToActiveGroupEnabled());
++      return *AddAndReturnTabAt(browser, GURL(), placement.index, true,
++                                placement.group);
++    }
++
+     if (features::IsNewTabAddsToActiveGroupEnabled()) {
+       const int index = browser->GetTabStripModel()->active_index();
+       group_id = browser->GetTabStripModel()->GetTabGroupForTab(index);

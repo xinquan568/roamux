@@ -14,6 +14,8 @@ namespace roamux::prefs {
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(kTabStripPosition,
                                 0);  // 0 = top (Chromium default)
+  registry->RegisterIntegerPref(
+      kNewTabPosition, 1);  // 1 = end of active group (roam-275 default)
   registry->RegisterBooleanPref(kReopenClosed,
                                 false);  // default: skip closed tabs
   registry->RegisterBooleanPref(kSigninOptionalEntryPoint,

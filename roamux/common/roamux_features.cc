@@ -58,6 +58,14 @@ BASE_FEATURE(kTabStripToggleShortcut,
 BASE_FEATURE(kRefreshAllInitialUrls,
              "RoamuxRefreshAllInitialUrls",
              base::FEATURE_ENABLED_BY_DEFAULT);
+// roam-277: ships default-on with its chrome://flags entry (patch 0069) as
+// the kill-switch, the roam-266/269 rule. Gates the placement seam in
+// chrome::NewTab() (patch 0068): ON reads prefs::kNewTabPosition (default
+// end_of_active_group == today's roam-275 behaviour); OFF is the untouched
+// stock patch-0067 path.
+BASE_FEATURE(kNewTabPosition,
+             "RoamuxNewTabPosition",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 // §7.3 defaults. Validation (out-of-range yields the DEFAULT, never a clip;
 // then min_spacing = min(min_spacing, interval)) lives in the pure scheduler's
 // Params::FromMilliseconds — roam-268 — not here.

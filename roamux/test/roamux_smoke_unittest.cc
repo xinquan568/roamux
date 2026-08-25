@@ -29,6 +29,7 @@ TEST(RoamuxSmokeTest, FeatureFlagsDefaultDisabled) {
       base::FeatureList::IsEnabled(roamux::features::kTabStripToggleShortcut));
   EXPECT_TRUE(
       base::FeatureList::IsEnabled(roamux::features::kBraveStyleProfiles));
+  EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kNewTabPosition));
 }
 
 // roam-179 (E8): the scheme alias/display flag SHIPS ENABLED — the rebrand

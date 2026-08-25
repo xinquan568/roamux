@@ -1,0 +1,159 @@
+# roam-277: the Settings > Appearance "New tab position" dropdown — the v1
+# UI for roamux.tabs.new_tab_position. Mechanism: the maintainer-authorised
+# patch-0006 §12.2 revision (at M149 the chromium_src include-redirect cannot
+# reach build_webui() resource lists), so the surface is this minimal patch.
+#
+# FOUR files: (1) chrome/browser/extensions/api/settings_private/prefs_util.cc
+# — the settings_private allowlist row (kNumber) so the dropdown's pref
+# binding reads/writes live; (2) chrome/browser/ui/webui/settings/
+# settings_localized_strings_provider.cc — `roamuxNewTabPositionEnabled`
+# loadTimeData, gating the row on kNewTabPosition ALONE (independent of
+# kTabStripPosition: turning the strip-position feature off must not hide
+# this control); (3) appearance_page.html — the row, placed directly under
+# the 0006 "Tab strip position" block (ORDERING DEPENDENCY: the hunk's
+# context is 0006's closing lines and 0024's opening line, so this patch
+# stays AFTER 0006 and 0024 in name order; a rebase of either must re-verify
+# it); (4) appearance_page.ts — THREE hunks: the gate property, its class-field
+# declaration, and roamuxNewTabPositionOptions_().
+#
+# PRESENTATION-AWARE COPY (issue design §1): internal names are logical
+# (end / after); the after-active option reads "Below the current tab" on a
+# vertical strip and "To the right / left of the current tab" on a horizontal
+# strip in LTR / RTL — upstream's IDS_TAB_CXMENU_NEWTABBELOW / NEWTABTORIGHT /
+# NEWTABTOLEFT pattern. The orientation signal is the TS mirror of
+# roamux::IsVerticalTabStripEffectivelyEnabled (roam-254): the roamux
+# placement (Left=2 / Right=3) when kTabStripPosition is on, upstream
+# vertical_tabs.enabled when it is off. Both inputs are Polymer pref bindings,
+# so the labels recompute LIVE when the strip-position control on the same
+# page changes; `textdirection` comes from every WebUI's loadTimeData defaults
+# (ui/base/webui/web_ui_util.cc). Bounded caveat, same as the C++ accessor:
+# with kTabStripPosition OFF the label follows vertical_tabs.enabled even if
+# the upstream vertical-tabs feature itself is off.
+#
+# The optional tab-context radio submenu (patch-0005 precedent) is NOT part
+# of v1 (follow-up issue if wanted).
+#
+# Coverage: roamux/test/roamux_new_tab_position_settings_browsertest.cc (row
+# present + live-bound both ways; absent when the flag is off; present with
+# kTabStripPosition off; labels follow the roamux placement live, follow
+# vertical_tabs.enabled live when kTabStripPosition is off, and flip under
+# --force-ui-direction=rtl — all RED before this patch) and
+# roamux_settings_private_prefs_unittest.cc (allowlist row + default).
+diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+index f2479b7701..b6bd7f9a51 100644
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -216,6 +216,10 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
+       settings_api::PrefType::kNumber;
+   (*s_allowlist)["roamux.profiles.external_open_profile"] =
+       settings_api::PrefType::kString;
++  // Roamux (roam-277; the key literal mirrors roamux/common/roamux_prefs.h):
++  // the new-tab position enum behind the Appearance dropdown (patch 0070).
++  (*s_allowlist)["roamux.tabs.new_tab_position"] =
++      settings_api::PrefType::kNumber;
+ 
+   // Miscellaneous
+   (*s_allowlist)[::embedder_support::kAlternateErrorPagesEnabled] =
+diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.html b/chrome/browser/resources/settings/appearance_page/appearance_page.html
+index e5491a4a7b..b122443980 100644
+--- a/chrome/browser/resources/settings/appearance_page/appearance_page.html
++++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html
+@@ -203,6 +203,24 @@
+           </div>
+         </template>
+ 
++        <!-- Roamux (roam-277): where Cmd+T / "+" / File > New Tab insert the
++             new tab. Gated on kNewTabPosition alone; the option copy is
++             orientation- and RTL-aware (roamuxNewTabPositionOptions_). -->
++        <template is="dom-if" if="[[roamuxNewTabPositionEnabled_]]">
++          <div class="cr-row">
++            <div class="flex cr-padded-text" aria-hidden="true">
++              New tab position
++            </div>
++            <settings-dropdown-menu id="roamuxNewTabPosition"
++                label="New tab position"
++                pref="{{prefs.roamux.tabs.new_tab_position}}"
++                menu-options="[[roamuxNewTabPositionOptions_(
++                    prefs.roamux.tabs.strip_position.value,
++                    prefs.vertical_tabs.enabled.value)]]">
++            </settings-dropdown-menu>
++          </div>
++        </template>
++
+         <template is="dom-if" if="[[roamuxSigninOptInEnabled_]]">
+           <settings-toggle-button id="roamuxSigninOptIn"
+               pref="{{prefs.roamux.signin.optional_entry_point_enabled}}"
+diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
+index bb50bc16b1..4563409297 100644
+--- a/chrome/browser/resources/settings/appearance_page/appearance_page.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
+@@ -266,6 +266,14 @@ export class SettingsAppearancePageElement extends
+         },
+       },
+ 
++      // Roamux (roam-277): gates the "New tab position" row (own feature).
++      roamuxNewTabPositionEnabled_: {
++        type: Boolean,
++        value() {
++          return loadTimeData.getBoolean('roamuxNewTabPositionEnabled');
++        },
++      },
++
+       showVerticalTabsExpandOnHoverEnabled_: {
+         type: Boolean,
+         value() {
+@@ -347,6 +355,7 @@ export class SettingsAppearancePageElement extends
+   declare private roamuxTabStripPositionEnabled_: boolean;
+   declare private roamuxSigninOptInEnabled_: boolean;
+   declare private roamuxTabStripPositionOptions_: DropdownMenuOptionList;
++  declare private roamuxNewTabPositionEnabled_: boolean;
+   declare private colorSchemeModeOptions_:
+       Array<{value: ColorSchemeMode, name: string}>;
+   declare private selectedColorSchemeMode_: ColorSchemeMode|undefined;
+@@ -714,6 +723,30 @@ export class SettingsAppearancePageElement extends
+     return placement === 2 || placement === 3;
+   }
+ 
++  // Roamux (roam-277): presentation-aware copy for the new-tab position
++  // dropdown. `vertical` mirrors roamux::IsVerticalTabStripEffectivelyEnabled:
++  // the roamux placement when its flag is on (Left=2 / Right=3), upstream
++  // vertical_tabs.enabled otherwise; both are pref bindings, so the labels
++  // follow a live change on this page. RTL flips right/left (upstream's
++  // IDS_TAB_CXMENU_NEWTABTORIGHT / NEWTABTOLEFT pattern).
++  private roamuxNewTabPositionOptions_(
++      placement: number,
++      upstreamVerticalTabs: boolean): DropdownMenuOptionList {
++    const vertical = loadTimeData.getBoolean('roamuxTabStripPositionEnabled') ?
++        (placement === 2 || placement === 3) :
++        upstreamVerticalTabs;
++    const rtl = loadTimeData.getString('textdirection') === 'rtl';
++    const afterActive = vertical ?
++        'Below the current tab' :
++        (rtl ? 'To the left of the current tab' :
++               'To the right of the current tab');
++    return [
++      {value: 0, name: 'At the end of the tab strip'},
++      {value: 1, name: 'At the end of the current tab\'s group'},
++      {value: 2, name: afterActive},
++    ];
++  }
++
+ 
+   private onManagedDialogClosed_() {
+     this.showManagedThemeDialog_ = false;
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index f1a9b5b416..6344f91185 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -589,6 +589,11 @@ void AddAppearanceStrings(content::WebUIDataSource* html_source,
+   html_source->AddBoolean("roamuxTabStripPositionEnabled",
+                           base::FeatureList::IsEnabled(
+                               roamux::features::kTabStripPosition));
++  // Roamux (roam-277): gates the "New tab position" row on its own feature,
++  // independent of kTabStripPosition.
++  html_source->AddBoolean(
++      "roamuxNewTabPositionEnabled",
++      base::FeatureList::IsEnabled(roamux::features::kNewTabPosition));
+   // Roamux (roam-31): the E5 opt-in toggle is visible iff the epic flag is
+   // on (it must stay reachable while the sign-in surfaces are suppressed).
+   html_source->AddBoolean("roamuxSigninOptInEnabled",

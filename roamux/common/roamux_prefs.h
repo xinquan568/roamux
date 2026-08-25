@@ -12,6 +12,11 @@ namespace roamux::prefs {
 
 inline constexpr char kTabStripPosition[] =
     "roamux.tabs.strip_position";  // E1 (enum: top/bottom/left/right)
+inline constexpr char kNewTabPosition[] =
+    "roamux.tabs.new_tab_position";  // roam-277 (enum: 0 end_of_strip /
+                                     // 1 end_of_active_group / 2
+                                     // after_active_tab; default 1). Read via
+                                     // roamux::GetNewTabPosition.
 inline constexpr char kReopenClosed[] =
     "roamux.tabs.visit_nav.reopen_closed";  // E4 (Q(new)-C, default off)
 inline constexpr char kSigninOptionalEntryPoint[] =

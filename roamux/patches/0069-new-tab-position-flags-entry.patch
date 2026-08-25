@@ -1,0 +1,75 @@
+# roam-277: chrome://flags/#roamux-new-tab-position — the kill-switch for
+# kNewTabPosition (patch 0068's seam + patch 0070's Settings row). Structural
+# precedent: patches 0064 (roam-266) and 0066 (roam-269).
+#
+# Lands in the SAME change as the feature: since roam-226 every Roamux flag
+# ships default-ON with an opt-out entry, and without this row this would be
+# the only default-on Roamux feature a user cannot turn off.
+#
+# THREE files, matching 0064/0066 exactly: (1) chrome/browser/about_flags.cc —
+# one FeatureEntry, kOsMac, name and description INLINED (no roamux-owned
+# flag-descriptions unit; anchored directly after 0066's entry — ORDERING
+# DEPENDENCY: stays AFTER 0066 in name order); (2) chrome/browser/flag-metadata.json
+# — the row in GLOBAL ALPHABETICAL ORDER (between roamux-initial-url and
+# roamux-refresh-all-initial-urls), owner set, expiry_milestone -1;
+# (3) chrome/browser/flag-never-expire-list.json — REQUIRED by expiry -1.
+#
+# CI-INVISIBLE GATE: AboutFlagsTest lives in `unit_tests`, which no Roamux CI
+# job builds; it enforces the alphabetical order and `expiry -1 subset-of
+# never-expire-list`. Run it locally on any change to these three files
+# (DYLD_FRAMEWORK_PATH for Sparkle) — done for this patch.
+#
+# Flag-off behaviour: chrome::NewTab() never reads the pref and runs the
+# stock patch-0067 request (end of the active tab's group); the Settings
+# "New tab position" row is not stamped. Nothing is stranded.
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+index e111777e39..c1b41761de 100644
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -4768,6 +4768,18 @@ const FeatureEntry kFeatureEntries[] = {
+      "remove the shortcut and the tab-menu item.",
+      kOsMac,
+      FEATURE_VALUE_TYPE(roamux::features::kRefreshAllInitialUrls)},
++    // Roamux (roam-277): where Cmd+T / "+" / File > New Tab insert the new
++    // tab (Settings > Appearance > "New tab position"). Ships default-on like
++    // every Roamux flag since roam-226, so this entry IS the kill-switch and
++    // lands in the same change as the feature (the roam-266/269 precedent).
++    // Turning it off restores the stock patch-0067 behaviour (end of the
++    // active tab's group) and hides the Settings row; the pref is never read.
++    {"roamux-new-tab-position", "Roamux: new tab position",
++     "Adds a Settings > Appearance option that decides where a new tab "
++     "(Cmd+T, the + button, File > New Tab) is inserted: at the end of the "
++     "tab strip, at the end of the current tab's group, or right after the "
++     "current tab. Turn this off to remove the setting and use the default.",
++     kOsMac, FEATURE_VALUE_TYPE(roamux::features::kNewTabPosition)},
+     // Roamux (roam-31): developer mirror of
+     // roamux.signin.optional_entry_point_enabled (E5). Functional sign-in
+     // additionally requires a keyed-and-authorized build (three-state
+diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
+index 1bfd42e2fe..f429625822 100644
+--- a/chrome/browser/flag-metadata.json
++++ b/chrome/browser/flag-metadata.json
+@@ -8420,6 +8420,11 @@
+     "owners": [ "xinquan568@users.noreply.github.com" ],
+     "expiry_milestone": -1
+   },
++  {
++    "name": "roamux-new-tab-position",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
+   {
+     "name": "roamux-refresh-all-initial-urls",
+     "owners": [ "xinquan568@users.noreply.github.com" ],
+diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-never-expire-list.json
+index ce70304100..b3ded4f25f 100644
+--- a/chrome/browser/flag-never-expire-list.json
++++ b/chrome/browser/flag-never-expire-list.json
+@@ -120,6 +120,7 @@
+   "roamux-edge-import",
+   "roamux-external-open-profile",
+   "roamux-initial-url",
++  "roamux-new-tab-position",
+   "roamux-refresh-all-initial-urls",
+   "roamux-signin-opt-in",
+   "roamux-tab-strip-position",

@@ -64,6 +64,9 @@ TEST_F(RoamuxBrowserPrefsHookTest, UpstreamRegistrationIncludesRoamuxPrefs) {
   EXPECT_NE(prefs_.FindPreference(roamux::prefs::kReopenClosed), nullptr);
   EXPECT_NE(prefs_.FindPreference(roamux::prefs::kSigninOptionalEntryPoint),
             nullptr);
+  // roam-277: the new-tab position pref rides the same hook.
+  EXPECT_NE(prefs_.FindPreference(roamux::prefs::kNewTabPosition), nullptr);
+  EXPECT_EQ(prefs_.GetInteger(roamux::prefs::kNewTabPosition), 1);
 }
 
 // roam-182 hook-level proof: upstream MigrateObsoleteProfilePrefs runs the
