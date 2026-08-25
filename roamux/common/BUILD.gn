@@ -15,6 +15,8 @@ process_version("version_header") {
 
 source_set("common") {
   sources = [
+    "new_tab_position.cc",
+    "new_tab_position.h",
     "roamux_features.cc",
     "roamux_features.h",
     "roamux_prefs.cc",

@@ -37,6 +37,18 @@ TEST_F(RoamuxPrefsTest, TabStripPositionRoundTrips) {
   EXPECT_EQ(prefs_.GetInteger(roamux::prefs::kTabStripPosition), 3);
 }
 
+// roam-277: the new-tab position enum pref registers with default 1
+// (end_of_active_group — today's roam-275 placement) and round-trips.
+TEST_F(RoamuxPrefsTest, NewTabPositionRegistersWithDefaultEndOfActiveGroup) {
+  ASSERT_NE(prefs_.FindPreference(roamux::prefs::kNewTabPosition), nullptr);
+  EXPECT_EQ(prefs_.GetInteger(roamux::prefs::kNewTabPosition), 1);
+}
+
+TEST_F(RoamuxPrefsTest, NewTabPositionRoundTrips) {
+  prefs_.SetInteger(roamux::prefs::kNewTabPosition, 2);  // after_active_tab
+  EXPECT_EQ(prefs_.GetInteger(roamux::prefs::kNewTabPosition), 2);
+}
+
 TEST_F(RoamuxPrefsTest, ReopenClosedRoundTrips) {
   prefs_.SetBoolean(roamux::prefs::kReopenClosed, true);
   EXPECT_TRUE(prefs_.GetBoolean(roamux::prefs::kReopenClosed));

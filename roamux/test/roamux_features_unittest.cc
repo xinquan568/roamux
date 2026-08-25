@@ -107,4 +107,10 @@ TEST(RoamuxFeaturesTest, RefreshAllInitialUrlsParamDefaults) {
   EXPECT_EQ(5000, roamux::features::kRefreshAllInitialUrlsIntervalMs.Get());
   EXPECT_EQ(750, roamux::features::kRefreshAllInitialUrlsMinSpacingMs.Get());
 }
+
+// roam-277: the new-tab position setting ships DEFAULT-ON (its chrome://flags
+// entry, patch 0069, is the kill-switch — the roam-266/269 rule).
+TEST(RoamuxFeaturesTest, NewTabPositionShipsDefaultOn) {
+  EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kNewTabPosition));
+}
 }  // namespace

@@ -48,6 +48,25 @@ TEST_F(RoamuxSettingsPrivatePrefsTest, SigninOptInRoundTripsThroughSetPref) {
   EXPECT_EQ(true, pref->value->GetBool());
 }
 
+// roam-277: the new-tab position enum pref rides the same transport so the
+// Appearance dropdown (patch 0070) can read and write it live.
+TEST_F(RoamuxSettingsPrivatePrefsTest, NewTabPositionIsAllowlistedAsNumber) {
+  const auto& keys = prefs_util_.GetAllowlistedKeys();
+  auto it = keys.find(prefs::kNewTabPosition);
+  ASSERT_NE(keys.end(), it) << prefs::kNewTabPosition
+                            << " missing from the settings_private allowlist";
+  EXPECT_EQ(settings_api::PrefType::kNumber, it->second);
+}
+
+TEST_F(RoamuxSettingsPrivatePrefsTest, NewTabPositionGetPrefExposesDefault) {
+  std::optional<settings_api::PrefObject> pref =
+      prefs_util_.GetPref(prefs::kNewTabPosition);
+  ASSERT_TRUE(pref.has_value());
+  EXPECT_EQ(settings_api::PrefType::kNumber, pref->type);
+  ASSERT_TRUE(pref->value.has_value());
+  EXPECT_EQ(1, pref->value->GetIfInt().value_or(-1));  // end_of_active_group
+}
+
 TEST_F(RoamuxSettingsPrivatePrefsTest, TabStripPositionIsAllowlistedAsNumber) {
   const auto& keys = prefs_util_.GetAllowlistedKeys();
   auto it = keys.find(prefs::kTabStripPosition);

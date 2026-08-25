@@ -72,6 +72,8 @@ test("roamux_unittests") {
     "test/external_open_profile_unittest.cc",
     "test/initial_url_refresh_scheduler_unittest.cc",
     "test/navigation_settle_gate_unittest.cc",
+    "test/new_tab_placement_unittest.cc",
+    "test/new_tab_position_unittest.cc",
     "test/roamux_appcast_verifier_unittest.cc",
     "test/roamux_edge_import_driver_unittest.cc",
     "test/roamux_features_unittest.cc",
@@ -104,6 +106,7 @@ test("roamux_unittests") {
     "//base/test:test_support",
     "//components/prefs:test_support",
     "//components/signin/public/base",
+    "//components/tab_groups",
     "//components/user_data_importer/common",
     "//crypto",
     "//roamux/app:appcast_verifier",
@@ -208,6 +211,8 @@ test("roamux_browsertests") {
     "test/roamux_initial_url_edit_browsertest.cc",
     "test/roamux_initial_url_restore_browsertest.cc",
     "test/roamux_new_tab_active_group_browsertest.cc",
+    "test/roamux_new_tab_position_browsertest.cc",
+    "test/roamux_new_tab_position_settings_browsertest.cc",
     "test/roamux_omnibox_icon_browsertest.cc",
     "test/roamux_origin_storage_import_browsertest.cc",
     "test/roamux_profile_creation_browsertest.cc",
@@ -266,6 +271,10 @@ test("roamux_browsertests") {
     "//components/services/storage/public/mojom",
     "//components/signin/public/base",
     "//components/signin/public/identity_manager",
+
+    # roam-277: the split-active placement test builds a split view
+    # (split_tabs::SplitTabVisualData is owned here, not by //chrome).
+    "//components/split_tabs",
 
     # roam-240: RoamuxBrowserTest::SetUpCommandLine appends the exported
     # kDisableFieldTrialTestingConfig constant owned by this component.

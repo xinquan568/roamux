@@ -13,19 +13,32 @@
 // and a disabled fixture proving the opt-out restores end-of-strip appends.
 // The ungrouped-active-tab case guards the issue's explicit non-goal: no
 // adjacent-to-active placement for Cmd+T.
+//
+// roam-277: chrome::NewTab() now carries a Roamux placement seam (patch 0068,
+// roamux::features::kNewTabPosition + roamux.tabs.new_tab_position). The two
+// behavioural fixtures below DISABLE that feature so they keep proving the
+// UPSTREAM feature on the stock path (a second, independent flag-off parity
+// proof), and pin the pref explicitly to end_of_active_group as the issue
+// requires; the compiled-default sentinel stays unpinned (its subject is the
+// upstream default). The Roamux modes are covered by
+// roamux_new_tab_position_browsertest.cc.
 
 #include <optional>
 
 #include "base/feature_list.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/app/chrome_command_ids.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
+#include "roamux/common/new_tab_position.h"
+#include "roamux/common/roamux_features.h"
 #include "roamux/test/support/roamux_browser_test.h"
 #include "url/gurl.h"
 
@@ -53,14 +66,23 @@ using RoamuxNewTabActiveGroupDefaultBrowserTest = test::RoamuxBrowserTest;
 // DISABLED, passes once the patch flips it.
 IN_PROC_BROWSER_TEST_F(RoamuxNewTabActiveGroupDefaultBrowserTest,
                        FeatureIsEnabledByDefault) {
-  EXPECT_TRUE(base::FeatureList::IsEnabled(features::kNewTabAddsToActiveGroup));
+  EXPECT_TRUE(
+      base::FeatureList::IsEnabled(::features::kNewTabAddsToActiveGroup));
 }
 
 class RoamuxNewTabActiveGroupEnabledBrowserTest
     : public test::RoamuxBrowserTest {
  public:
   RoamuxNewTabActiveGroupEnabledBrowserTest() {
-    feature_list_.InitAndEnableFeature(features::kNewTabAddsToActiveGroup);
+    feature_list_.InitWithFeatures({::features::kNewTabAddsToActiveGroup},
+                                   {roamux::features::kNewTabPosition});
+  }
+
+ protected:
+  void SetUpOnMainThread() override {
+    test::RoamuxBrowserTest::SetUpOnMainThread();
+    SetNewTabPosition(browser()->profile()->GetPrefs(),
+                      NewTabPosition::kEndOfActiveGroup);
   }
 
  private:
@@ -103,7 +125,16 @@ class RoamuxNewTabActiveGroupDisabledBrowserTest
     : public test::RoamuxBrowserTest {
  public:
   RoamuxNewTabActiveGroupDisabledBrowserTest() {
-    feature_list_.InitAndDisableFeature(features::kNewTabAddsToActiveGroup);
+    feature_list_.InitWithFeatures(
+        {}, {::features::kNewTabAddsToActiveGroup,
+             roamux::features::kNewTabPosition});
+  }
+
+ protected:
+  void SetUpOnMainThread() override {
+    test::RoamuxBrowserTest::SetUpOnMainThread();
+    SetNewTabPosition(browser()->profile()->GetPrefs(),
+                      NewTabPosition::kEndOfActiveGroup);
   }
 
  private:
