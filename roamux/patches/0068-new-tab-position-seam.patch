@@ -53,8 +53,10 @@
 # Coverage: roamux/test/roamux_new_tab_position_browsertest.cc (44 tests —
 # per mode x topology, repeated Cmd+T ordering, pinned/split/collapsed, opener
 # close-selection, both flag-precedence cells, the NewTabTypes gate, the two
-# affected consumers, vertical-strip scroll sanity; the 24 mode-dependent
-# cases were RED before this patch), roamux_new_tab_active_group_browsertest.cc
+# affected consumers, vertical-strip scroll sanity; 20 of the 44 were RED
+# before this patch, plus 5 of the 6 Settings tests behind patch 0070 — the
+# 25 filtered failures the RED gate matched exactly),
+# roamux_new_tab_active_group_browsertest.cc
 # (re-pinned: kNewTabPosition OFF + pref 1 in the behavioural fixtures), and
 # the helper table in roamux/test/new_tab_placement_unittest.cc.
 diff --git a/chrome/browser/ui/browser_commands.cc b/chrome/browser/ui/browser_commands.cc

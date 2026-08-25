@@ -58,6 +58,16 @@ TEST_F(NewTabPlacementTest, EndOfStripGroupedActiveGroupLastInStrip) {
   EXPECT_EQ(std::nullopt, p.group);
 }
 
+// Mode 0 is independent of the upstream feature in BOTH directions: a grouped
+// active tab still gets a plain, ungrouped append when the flag is off.
+TEST_F(NewTabPlacementTest, EndOfStripIgnoresUpstreamFlag) {
+  const NewTabPlacement p = ComputeNewTabPlacement(
+      NewTabPosition::kEndOfStrip, kFourTabs, /*active_index=*/1, group_,
+      /*upstream_new_tab_adds_to_active_group=*/false);
+  EXPECT_EQ(-1, p.index);
+  EXPECT_EQ(std::nullopt, p.group);
+}
+
 // ---- end_of_active_group: the stock patch-0067 request ---------------------
 
 TEST_F(NewTabPlacementTest, EndOfActiveGroupUngroupedActive) {
