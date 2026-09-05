@@ -1136,12 +1136,15 @@ class SelfHostedTimeoutTest(unittest.TestCase):
 
 
 def _job_steps(job_text):
-    """A job's step blocks (comment lines dropped), split at `      - name:` / `      - uses:`."""
+    """A job's step blocks (comment lines dropped), split at EVERY step-sequence entry at the
+    steps indentation (`      - <key>:`) — named or not. A splitter that only recognized
+    `- name:`/`- uses:` would let an unnamed `- run:`/`- id:` step slip in ahead of the guard
+    and still report the guard as first (Step-8 review of roam-281)."""
     steps, cur = [], None
     for line in job_text.splitlines():
         if line.strip().startswith("#"):
             continue
-        if re.match(r"^      - (name|uses):", line):
+        if re.match(r"^      - [A-Za-z_-]+:", line):
             if cur is not None:
                 steps.append("\n".join(cur))
             cur = [line]
@@ -1186,17 +1189,46 @@ class KillSwitchIsRedTest(unittest.TestCase):
                       "runner when it is empty")
         self.assertIn("self-hosted", runs_on, "the enumeration helpers key on this substring")
 
+    @staticmethod
+    def _binds_cap(step_text):
+        """The step reads the switch through an env binding, not merely by naming it in text."""
+        return re.search(r"^\s+CAP:\s*\$\{\{\s*vars\.ROAMUX_CI_CHROMIUM_RUNNER\s*\}\}\s*$",
+                         step_text, re.M) is not None
+
     def test_first_step_fails_red_when_switch_is_empty(self):
         steps = _job_steps(self._job())
         self.assertGreaterEqual(len(steps), 3, f"expected kill-switch, checkout, tier-2 steps; got {steps}")
         first, rest = steps[0], "\n".join(steps[1:])
         self.assertIn(CAPABILITY_VAR, first, "the FIRST step must read the switch")
+        self.assertTrue(self._binds_cap(first),
+                        "the first step must BIND CAP to vars.ROAMUX_CI_CHROMIUM_RUNNER — a message that "
+                        "merely names the variable would let a missing binding fail every provisioned job")
         self.assertIn("exit 1", first, "the first step must fail when the switch is empty")
         self.assertIn("::error::", first, "the failure must be loud")
         self.assertNotIn("actions/checkout", first)
         self.assertNotIn("tier2_job.sh", first)
         self.assertIn("actions/checkout", rest, "checkout must come AFTER the kill-switch step")
         self.assertIn("tier2_job.sh", rest, "the tier-2 script must come AFTER the kill-switch step")
+
+    def test_job_steps_sees_unnamed_steps_and_the_cap_binding_is_required(self):
+        # Regressions for the Step-8 review: (a) an unnamed `- run:` step ahead of the guard must
+        # not be invisible to the splitter; (b) a guard without the env binding must not count.
+        guard = ("      - name: Kill switch — tier-2 capability must be provisioned\n"
+                 "        env:\n          CAP: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER }}\n"
+                 "        run: |\n          [ -n \"$CAP\" ] || exit 1\n")
+        job = ("    runs-on: macos-14\n    steps:\n"
+               "      - run: echo sneaky\n" + guard +
+               "      - uses: actions/checkout@v4\n"
+               "      - name: tier-2\n        run: bash roamux/build/ci/tier2_job.sh\n")
+        steps = _job_steps(job)
+        self.assertEqual(len(steps), 4, steps)
+        self.assertTrue(steps[0].lstrip().startswith("- run: echo sneaky"),
+                        "an unnamed step must be split out as its own step")
+        self.assertFalse(self._binds_cap(steps[0]))
+        self.assertTrue(self._binds_cap(steps[1]))
+        unbound = guard.replace("          CAP: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER }}\n", "")
+        self.assertFalse(self._binds_cap(unbound),
+                         "a guard that only names ROAMUX_CI_CHROMIUM_RUNNER in text must not count as bound")
 
     def test_kill_switch_step_script_exits_1_when_empty(self):
         # BEHAVIOURAL: the first step's script, extracted from ci.yml (never a copy), run the way
