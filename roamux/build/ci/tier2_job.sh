@@ -38,15 +38,59 @@ ROAMUX_CANONICAL_OVERLAY="${ROAMUX_CANONICAL_OVERLAY:?set in the runner .env —
 export PATH="${DEPOT}:${PATH}"
 SECONDS=0
 
+# roam-280 (grill M9): reconcile FIRST — recovery must never depend on the previous job's EXIT
+# trap having run (it does not survive a SIGKILL: a cancel past GitHub's grace window, runner
+# death, the battery idle-sleep). A dangling or stale link is fine — the flip below re-points
+# it. A REAL directory at the link path is not: `ln -sfn` would create <dir>/roamux inside it
+# and report success, and the build would silently read the wrong tree. Refuse before any base
+# mutation, and before the trap is installed, so a refused start emits no restore warning.
+if [ -e "${SRC}/roamux" ] && [ ! -L "${SRC}/roamux" ]; then
+  echo "::error::${SRC}/roamux is a real directory, not the overlay symlink — refusing to flip into it (linking would create ${SRC}/roamux/roamux and report success); repair the base checkout by hand"
+  exit 1
+fi
+
+# roam-280 (grill M9): the EXIT trap's exit-status contract. Under `set -e` an UNGUARDED failing
+# command inside a trap terminates the trap and REPLACES the job's status (reproduced on
+# /bin/bash 3.2: a restore failing with 7 turned incoming 3 and 0 into 7, message never printed);
+# a restore that "succeeds" inside a real directory preserves a green status while the base is
+# broken. So: capture the status FIRST; every command below is guarded (an `if` condition, a
+# `|| true`, or `exit`), so errexit can never cut the trap short; never link into a directory;
+# verify with readlink; a real failure stays the reported failure; a green job whose base could
+# not be restored goes red. The function keeps this exact column-0 shape — test_tier2_job.py
+# extracts it and runs it with stdout CLOSED.
 restore_overlay() {
-  ln -sfn "${ROAMUX_CANONICAL_OVERLAY}" "${SRC}/roamux"
-  echo "overlay symlink restored to ${ROAMUX_CANONICAL_OVERLAY}"
+  local rc=$?
+  local prev
+  prev="$(readlink "${SRC}/roamux" 2>/dev/null || true)"
+  prev="${prev:-<none>}"
+  if [ -e "${SRC}/roamux" ] && [ ! -L "${SRC}/roamux" ]; then
+    echo "::warning::overlay restore misfire: ${SRC}/roamux is a real directory (previous link target: ${prev}; this job had linked it to ${FLIPPED_TO:-<never flipped>}) — not linking into it; repair the base checkout by hand" || true
+    if [ "${rc}" -ne 0 ]; then
+      exit "${rc}"
+    fi
+    echo "::error::the job was green but the overlay symlink could not be restored (${SRC}/roamux is a real directory)" || true
+    exit 1
+  fi
+  if ln -sfn "${ROAMUX_CANONICAL_OVERLAY}" "${SRC}/roamux" && [ "$(readlink "${SRC}/roamux" 2>/dev/null || true)" = "${ROAMUX_CANONICAL_OVERLAY}" ]; then
+    echo "overlay symlink restored to ${ROAMUX_CANONICAL_OVERLAY} (was ${prev})" || true
+    exit "${rc}"
+  fi
+  local now
+  now="$(readlink "${SRC}/roamux" 2>/dev/null || true)"
+  echo "::warning::overlay symlink restore FAILED: ${SRC}/roamux -> ${now:-<none>} (expected ${ROAMUX_CANONICAL_OVERLAY}; previous ${prev})" || true
+  if [ "${rc}" -ne 0 ]; then
+    exit "${rc}"
+  fi
+  echo "::error::the job was green but the overlay symlink could not be restored" || true
+  exit 1
 }
 trap restore_overlay EXIT
 
 echo "== tier-2 warm-base job: base=${SRC} out=${OUT} workspace=${GITHUB_WORKSPACE} =="
 
-# Declared channel 1: point the base's overlay at THIS job's checkout.
+# Declared channel 1: point the base's overlay at THIS job's checkout. FLIPPED_TO lets the trap
+# name what this job linked to when it finds the link gone (roam-280).
+FLIPPED_TO="${GITHUB_WORKSPACE}/roamux"
 ln -sfn "${GITHUB_WORKSPACE}/roamux" "${SRC}/roamux"
 
 # Channel 2 precondition (roam-175, roam-160 postmortem): reconcile the base's tracked
@@ -101,10 +145,34 @@ python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
     python3 -m unittest roamux.build.tests.test_release_signing )
 
 # Warm CI build dir: APFS-clone the operator's warm out/Default on first use (copy-on-write).
+# roam-280 (grill M13): restart-safe. A clone killed mid-copy (cancel, timeout, sleep) used to
+# leave a partial ${OUT} that the `-d` guard treated as complete. Now: "ready" means
+# ${OUT}/build.ninja AND ${OUT}/args.gn exist; a not-ready ${OUT} is discarded and redone ONLY
+# when OUT is literally the CI-owned default out/CI (docs/ci/self-hosted-runner.md) — an
+# overridden ROAMUX_CI_OUT in that state is refused, never deleted; the copy goes to
+# ${OUT}.partial (ours, always safe to discard), is checked for readiness, and is renamed into
+# place atomically. out/Default is never a deletion target under any branch.
 cd "${SRC}"
+if [ -d "${OUT}" ] && { [ ! -f "${OUT}/build.ninja" ] || [ ! -f "${OUT}/args.gn" ]; }; then
+  if [ "${OUT}" = "out/CI" ]; then
+    echo "::warning::${OUT} exists but is not a complete build dir (no build.ninja/args.gn) — a clone was interrupted; discarding it and re-cloning"
+    rm -rf "${OUT}"
+  else
+    echo "::error::${OUT} exists but is not a complete build dir (no build.ninja/args.gn); only the default out/CI is CI-owned — refusing to delete an overridden ROAMUX_CI_OUT. Remove it yourself to re-clone."
+    exit 1
+  fi
+fi
 if [ ! -d "${OUT}" ]; then
-  echo "cloning warm build dir out/Default -> ${OUT} (APFS copy-on-write)"
-  cp -Rc out/Default "${OUT}"
+  rm -rf "${OUT}.partial"
+  clone_started=${SECONDS}
+  echo "cloning warm build dir out/Default -> ${OUT}.partial (APFS copy-on-write), then publishing as ${OUT}"
+  cp -Rc out/Default "${OUT}.partial"
+  if [ ! -f "${OUT}.partial/build.ninja" ] || [ ! -f "${OUT}.partial/args.gn" ]; then
+    echo "::error::clone of out/Default is incomplete (no build.ninja/args.gn in ${OUT}.partial) — not publishing it as ${OUT}"
+    exit 1
+  fi
+  mv "${OUT}.partial" "${OUT}"
+  echo "clone published as ${OUT} in $((SECONDS - clone_started))s"
 fi
 
 autoninja -C "${OUT}" roamux_unittests roamux_browser_unittests roamux_browsertests
