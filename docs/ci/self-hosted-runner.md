@@ -12,9 +12,10 @@ a standing labeled runner (`self-hosted, macos, chromium-builder`); the pinned c
 (`~/chromium/src` per `CHROMIUM_PIN`) as the shared warm base; a CI-owned build dir (`out/CI`,
 APFS-cloned copy-on-write from the operator's `out/Default`); **declared-channel** base access (the
 job touches the base only via the overlay symlink — restored by `tier2_job.sh`'s EXIT trap and, in
-the release workflow, by a final `if: always()` step (roam-279) — and the pristine-reconcile +
-idempotent fail-loud runhook; structurally test-enforced by `test_tier2_job.py` and
-`test_workflow_invariants.py`).
+the release workflow, by a final `if: always()` step (roam-279); the flip refuses a real directory at
+the link path and the trap reports a restore it cannot perform instead of linking into it
+(roam-280) — and the pristine-reconcile + idempotent fail-loud runhook; test-enforced
+structurally and behaviourally by `test_tier2_job.py` and `test_workflow_invariants.py`).
 
 **The base's tracked state is CI-owned (roam-175).** Every tier-2/release run first reconciles
 `~/chromium/src` to pristine (`git reset --hard HEAD` + `git clean -fd -e /roamux` — never `-x`,
@@ -71,7 +72,10 @@ gh variable delete ROAMUX_CI_CHROMIUM_RUNNER --repo <owner>/<repo>
 
 `out/CI` is an APFS clone of the operator's warm `out/Default` (near-instant, ~zero disk until
 divergence) made on first job use; ninja then builds incrementally. Refresh = delete `out/CI` (the
-next job re-clones). Known v1 contention: the runner shares the machine/checkout with local
+next job re-clones). The clone is restart-safe (roam-280): it is made into `out/CI.partial`, checked
+for `build.ninja`/`args.gn`, and renamed into place atomically; a directory without them is an
+interrupted clone and is redone — for the default `out/CI` only; an overridden `ROAMUX_CI_OUT` in
+that state is refused, never deleted. Known v1 contention: the runner shares the machine/checkout with local
 development. The three base-mutating jobs (tier-2, nightly, release) are serialized by the
 `roamux-shared-base` concurrency group (roam-279: `cancel-in-progress: false` — a running build is
 never killed by a newcomer; `queue: max` — waiting jobs queue in order, where GitHub's default
