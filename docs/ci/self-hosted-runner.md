@@ -2,8 +2,15 @@
 # Self-hosted builder — tier-2 warm-cache (roam-36, plan §12.6, personal-machine v1)
 
 The tier-2 fast path: trusted jobs build Chromium **incrementally from a warm base in minutes** on a
-self-hosted Apple-silicon runner. When absent (runner gone AND `vars.ROAMUX_CI_CHROMIUM_RUNNER`
-unset), CI degrades to roam-5's visible skips — never red.
+self-hosted Apple-silicon runner. `vars.ROAMUX_CI_CHROMIUM_RUNNER` is a **kill switch**, not a soft
+skip (roam-281): when it is **empty or unset**, the required `targeted-suite-selfhosted` check runs on
+a hosted runner for same-repo branches and fails **red** in its first step (after any wait for the
+`roamux-shared-base` group), so merges are blocked; branch protection treats a *skipped* required
+check as satisfied, which is why the old `if:`-gate was a vacuous pass. Fork PRs are unchanged (tier-1
+only, R15). The variable's value is never a label — any non-empty value turns the switch on; a switch
+that is on with no registered runner matching the fixed label triple queues the job until GitHub's
+queue timeout (blocks merge, not red). Whether re-running a completed run re-reads the variable is
+unverified: after changing it, push (or re-run) and *observe* where the job was routed.
 
 ## v1 posture vs full §12.6 — read this first
 
@@ -61,9 +68,10 @@ ENV
 cd ~/roamux-runner && nohup ./run.sh >runner.log 2>&1 &
 # Persist across reboots (deeper machine mutation — operator choice):
 cd ~/roamux-runner && ./svc.sh install && ./svc.sh start
-# Enable tier-2 jobs:
+# Enable tier-2 jobs (any non-empty value turns the switch on; the value is not a label):
 gh variable set ROAMUX_CI_CHROMIUM_RUNNER --body roamux-builder-1 --repo <owner>/<repo>
-# Decommission (do BOTH — a set variable with a dead runner queues jobs until timeout):
+# Decommission (do BOTH — a set variable with a dead runner queues jobs until timeout; deleting the
+# variable engages the kill switch: same-repo PRs go RED on targeted-suite-selfhosted until it is set again):
 cd ~/roamux-runner && ./config.sh remove --token "$(gh api -X POST repos/<o>/<r>/actions/runners/remove-token --jq .token)"
 gh variable delete ROAMUX_CI_CHROMIUM_RUNNER --repo <owner>/<repo>
 ```
