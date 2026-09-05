@@ -25,6 +25,14 @@ jobs:
     # roam-110: GitHub's silent default job timeout is 6h even on self-hosted runners; a cold
     # universal2 build exceeds it (run 29195822447 was service-cancelled at exactly 6h00m).
     timeout-minutes: 1440
+    # roam-279 (grill H5): see ci.yml targeted-suite-selfhosted — the three self-hosted jobs share
+    # one base checkout and one overlay symlink; this job-level group serializes them across
+    # workflows (a queued release waits behind a running tier-2 or nightly — correct for base
+    # integrity). queue: max so a waiting tag run is queued, never cancelled by a later arrival.
+    concurrency:
+      group: roamux-shared-base
+      cancel-in-progress: false
+      queue: max
     steps:
       - name: Assert protected ref
         run: |
@@ -56,7 +64,16 @@ jobs:
           if [ ! -d "${ROAMUX_DEPOT_TOOLS}" ]; then
             echo "::error::ROAMUX_DEPOT_TOOLS=${ROAMUX_DEPOT_TOOLS} is not a directory on this builder"; exit 1
           fi
+          # roam-279 (grill H6): the overlay-symlink restore target. tier2_job.sh has required it
+          # since roam-36; release was the one consumer of the .env contract that ignored it.
+          if [ -z "${ROAMUX_CANONICAL_OVERLAY:-}" ]; then
+            echo "::error::ROAMUX_CANONICAL_OVERLAY missing/empty in ${env_file} — the overlay symlink restore target; write it per docs/ci/self-hosted-runner.md"; exit 1
+          fi
+          if [ ! -d "${ROAMUX_CANONICAL_OVERLAY}" ]; then
+            echo "::error::ROAMUX_CANONICAL_OVERLAY=${ROAMUX_CANONICAL_OVERLAY} is not a directory on this builder"; exit 1
+          fi
           echo "CHROMIUM_SRC=${ROAMUX_CHROMIUM_SRC}" >> "$GITHUB_ENV"
+          echo "CANONICAL_OVERLAY=${ROAMUX_CANONICAL_OVERLAY}" >> "$GITHUB_ENV"
           echo "${ROAMUX_DEPOT_TOOLS}" >> "$GITHUB_PATH"
           echo "resolved: CHROMIUM_SRC=${ROAMUX_CHROMIUM_SRC}; depot_tools on PATH from ${ROAMUX_DEPOT_TOOLS}"
 
@@ -350,3 +367,32 @@ jobs:
       - name: Remove signing material
         if: always()
         run: bash roamux/app/release/keychain_cleanup.sh
+
+      # roam-279 (grill H6): the build step re-points the shared base's overlay symlink at THIS
+      # job's checkout and, until now, nothing restored it — after every release the operator's
+      # next local build silently compiled the runner's _work tree. tier2_job.sh restores via an
+      # EXIT trap; a workflow step has no trap, so this always() step is the equivalent. Best
+      # effort by nature (it needs a live runner inside GitHub's cancellation window); forced
+      # termination and machine sleep are roam-280's reconcile-first assertion. LAST on purpose:
+      # nothing may run after it against a flipped base. Its three exit paths are executed by
+      # test_workflow_invariants.py (ReleaseOverlayRestoreBehaviourTest).
+      - name: Restore canonical overlay symlink
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -z "${CHROMIUM_SRC:-}" ] || [ -z "${CANONICAL_OVERLAY:-}" ]; then
+            echo "::notice::overlay restore skipped: the machine env never resolved, so the symlink was never flipped"
+            exit 0
+          fi
+          link="${CHROMIUM_SRC}/roamux"
+          if [ -e "${link}" ] && [ ! -L "${link}" ]; then
+            echo "::error::${link} is a real directory, not the overlay symlink — refusing to link into it (ln -sfn would create ${link}/roamux and report success); repair the base checkout by hand"
+            exit 1
+          fi
+          ln -sfn "${CANONICAL_OVERLAY}" "${link}"
+          actual="$(readlink "${link}" || true)"
+          if [ "${actual}" != "${CANONICAL_OVERLAY}" ]; then
+            echo "::error::overlay symlink restore failed: ${link} -> ${actual:-<none>} (expected ${CANONICAL_OVERLAY})"
+            exit 1
+          fi
+          echo "overlay symlink restored to ${CANONICAL_OVERLAY}"

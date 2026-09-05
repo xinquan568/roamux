@@ -52,10 +52,27 @@ These encode the tier-1 + release posture structurally, so every future workflow
       tier-2 and this scheduled hosted run — and tier-2 is conditional on the capability var
       and unreachable for fork PRs (R15). Without this opt-in the one test covering the shipped
       Roamux.dmg's symlink/exec-bit preservation would depend on a single conditional job.
+  18. The three self-hosted jobs (ci targeted-suite-selfhosted, nightly-selfhosted, release
+      build-sign-package) each declare the job-level concurrency group `roamux-shared-base`
+      (cancel-in-progress: false, queue: max): they reset, re-patch and re-point the SAME shared
+      warm base, and until roam-279 their serialization was an accident of having one runner. No
+      workflow-level group and no hosted job may be serialized (grill H5).
+  19. release.yml validates ROAMUX_CANONICAL_OVERLAY in the machine-env step and ends with an
+      always() step that restores the base's overlay symlink to it — refusing to link into a real
+      directory and verifying with readlink; the restore step's three exit paths AND the
+      machine-env step's guards/export are executed by tests, from scripts extracted out of the
+      workflow (grill H6; tier2_job.sh already restores via its EXIT trap, release never did).
+  20. Every self-hosted job declares timeout-minutes above GitHub's silent 6h default — a cold
+      tier-2 exceeds it (nightly run 29827734729 was service-cancelled at exactly 6h00m on
+      2026-07-21, roam-110's tier-2 twin); invariant 7 generalized (grill M9).
 """
 
+import os
 import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[3] / ".github" / "workflows"
@@ -582,34 +599,10 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
     GATE = "require_ac_power.sh"
 
     def _selfhosted_jobs(self):
-        """{(workflow, job_name): job_text} for every job whose runs-on is self-hosted."""
-        jobs = {}
-        for wf in sorted(list(WORKFLOWS.glob("*.yml")) + list(WORKFLOWS.glob("*.yaml"))):
-            lines = wf.read_text().splitlines()
-            name, buf, in_jobs = None, [], False
-            def flush():
-                # Parse the runs-on DECLARATION structurally — not any mention
-                # (`targeted-suite` echoes "self-hosted" in a log line and is
-                # hosted), and not only the same physical line: the label list
-                # may be inline `[a, b]` or a multiline `- a` block.
-                if name and _runs_on_is_selfhosted(buf):
-                    jobs[(wf.name, name)] = "\n".join(buf)
-            for line in lines:
-                if line.startswith("jobs:"):
-                    in_jobs = True
-                    continue
-                if not in_jobs:
-                    continue
-                stripped = line.strip()
-                # A job key is exactly two-space indented and ends with ':'.
-                if (line.startswith("  ") and not line.startswith("   ")
-                        and stripped.endswith(":") and not stripped.startswith("#")):
-                    flush()
-                    name, buf = stripped[:-1], []
-                elif name is not None:
-                    buf.append(line)
-            flush()
-        return jobs
+        """{(workflow, job_name): job_text} for every job whose runs-on is self-hosted.
+        Hoisted to the module-level _selfhosted_jobs() by roam-279 (its invariants
+        enumerate the same three jobs); the parse is unchanged."""
+        return _selfhosted_jobs()
 
     def test_enumeration_finds_the_known_selfhosted_jobs(self):
         # Non-vacuous: a broken parser must fail here rather than pass the
@@ -683,3 +676,435 @@ class SelfHostedPowerProtectionTest(unittest.TestCase):
             at = body.find(expensive)
             self.assertGreater(at, 0, f"{expensive} vanished from release.yml")
             self.assertLess(gate, at, f"the power gate must precede `{expensive}`")
+
+
+# ---------------------------------------------------------------------------------------------
+# roam-279 (grill H5 / H6 / M9-timeout). Three self-hosted jobs reset, re-patch and re-point the
+# SAME shared warm base; the invariants below make their mutual exclusion, the release symlink
+# restore and an explicit job timeout structural instead of an accident of having one runner.
+
+SHARED_BASE_GROUP = "roamux-shared-base"
+# Queue depth the group declares. "max" keeps every waiting job (up to 100) instead of GitHub's
+# default single pending slot, where a NEWER arrival cancels the older pending job — with tier-2 a
+# required check, a busy day would turn into re-run duty. This is the single knob of the documented
+# fallback: set it to None if GitHub ever rejects `queue:` at job level and the assertion flips to
+# "no queue key" (the runner doc and the acceptance wording change with it — roam-279 plan §5).
+SHARED_BASE_QUEUE = "max"
+# Strictly above GitHub's silent 6h (360 min) default, which applies to self-hosted runners too:
+# a cold tier-2 exceeds it (nightly run 29827734729 was service-cancelled at exactly 6h00m on
+# 2026-07-21 — the tier-2 twin of roam-110's release case).
+SELFHOSTED_TIMEOUT_FLOOR = 420
+KNOWN_SELFHOSTED_JOBS = (("ci.yml", "targeted-suite-selfhosted"),
+                         ("nightly.yml", "nightly-selfhosted"),
+                         ("release.yml", "build-sign-package"))
+KNOWN_HOSTED_JOBS = (("ci.yml", "lint"), ("ci.yml", "governance"), ("ci.yml", "targeted-suite"),
+                     ("nightly.yml", "hermetic-suite"), ("issue-link.yml", "check-issue-link"))
+
+
+def _jobs(text):
+    """{job_name: job_text} for every job of one workflow, in file order. A job key is exactly
+    two-space indented and ends with ':'; everything up to the next job key is its text
+    (comment lines included — consumers strip what they must)."""
+    jobs, name, buf, in_jobs = {}, None, [], False
+    for line in text.splitlines():
+        if line.startswith("jobs:"):
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        stripped = line.strip()
+        if (line.startswith("  ") and not line.startswith("   ")
+                and stripped.endswith(":") and not stripped.startswith("#")):
+            if name is not None:
+                jobs[name] = "\n".join(buf)
+            name, buf = stripped[:-1], []
+        elif name is not None:
+            buf.append(line)
+    if name is not None:
+        jobs[name] = "\n".join(buf)
+    return jobs
+
+
+def _all_jobs():
+    """{(workflow, job_name): job_text} across every workflow file."""
+    out = {}
+    for wf in sorted(list(WORKFLOWS.glob("*.yml")) + list(WORKFLOWS.glob("*.yaml"))):
+        for name, text in _jobs(wf.read_text()).items():
+            out[(wf.name, name)] = text
+    return out
+
+
+def _selfhosted_jobs():
+    """{(workflow, job_name): job_text} for every job whose runs-on DECLARATION is self-hosted.
+    Parsed structurally — `targeted-suite` merely echoes "self-hosted" in a log line and is
+    hosted — for inline `[a, b]` and multiline `- a` label lists alike."""
+    return {k: t for k, t in _all_jobs().items() if _runs_on_is_selfhosted(t.splitlines())}
+
+
+def _job_key_block(job_text, key):
+    """The lines of one 4-space-indented mapping key inside a job (key line included), or None.
+    Comment lines are skipped; the block ends at the first line indented 4 spaces or less."""
+    lines = job_text.splitlines()
+    for i, line in enumerate(lines):
+        if line.rstrip() == f"    {key}:":
+            block = [line]
+            for cont in lines[i + 1:]:
+                if not cont.strip() or cont.strip().startswith("#"):
+                    continue
+                if len(cont) - len(cont.lstrip()) <= 4:
+                    break
+                block.append(cont)
+            return "\n".join(block)
+    return None
+
+
+def _job_has_key(job_text, key):
+    """True when a job declares `key` at job level in ANY form — scalar (`    key: value`), inline
+    mapping (`    key: { … }`) or block (`    key:` + indented lines). A commented-out line never
+    counts. The hosted-job guard needs this breadth: a scalar `concurrency: <name>` serializes a
+    job exactly as the block form does."""
+    return re.search(rf"(?m)^    {re.escape(key)}:(?:\s|$)", job_text) is not None
+
+
+def _job_scalar(job_text, key):
+    """The value of a 4-space-indented scalar key (`    key: value`) inside a job, or None."""
+    m = re.search(rf"^    {re.escape(key)}:[ \t]*([^#\n]+?)[ \t]*(?:#.*)?$", job_text, re.M)
+    return m.group(1) if m else None
+
+
+def _release_steps():
+    """release.yml's step blocks with comment lines removed — the same splitter
+    test_release_power_gate_is_the_first_step_after_checkout applies inline."""
+    lines = (WORKFLOWS / "release.yml").read_text().splitlines()
+    steps, cur = [], None
+    for line in lines:
+        if line.strip().startswith("#"):
+            continue
+        if re.match(r"^      - (name|uses):", line):
+            if cur is not None:
+                steps.append("\n".join(cur))
+            cur = [line]
+        elif cur is not None:
+            cur.append(line)
+    if cur is not None:
+        steps.append("\n".join(cur))
+    return steps
+
+
+def _step_run_script(step_text):
+    """The dedented body of a step's `run: |` block, or None when the step has none."""
+    lines = step_text.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*run:\s*\|\s*$", line):
+            indent = len(line) - len(line.lstrip())
+            body = []
+            for cont in lines[i + 1:]:
+                if cont.strip() and len(cont) - len(cont.lstrip()) <= indent:
+                    break
+                body.append(cont)
+            nonblank = [l for l in body if l.strip()]
+            if not nonblank:
+                return None
+            cut = min(len(l) - len(l.lstrip()) for l in nonblank)
+            return "\n".join(l[cut:] if l.strip() else "" for l in body) + "\n"
+    return None
+
+
+class SharedBaseConcurrencyTest(unittest.TestCase):
+    """Invariant 18 (roam-279 / H5): the three self-hosted jobs are mutually exclusive BY
+    DECLARATION — one job-level concurrency group shared across all three workflows — and nothing
+    else is serialized (a workflow-level group would queue every PR's hosted lint behind a
+    50-minute tier-2 and expose it to the pending-queue rule)."""
+
+    def test_enumeration_finds_the_known_selfhosted_jobs(self):
+        # Non-vacuous: a broken parser must fail here, not pass the coverage tests by finding nothing.
+        found = set(_selfhosted_jobs())
+        for expected in KNOWN_SELFHOSTED_JOBS:
+            self.assertIn(expected, found, f"parser missed {expected}; found {sorted(found)}")
+
+    def test_every_selfhosted_job_joins_the_shared_base_group(self):
+        for (wf, job), text in sorted(_selfhosted_jobs().items()):
+            with self.subTest(f"{wf}:{job}"):
+                block = _job_key_block(text, "concurrency")
+                self.assertIsNotNone(block, f"{wf}:{job} declares no job-level concurrency — it "
+                                            "mutates the shared base and must join the "
+                                            f"{SHARED_BASE_GROUP} group (roam-279 / H5)")
+                self.assertRegex(block, rf"(?m)^\s+group:\s*{re.escape(SHARED_BASE_GROUP)}\s*$",
+                                 f"{wf}:{job} must use the shared group name")
+                self.assertRegex(block, r"(?m)^\s+cancel-in-progress:\s*false\s*$",
+                                 f"{wf}:{job}: a running build must never be killed by a newcomer")
+                if SHARED_BASE_QUEUE is None:
+                    self.assertNotRegex(block, r"(?m)^\s+queue:",
+                                        f"{wf}:{job}: the fallback configuration declares no queue key")
+                else:
+                    self.assertRegex(block, rf"(?m)^\s+queue:\s*{re.escape(SHARED_BASE_QUEUE)}\s*$",
+                                     f"{wf}:{job}: waiting jobs must queue (queue: {SHARED_BASE_QUEUE}) "
+                                     "instead of cancelling the older pending job")
+
+    def test_all_selfhosted_jobs_share_one_group(self):
+        groups = set()
+        for text in _selfhosted_jobs().values():
+            block = _job_key_block(text, "concurrency") or ""
+            m = re.search(r"(?m)^\s+group:\s*(\S+)\s*$", block)
+            if m:
+                groups.add(m.group(1))
+        self.assertEqual(groups, {SHARED_BASE_GROUP},
+                         "mutual exclusion needs ONE group name across all three workflows; "
+                         f"got {sorted(groups)}")
+
+    def test_no_workflow_level_concurrency(self):
+        for wf in sorted(WORKFLOWS.glob("*.yml")):
+            top = [l for l in wf.read_text().splitlines()
+                   if l and not l[0].isspace() and not l.startswith("#")]
+            self.assertFalse(any(l.split(":")[0] == "concurrency" for l in top),
+                             f"{wf.name}: a workflow-level concurrency group would serialize the "
+                             "hosted jobs too — declare it per self-hosted job")
+
+    def test_hosted_jobs_are_not_serialized(self):
+        selfhosted = set(_selfhosted_jobs())
+        hosted = {k: t for k, t in _all_jobs().items() if k not in selfhosted}
+        for expected in KNOWN_HOSTED_JOBS:  # non-vacuous
+            self.assertIn(expected, hosted, f"parser missed hosted job {expected}")
+        for (wf, job), text in sorted(hosted.items()):
+            with self.subTest(f"{wf}:{job}"):
+                self.assertFalse(_job_has_key(text, "concurrency"),
+                                 f"{wf}:{job} is hosted and touches no shared base — "
+                                 "it must not be serialized (in any concurrency form)")
+
+    def test_job_level_concurrency_is_detected_in_every_form(self):
+        # Regression for the hosted guard (Step-8 review): a scalar or an inline mapping is a
+        # valid declaration that serializes a hosted job exactly as the block form does, and the
+        # block-only parser let both through.
+        for label, snippet in (
+            ("scalar", "    runs-on: macos-14\n    concurrency: roamux-shared-base\n    steps:\n"),
+            ("inline", "    runs-on: macos-14\n    concurrency: { group: roamux-shared-base, "
+                       "cancel-in-progress: false }\n    steps:\n"),
+            ("block", "    runs-on: macos-14\n    concurrency:\n      group: roamux-shared-base\n"
+                      "    steps:\n"),
+        ):
+            with self.subTest(label):
+                self.assertTrue(_job_has_key(snippet, "concurrency"), f"{label} form not detected")
+        for label, snippet in (
+            ("comment", "    runs-on: macos-14\n    # concurrency: roamux-shared-base\n    steps:\n"),
+            ("nested", "    runs-on: macos-14\n    with:\n      concurrency: 3\n    steps:\n"),
+            ("prefix", "    concurrency-note: x\n    steps:\n"),
+        ):
+            with self.subTest(label):
+                self.assertFalse(_job_has_key(snippet, "concurrency"), f"{label} must not count")
+
+
+class ReleaseOverlayRestoreTest(unittest.TestCase):
+    """Invariant 19 (roam-279 / H6), structural: release re-points the shared base's overlay
+    symlink at its own checkout; it must validate the canonical restore target up front and
+    restore it in a FINAL always() step, whatever happened in between."""
+
+    def test_machine_env_validates_and_exports_canonical_overlay(self):
+        # Scoped to the machine-env step's EXECUTABLE script: _release_steps drops comment lines,
+        # so a commented-out guard or export is simply absent here and fails (Step-8 review — the
+        # whole-file substring version passed with every guard commented out).
+        steps = _release_steps()
+        env_i = next((i for i, st in enumerate(steps)
+                      if 'env_file="${HOME}/roamux-runner/.env"' in st), None)
+        self.assertIsNotNone(env_i, "release.yml has no machine-env step (roam-108)?")
+        script = _step_run_script(steps[env_i])
+        self.assertIsNotNone(script, "the machine-env step must carry an inline `run: |` script")
+        guards = (r'-z "\$\{ROAMUX_CANONICAL_OVERLAY:-\}"',
+                  r'! -d "\$\{ROAMUX_CANONICAL_OVERLAY\}"')
+        for guard in guards:
+            m = re.search(rf"(?ms)^if \[ {guard} \]; then\n(.*?)^fi$", script)
+            self.assertIsNotNone(m, f"machine-env step lacks the executable guard `if [ {guard} ]` "
+                                    "(tier2_job.sh:36 already requires the variable)")
+            body = m.group(1)
+            self.assertIn("::error::", body, "the guard must fail loudly")
+            self.assertIn("ROAMUX_CANONICAL_OVERLAY", body, "the error must name the variable")
+            self.assertRegex(body, r"\bexit 1\b", "the guard must exit non-zero")
+        self.assertRegex(script,
+                         r'(?m)^echo "CANONICAL_OVERLAY=\$\{ROAMUX_CANONICAL_OVERLAY\}" >> "\$GITHUB_ENV"$',
+                         "the validated restore target must be exported via GITHUB_ENV as an "
+                         "executable statement — the final step reads CANONICAL_OVERLAY from it")
+        export_at = script.find('echo "CANONICAL_OVERLAY=')
+        for guard in guards:
+            self.assertLess(script.find(guard.replace("\\", "")), export_at,
+                            "both guards must run BEFORE the export")
+        flip_i = next((i for i, st in enumerate(steps) if 'ln -sfn "$(pwd)/roamux"' in st), None)
+        self.assertIsNotNone(flip_i, "release.yml no longer flips the overlay symlink?")
+        self.assertLess(env_i, flip_i, "the restore target must be validated BEFORE the flip")
+
+    def test_final_step_always_restores_the_canonical_overlay(self):
+        steps = _release_steps()
+        self.assertTrue(steps, "release.yml has no steps?")
+        flip = next((i for i, st in enumerate(steps) if 'ln -sfn "$(pwd)/roamux"' in st), None)
+        self.assertIsNotNone(flip, "release.yml no longer flips the overlay symlink?")
+        last = steps[-1]
+        self.assertRegex(last, r"(?m)^\s*if:\s*always\(\)\s*$",
+                         "the LAST step must be the always() restore — "
+                         f"got: {last.splitlines()[0].strip()}")
+        script = _step_run_script(last)
+        self.assertIsNotNone(script, "the restore step must carry an inline `run: |` script")
+        ln = 'ln -sfn "${CANONICAL_OVERLAY}"'
+        self.assertEqual(script.count(ln), 1, "exactly one restore link, after both guards")
+        self.assertIn("${CHROMIUM_SRC}/roamux", script,
+                      "the restore must target the base's overlay path")
+        at = script.find(ln)
+        self.assertIn("-L", script[:at], "test for a symlink BEFORE linking — ln -sfn into a real "
+                                        "directory creates <dir>/roamux and reports success (M9)")
+        self.assertIn("readlink", script[at:], "verify the restore with readlink AFTER linking")
+        self.assertLess(flip, len(steps) - 1, "the flip must precede the restore")
+
+
+class ReleaseOverlayRestoreBehaviourTest(unittest.TestCase):
+    """Invariant 19, EXECUTED: the restore script is extracted from release.yml (never a copy,
+    so the test cannot drift from the workflow) and run under /bin/bash — macOS ships 3.2 and the
+    hosted `lint` job runs these tests — against temp-dir fixtures, one per exit path of the
+    step's contract: P1 unresolved env → notice, exit 0, nothing touched; P2 a real directory at
+    the link path → error, exit 1, nothing created inside it; P3 restore → exit 0 and readlink
+    equality. Same fixture style as test_tier2_job.py's power-gate tests."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-restore-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.src = self.tmp / "chromium" / "src"
+        self.src.mkdir(parents=True)
+        self.canonical = self.tmp / "codes" / "roamux" / "roamux"
+        self.canonical.mkdir(parents=True)
+        steps = _release_steps()
+        self.script = _step_run_script(steps[-1]) if steps else None
+
+    def _run(self, **env):
+        self.assertIsNotNone(self.script,
+                             "release.yml has no final `run: |` restore step to execute")
+        e = {"PATH": "/usr/bin:/bin", "HOME": str(self.tmp)}
+        e.update(env)
+        return subprocess.run(["/bin/bash", "-c", self.script], capture_output=True, text=True,
+                              env=e, cwd=str(self.tmp), timeout=30)
+
+    def test_unresolved_env_is_a_notice_and_a_noop(self):
+        for label, env in (("both unset", {}),
+                           ("both empty", {"CHROMIUM_SRC": "", "CANONICAL_OVERLAY": ""}),
+                           ("target unset", {"CHROMIUM_SRC": str(self.src)})):
+            with self.subTest(label):
+                r = self._run(**env)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("::notice::", r.stdout + r.stderr)
+                link = self.src / "roamux"
+                self.assertFalse(link.exists() or link.is_symlink(),
+                                 "nothing may be linked when the env step never resolved")
+
+    def test_real_directory_is_refused_without_linking(self):
+        real = self.src / "roamux"
+        real.mkdir()
+        (real / "marker").write_text("keep me\n")
+        r = self._run(CHROMIUM_SRC=str(self.src), CANONICAL_OVERLAY=str(self.canonical))
+        self.assertNotEqual(r.returncode, 0, "a real directory at the link path must fail the step")
+        self.assertIn("::error::", r.stdout + r.stderr)
+        self.assertTrue(real.is_dir() and not real.is_symlink(), "the directory must be left alone")
+        self.assertFalse((real / "roamux").exists(),
+                         "ln -sfn into a real directory would create roamux/roamux")
+        self.assertTrue((real / "marker").exists())
+
+    def test_stale_symlink_is_repointed_and_verified(self):
+        stale = self.tmp / "_work" / "roamux" / "roamux"
+        stale.mkdir(parents=True)
+        link = self.src / "roamux"
+        link.symlink_to(stale)
+        r = self._run(CHROMIUM_SRC=str(self.src), CANONICAL_OVERLAY=str(self.canonical))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(os.readlink(link), str(self.canonical))
+        self.assertIn(str(self.canonical), r.stdout, "the restored target must be logged")
+        # A dangling link (the previous job's workspace was reclaimed) is the same case.
+        shutil.rmtree(stale)
+        link.unlink()
+        link.symlink_to(stale)
+        r = self._run(CHROMIUM_SRC=str(self.src), CANONICAL_OVERLAY=str(self.canonical))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(os.readlink(link), str(self.canonical))
+        # No link at all (a fresh base): created, not skipped.
+        link.unlink()
+        r = self._run(CHROMIUM_SRC=str(self.src), CANONICAL_OVERLAY=str(self.canonical))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(os.readlink(link), str(self.canonical))
+
+
+class ReleaseMachineEnvBehaviourTest(unittest.TestCase):
+    """Invariant 19, EXECUTED for the machine-env half: the step's script (extracted from
+    release.yml) must refuse a .env without ROAMUX_CANONICAL_OVERLAY, refuse a non-directory,
+    and export CANONICAL_OVERLAY next to CHROMIUM_SRC when valid — otherwise the restore step
+    would find nothing to restore to and skip via P1 after the flip (Step-8 review)."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-machine-env-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        steps = _release_steps()
+        env_step = next((st for st in steps if 'env_file="${HOME}/roamux-runner/.env"' in st), None)
+        self.script = _step_run_script(env_step) if env_step else None
+        self.home = self.tmp / "home"
+        (self.home / "roamux-runner").mkdir(parents=True)
+        self.src = self.tmp / "chromium" / "src"
+        self.src.mkdir(parents=True)
+        self.depot = self.tmp / "depot_tools"
+        self.depot.mkdir()
+        self.canonical = self.tmp / "codes" / "roamux" / "roamux"
+        self.canonical.mkdir(parents=True)
+        self.github_env = self.tmp / "github_env"
+        self.github_path = self.tmp / "github_path"
+
+    def _base_env(self):
+        return [f"ROAMUX_CHROMIUM_SRC={self.src}", f"ROAMUX_DEPOT_TOOLS={self.depot}"]
+
+    def _run(self, env_lines):
+        self.assertIsNotNone(self.script,
+                             "release.yml has no machine-env `run: |` step to execute")
+        (self.home / "roamux-runner" / ".env").write_text("".join(l + "\n" for l in env_lines))
+        self.github_env.write_text("")
+        self.github_path.write_text("")
+        e = {"PATH": "/usr/bin:/bin", "HOME": str(self.home),
+             "GITHUB_ENV": str(self.github_env), "GITHUB_PATH": str(self.github_path)}
+        return subprocess.run(["/bin/bash", "-c", self.script], capture_output=True, text=True,
+                              env=e, cwd=str(self.tmp), timeout=30)
+
+    def test_missing_canonical_overlay_fails_loudly_before_export(self):
+        r = self._run(self._base_env())
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("::error::", out)
+        self.assertIn("ROAMUX_CANONICAL_OVERLAY", out)
+        self.assertNotIn("CANONICAL_OVERLAY=", self.github_env.read_text(),
+                         "nothing may be exported when the .env contract is unsatisfied")
+
+    def test_non_directory_canonical_overlay_fails_loudly(self):
+        r = self._run(self._base_env() + [f"ROAMUX_CANONICAL_OVERLAY={self.tmp}/does-not-exist"])
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("::error::", out)
+        self.assertIn("ROAMUX_CANONICAL_OVERLAY", out)
+        self.assertNotIn("CANONICAL_OVERLAY=", self.github_env.read_text())
+
+    def test_valid_env_exports_canonical_overlay_and_chromium_src(self):
+        r = self._run(self._base_env() + [f"ROAMUX_CANONICAL_OVERLAY={self.canonical}"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        exported = self.github_env.read_text()
+        self.assertIn(f"CANONICAL_OVERLAY={self.canonical}\n", exported,
+                      "the restore step reads CANONICAL_OVERLAY from GITHUB_ENV")
+        self.assertIn(f"CHROMIUM_SRC={self.src}\n", exported)
+        self.assertIn(str(self.depot), self.github_path.read_text())
+
+
+class SelfHostedTimeoutTest(unittest.TestCase):
+    """Invariant 20 (roam-279 / M9): every self-hosted job declares timeout-minutes above
+    GitHub's silent 6h default. Generalizes invariant 7 (release only) to the two tier-2 jobs,
+    whose cold rebuild was service-cancelled at exactly 6h00m with no failing step of its own."""
+
+    def test_every_selfhosted_job_declares_timeout(self):
+        jobs = _selfhosted_jobs()
+        for expected in KNOWN_SELFHOSTED_JOBS:  # non-vacuous
+            self.assertIn(expected, set(jobs), f"parser missed {expected}")
+        for (wf, job), text in sorted(jobs.items()):
+            with self.subTest(f"{wf}:{job}"):
+                value = _job_scalar(text, "timeout-minutes")
+                self.assertIsNotNone(value, f"{wf}:{job} relies on GitHub's silent 6h default "
+                                            "(nightly run 29827734729 died at exactly 6h00m)")
+                self.assertRegex(value, r"^\d+$",
+                                 f"{wf}:{job}: timeout-minutes must be a literal integer")
+                self.assertGreaterEqual(int(value), SELFHOSTED_TIMEOUT_FLOOR,
+                                        f"{wf}:{job}: the bound must exceed the 6h default it replaces")

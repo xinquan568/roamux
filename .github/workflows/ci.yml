@@ -100,6 +100,24 @@ jobs:
     # (non-fork) PRs — code someone with push rights already chose to push. Tighten to
     # protected-refs/merge-queue if this repo ever gains outside collaborators.
     if: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) }}
+    # roam-279 (grill H5): the three self-hosted jobs — this one, nightly-selfhosted and release's
+    # build-sign-package — reset and re-patch the SAME base checkout and re-point the same overlay
+    # symlink. Their serialization used to be an accident of having one runner; this job-level
+    # group (shared across the three workflows) declares it, so it survives a second runner.
+    # cancel-in-progress: false — never kill a running build. queue: max — waiting jobs queue in
+    # order; GitHub's default single pending slot would CANCEL the older pending job, turning a
+    # required check into re-run duty on any busy day. Job-level on purpose: a workflow-level group
+    # would queue every PR's hosted lint behind a 50-minute tier-2.
+    concurrency:
+      group: roamux-shared-base
+      cancel-in-progress: false
+      queue: max
+    # roam-279 (grill M9): GitHub's silent default job timeout is 6h, self-hosted runners included;
+    # a cold tier-2 exceeds it (nightly run 29827734729 was service-cancelled at exactly 6h00m on
+    # 2026-07-21 with no failing step of its own). Warm runs take 45-52 min; a single-arch cold
+    # build is ~5-6h (the universal2 release is ~10.5h for two). 12h = twice the observed kill
+    # point and half the release cap: a cold rebuild fails honestly at a stated bound.
+    timeout-minutes: 720
     runs-on: [self-hosted, macos, chromium-builder]
     steps:
       - uses: actions/checkout@v4
