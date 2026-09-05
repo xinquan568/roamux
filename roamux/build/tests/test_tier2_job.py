@@ -249,9 +249,6 @@ class Tier2JobScriptTest(unittest.TestCase):
         self.assertLess(gate, rms[0], "the out/CI gate must precede the deletion")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class Tier2PowerGateTest(unittest.TestCase):
     """roam-258: the builder idle-sleeps after ONE minute on battery (pmset -b
@@ -752,3 +749,7 @@ class Tier2JobBehaviourTest(unittest.TestCase):
                 self.assertIn("::error::", out)
                 self.assertIn("incomplete", out)
                 self.assertFalse(h.out().exists(), "out/CI must not have been published")
+
+
+if __name__ == "__main__":
+    unittest.main()
