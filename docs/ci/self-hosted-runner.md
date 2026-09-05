@@ -11,9 +11,10 @@ This is the **personal-machine v1** (Q(i5)-B: user-provisioned, the operator's o
 a standing labeled runner (`self-hosted, macos, chromium-builder`); the pinned checkout
 (`~/chromium/src` per `CHROMIUM_PIN`) as the shared warm base; a CI-owned build dir (`out/CI`,
 APFS-cloned copy-on-write from the operator's `out/Default`); **declared-channel** base access (the
-job touches the base only via the overlay symlink — restored by an EXIT trap — and the
-pristine-reconcile + idempotent fail-loud runhook; structurally test-enforced by
-`test_tier2_job.py`).
+job touches the base only via the overlay symlink — restored by `tier2_job.sh`'s EXIT trap and, in
+the release workflow, by a final `if: always()` step (roam-279) — and the pristine-reconcile +
+idempotent fail-loud runhook; structurally test-enforced by `test_tier2_job.py` and
+`test_workflow_invariants.py`).
 
 **The base's tracked state is CI-owned (roam-175).** Every tier-2/release run first reconciles
 `~/chromium/src` to pristine (`git reset --hard HEAD` + `git clean -fd -e /roamux` — never `-x`,
@@ -71,7 +72,13 @@ gh variable delete ROAMUX_CI_CHROMIUM_RUNNER --repo <owner>/<repo>
 `out/CI` is an APFS clone of the operator's warm `out/Default` (near-instant, ~zero disk until
 divergence) made on first job use; ninja then builds incrementally. Refresh = delete `out/CI` (the
 next job re-clones). Known v1 contention: the runner shares the machine/checkout with local
-development — jobs serialize on the single runner; each run reconciles the base to pristine and
+development. The three base-mutating jobs (tier-2, nightly, release) are serialized by the
+`roamux-shared-base` concurrency group (roam-279: `cancel-in-progress: false` — a running build is
+never killed by a newcomer; `queue: max` — waiting jobs queue in order, where GitHub's default
+single pending slot would cancel the older pending job) — declared, so it still holds if a second
+runner is ever added. tier-2 and nightly carry an explicit `timeout-minutes: 720` (release: 1440):
+GitHub's silent 6h default service-cancelled a cold nightly (run 29827734729) mid-compile; a stated
+bound fails such a run honestly instead. Each run reconciles the base to pristine and
 re-applies its own stack (roam-175 — so whatever applied set a run leaves behind, the next run
 recovers; before roam-175 a patch-rewriting PR wedged the runhook until a manual reset); avoid
 heavy local builds while a CI job runs — the reconcile will reset a racing local stack mid-build.

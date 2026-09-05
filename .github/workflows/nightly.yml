@@ -26,6 +26,14 @@ jobs:
     # Arms enumerated exactly: the schedule (runs on the default branch) or a main-only manual
     # dispatch. No non-PR catch-all.
     if: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    # roam-279 (grill H5 / M9): see ci.yml targeted-suite-selfhosted — the same shared-base group
+    # (this job runs the same tier2_job.sh against the same checkout) and the same 12h bound, sized
+    # from the cold-build evidence (this workflow's run 29827734729 is the one the 6h default killed).
+    concurrency:
+      group: roamux-shared-base
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 720
     runs-on: [self-hosted, macos, chromium-builder]
     steps:
       - uses: actions/checkout@v4
