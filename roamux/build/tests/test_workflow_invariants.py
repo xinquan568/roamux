@@ -59,8 +59,9 @@ These encode the tier-1 + release posture structurally, so every future workflow
       workflow-level group and no hosted job may be serialized (grill H5).
   19. release.yml validates ROAMUX_CANONICAL_OVERLAY in the machine-env step and ends with an
       always() step that restores the base's overlay symlink to it — refusing to link into a real
-      directory and verifying with readlink; the step's three exit paths are executed by tests
-      (grill H6; tier2_job.sh already restores via its EXIT trap, release never did).
+      directory and verifying with readlink; the restore step's three exit paths AND the
+      machine-env step's guards/export are executed by tests, from scripts extracted out of the
+      workflow (grill H6; tier2_job.sh already restores via its EXIT trap, release never did).
   20. Every self-hosted job declares timeout-minutes above GitHub's silent 6h default — a cold
       tier-2 exceeds it (nightly run 29827734729 was service-cancelled at exactly 6h00m on
       2026-07-21, roam-110's tier-2 twin); invariant 7 generalized (grill M9).
@@ -757,6 +758,14 @@ def _job_key_block(job_text, key):
     return None
 
 
+def _job_has_key(job_text, key):
+    """True when a job declares `key` at job level in ANY form — scalar (`    key: value`), inline
+    mapping (`    key: { … }`) or block (`    key:` + indented lines). A commented-out line never
+    counts. The hosted-job guard needs this breadth: a scalar `concurrency: <name>` serializes a
+    job exactly as the block form does."""
+    return re.search(rf"(?m)^    {re.escape(key)}:(?:\s|$)", job_text) is not None
+
+
 def _job_scalar(job_text, key):
     """The value of a 4-space-indented scalar key (`    key: value`) inside a job, or None."""
     m = re.search(rf"^    {re.escape(key)}:[ \t]*([^#\n]+?)[ \t]*(?:#.*)?$", job_text, re.M)
@@ -858,9 +867,30 @@ class SharedBaseConcurrencyTest(unittest.TestCase):
             self.assertIn(expected, hosted, f"parser missed hosted job {expected}")
         for (wf, job), text in sorted(hosted.items()):
             with self.subTest(f"{wf}:{job}"):
-                self.assertIsNone(_job_key_block(text, "concurrency"),
-                                  f"{wf}:{job} is hosted and touches no shared base — "
-                                  "it must not be serialized")
+                self.assertFalse(_job_has_key(text, "concurrency"),
+                                 f"{wf}:{job} is hosted and touches no shared base — "
+                                 "it must not be serialized (in any concurrency form)")
+
+    def test_job_level_concurrency_is_detected_in_every_form(self):
+        # Regression for the hosted guard (Step-8 review): a scalar or an inline mapping is a
+        # valid declaration that serializes a hosted job exactly as the block form does, and the
+        # block-only parser let both through.
+        for label, snippet in (
+            ("scalar", "    runs-on: macos-14\n    concurrency: roamux-shared-base\n    steps:\n"),
+            ("inline", "    runs-on: macos-14\n    concurrency: { group: roamux-shared-base, "
+                       "cancel-in-progress: false }\n    steps:\n"),
+            ("block", "    runs-on: macos-14\n    concurrency:\n      group: roamux-shared-base\n"
+                      "    steps:\n"),
+        ):
+            with self.subTest(label):
+                self.assertTrue(_job_has_key(snippet, "concurrency"), f"{label} form not detected")
+        for label, snippet in (
+            ("comment", "    runs-on: macos-14\n    # concurrency: roamux-shared-base\n    steps:\n"),
+            ("nested", "    runs-on: macos-14\n    with:\n      concurrency: 3\n    steps:\n"),
+            ("prefix", "    concurrency-note: x\n    steps:\n"),
+        ):
+            with self.subTest(label):
+                self.assertFalse(_job_has_key(snippet, "concurrency"), f"{label} must not count")
 
 
 class ReleaseOverlayRestoreTest(unittest.TestCase):
@@ -869,19 +899,36 @@ class ReleaseOverlayRestoreTest(unittest.TestCase):
     restore it in a FINAL always() step, whatever happened in between."""
 
     def test_machine_env_validates_and_exports_canonical_overlay(self):
-        text = _read("release.yml")
-        self.assertIsNotNone(text, "release.yml missing")
-        lines = text.splitlines()
-        self.assertTrue(any("::error::" in l and "ROAMUX_CANONICAL_OVERLAY" in l for l in lines),
-                        "missing/invalid ROAMUX_CANONICAL_OVERLAY must fail loudly, like the two "
-                        "other machine-env values (tier2_job.sh:36 already requires it)")
-        self.assertTrue(any("CANONICAL_OVERLAY=" in l and "GITHUB_ENV" in l for l in lines),
-                        "the resolved restore target must reach the final step via GITHUB_ENV")
-        check = next(i for i, l in enumerate(lines)
-                     if "::error::" in l and "ROAMUX_CANONICAL_OVERLAY" in l)
-        flip = next((i for i, l in enumerate(lines) if 'ln -sfn "$(pwd)/roamux"' in l), None)
-        self.assertIsNotNone(flip, "release.yml no longer flips the overlay symlink?")
-        self.assertLess(check, flip, "the restore target must be validated BEFORE the flip")
+        # Scoped to the machine-env step's EXECUTABLE script: _release_steps drops comment lines,
+        # so a commented-out guard or export is simply absent here and fails (Step-8 review — the
+        # whole-file substring version passed with every guard commented out).
+        steps = _release_steps()
+        env_i = next((i for i, st in enumerate(steps)
+                      if 'env_file="${HOME}/roamux-runner/.env"' in st), None)
+        self.assertIsNotNone(env_i, "release.yml has no machine-env step (roam-108)?")
+        script = _step_run_script(steps[env_i])
+        self.assertIsNotNone(script, "the machine-env step must carry an inline `run: |` script")
+        guards = (r'-z "\$\{ROAMUX_CANONICAL_OVERLAY:-\}"',
+                  r'! -d "\$\{ROAMUX_CANONICAL_OVERLAY\}"')
+        for guard in guards:
+            m = re.search(rf"(?ms)^if \[ {guard} \]; then\n(.*?)^fi$", script)
+            self.assertIsNotNone(m, f"machine-env step lacks the executable guard `if [ {guard} ]` "
+                                    "(tier2_job.sh:36 already requires the variable)")
+            body = m.group(1)
+            self.assertIn("::error::", body, "the guard must fail loudly")
+            self.assertIn("ROAMUX_CANONICAL_OVERLAY", body, "the error must name the variable")
+            self.assertRegex(body, r"\bexit 1\b", "the guard must exit non-zero")
+        self.assertRegex(script,
+                         r'(?m)^echo "CANONICAL_OVERLAY=\$\{ROAMUX_CANONICAL_OVERLAY\}" >> "\$GITHUB_ENV"$',
+                         "the validated restore target must be exported via GITHUB_ENV as an "
+                         "executable statement — the final step reads CANONICAL_OVERLAY from it")
+        export_at = script.find('echo "CANONICAL_OVERLAY=')
+        for guard in guards:
+            self.assertLess(script.find(guard.replace("\\", "")), export_at,
+                            "both guards must run BEFORE the export")
+        flip_i = next((i for i, st in enumerate(steps) if 'ln -sfn "$(pwd)/roamux"' in st), None)
+        self.assertIsNotNone(flip_i, "release.yml no longer flips the overlay symlink?")
+        self.assertLess(env_i, flip_i, "the restore target must be validated BEFORE the flip")
 
     def test_final_step_always_restores_the_canonical_overlay(self):
         steps = _release_steps()
@@ -977,6 +1024,70 @@ class ReleaseOverlayRestoreBehaviourTest(unittest.TestCase):
         r = self._run(CHROMIUM_SRC=str(self.src), CANONICAL_OVERLAY=str(self.canonical))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(os.readlink(link), str(self.canonical))
+
+
+class ReleaseMachineEnvBehaviourTest(unittest.TestCase):
+    """Invariant 19, EXECUTED for the machine-env half: the step's script (extracted from
+    release.yml) must refuse a .env without ROAMUX_CANONICAL_OVERLAY, refuse a non-directory,
+    and export CANONICAL_OVERLAY next to CHROMIUM_SRC when valid — otherwise the restore step
+    would find nothing to restore to and skip via P1 after the flip (Step-8 review)."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-machine-env-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        steps = _release_steps()
+        env_step = next((st for st in steps if 'env_file="${HOME}/roamux-runner/.env"' in st), None)
+        self.script = _step_run_script(env_step) if env_step else None
+        self.home = self.tmp / "home"
+        (self.home / "roamux-runner").mkdir(parents=True)
+        self.src = self.tmp / "chromium" / "src"
+        self.src.mkdir(parents=True)
+        self.depot = self.tmp / "depot_tools"
+        self.depot.mkdir()
+        self.canonical = self.tmp / "codes" / "roamux" / "roamux"
+        self.canonical.mkdir(parents=True)
+        self.github_env = self.tmp / "github_env"
+        self.github_path = self.tmp / "github_path"
+
+    def _base_env(self):
+        return [f"ROAMUX_CHROMIUM_SRC={self.src}", f"ROAMUX_DEPOT_TOOLS={self.depot}"]
+
+    def _run(self, env_lines):
+        self.assertIsNotNone(self.script,
+                             "release.yml has no machine-env `run: |` step to execute")
+        (self.home / "roamux-runner" / ".env").write_text("".join(l + "\n" for l in env_lines))
+        self.github_env.write_text("")
+        self.github_path.write_text("")
+        e = {"PATH": "/usr/bin:/bin", "HOME": str(self.home),
+             "GITHUB_ENV": str(self.github_env), "GITHUB_PATH": str(self.github_path)}
+        return subprocess.run(["/bin/bash", "-c", self.script], capture_output=True, text=True,
+                              env=e, cwd=str(self.tmp), timeout=30)
+
+    def test_missing_canonical_overlay_fails_loudly_before_export(self):
+        r = self._run(self._base_env())
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("::error::", out)
+        self.assertIn("ROAMUX_CANONICAL_OVERLAY", out)
+        self.assertNotIn("CANONICAL_OVERLAY=", self.github_env.read_text(),
+                         "nothing may be exported when the .env contract is unsatisfied")
+
+    def test_non_directory_canonical_overlay_fails_loudly(self):
+        r = self._run(self._base_env() + [f"ROAMUX_CANONICAL_OVERLAY={self.tmp}/does-not-exist"])
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("::error::", out)
+        self.assertIn("ROAMUX_CANONICAL_OVERLAY", out)
+        self.assertNotIn("CANONICAL_OVERLAY=", self.github_env.read_text())
+
+    def test_valid_env_exports_canonical_overlay_and_chromium_src(self):
+        r = self._run(self._base_env() + [f"ROAMUX_CANONICAL_OVERLAY={self.canonical}"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        exported = self.github_env.read_text()
+        self.assertIn(f"CANONICAL_OVERLAY={self.canonical}\n", exported,
+                      "the restore step reads CANONICAL_OVERLAY from GITHUB_ENV")
+        self.assertIn(f"CHROMIUM_SRC={self.src}\n", exported)
+        self.assertIn(str(self.depot), self.github_path.read_text())
 
 
 class SelfHostedTimeoutTest(unittest.TestCase):
