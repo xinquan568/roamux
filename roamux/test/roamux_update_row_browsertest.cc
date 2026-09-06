@@ -10,7 +10,7 @@
 // dispatch proof (a skipped version never re-surfaces as an offer — the click
 // must reach the service's state machine to have that effect), the
 // signature-failure no-retry copy, and the branded-page support.google.com
-// ban. Runs in roamux_browsertests => tier-2's Roamux* filter (the step-6 F1
+// ban. Runs in roamux_browsertests, unfiltered since roam-282 (the step-6 F1
 // re-homing away from the CI-orphaned mocha path).
 
 #include <string>

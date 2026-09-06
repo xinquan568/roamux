@@ -76,6 +76,23 @@ cd ~/roamux-runner && ./config.sh remove --token "$(gh api -X POST repos/<o>/<r>
 gh variable delete ROAMUX_CI_CHROMIUM_RUNNER --repo <owner>/<repo>
 ```
 
+## What tier-2 runs (roam-282)
+
+`tier2_job.sh` builds and runs four targets, in this order and with **no `--gtest_filter`**:
+`roamux_unittests`, `roamux_browser_unittests`, `roamux_sparkle_tests`, `roamux_browsertests`.
+Unfiltered is deliberate: a `Roamux*` filter once silently dropped the only fixture not named
+`Roamux*` (`ThreeCarrierTest`, grill H14) for months. The hermetic test
+`roamux/build/tests/test_browsertest_fixtures.py` proves on every PR that every gtest source the
+overlay owns, every WebUI test input and every test-named upstream file a patch touches is built
+AND run by this script with every case admitted — or is listed in
+`roamux/build/ci/unbuilt_tests_register.txt` with an owner and a re-entry condition. A register row
+is rejected the moment its item becomes reachable, or tier-2 starts building and running the
+upstream target it names, so the row must be deleted in the same change (the ADR 0003 re-entry
+idiom). Today the register holds the settings-about WebUI suite (patch 0033 → `browser_tests`) and
+the two patch-pinned upstream fixtures (0061/0062 → `unit_tests`), all waiting on the M41 nightly
+leg (roam-295 umbrella). The job log shows each suite in its own `::group::run …` block, which is
+the evidence that a suite ran.
+
 ## Cache model
 
 `out/CI` is an APFS clone of the operator's warm `out/Default` (near-instant, ~zero disk until

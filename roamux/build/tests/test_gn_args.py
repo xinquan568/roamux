@@ -14,6 +14,11 @@ run a pin-varying experiment soup — the masking that hid the E1 gate-mismatch 
 (roam-234/roam-239). Decision + inventory recorded on roam-241 and in ADR 0002; the
 single-arg pin per file is the revert point.
 
+Both templates must also enable the Sparkle-backed updater surface (roam-282, grill M29):
+`roamux_enable_sparkle` gates which test targets exist, and the reference config has to match
+the CI/release reality — see roamux/build/tests/test_browsertest_fixtures.py, which counts the
+capability-gated test sources as built only while this pin holds.
+
 These are TEXT pins, not GN semantics: they guarantee the assignments stay present,
 unique, and uncommented in the templates. GN-level validation (arg names known, ffmpeg
 "Chrome" branding config resolving per arch) is the release-config `gn gen` canary run
@@ -36,6 +41,12 @@ PINNED = (
     ("proprietary_codecs", "true"),
     ("ffmpeg_branding", '"Chrome"'),
     ("disable_fieldtrial_testing_config", "true"),
+    # roam-282 (grill M29): the Sparkle-backed updater surface is a BUILD arg that decides which
+    # sources, targets and factories exist (roamux_sparkle_tests, the update service, the
+    # version-updater seam). release.gn and every CI out-dir carry it true; reference.gn was
+    # silent, so a fresh developer built a different browser than CI/release and had no
+    # roamux_sparkle_tests target at all. Pinned on both templates.
+    ("roamux_enable_sparkle", "true"),
 )
 
 

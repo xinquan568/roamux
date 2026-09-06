@@ -95,15 +95,27 @@ class Tier2JobScriptTest(unittest.TestCase):
     def test_staleness_gate_runs(self):
         self.assertIn("check_override_staleness.py", self.code)
 
-    def test_all_three_suites_build_and_run(self):
-        # roam-6 (WB-CI): the browser-test suite joined the tier-2 gate; a regression to the
-        # two-suite line must fail here, not silently in CI.
+    def test_all_four_suites_build_and_run(self):
+        # roam-6 (WB-CI): the browser-test suite joined the tier-2 gate; roam-282 (grill H15):
+        # roamux_sparkle_tests joined it — it had existed in BUILD.gn for months without any
+        # workflow building or running it. A regression to a shorter line must fail here, not
+        # silently in CI.
         self.assertIn(
-            "roamux_unittests roamux_browser_unittests roamux_browsertests",
+            "roamux_unittests roamux_browser_unittests roamux_sparkle_tests roamux_browsertests",
             self.code)
         for binary in ("roamux_unittests", "roamux_browser_unittests",
-                       "roamux_browsertests"):
+                       "roamux_sparkle_tests", "roamux_browsertests"):
             self.assertIn('"${OUT}/%s"' % binary, self.code)
+
+    def test_no_suite_runs_under_a_gtest_filter(self):
+        # roam-282 (grill H14): the Roamux* filter on roamux_browsertests silently dropped the one
+        # fixture not named Roamux* (ThreeCarrierTest) for months. The overlay targets contain
+        # only overlay suites, so no filter is ever needed; roamux/build/tests/
+        # test_browsertest_fixtures.py proves every case reachable, and this pin keeps the script
+        # honest at the source: no run line may carry --gtest_filter.
+        run_lines = [l for l in self.code.splitlines() if '"${OUT}/roamux' in l]
+        for line in run_lines:
+            self.assertNotIn("--gtest_filter", line, f"filtered suite run: {line.strip()}")
 
     def test_every_suite_run_sets_an_explicit_retry_limit(self):
         # roam-195: the launcher ZEROES its retry limit when a --gtest_filter is passed
@@ -113,9 +125,10 @@ class Tier2JobScriptTest(unittest.TestCase):
         # default of 1. Every recorded teardown-timeout flake landed in exactly that
         # unprotected suite. The explicit flag is resolved BEFORE the filter branch, so
         # passing it restores retries; assert it on ALL THREE invocations so a later
-        # --gtest_filter added to another suite cannot silently disarm them again.
+        # --gtest_filter added to another suite cannot silently disarm them again (roam-282
+        # removed the last filter; the explicit limit stays on every line for exactly this reason).
         run_lines = [l for l in self.code.splitlines() if '"${OUT}/roamux' in l]
-        self.assertEqual(3, len(run_lines), f"expected 3 suite runs, got {run_lines}")
+        self.assertEqual(4, len(run_lines), f"expected 4 suite runs, got {run_lines}")
         for line in run_lines:
             self.assertIn("--test-launcher-retry-limit=", line,
                           f"suite run without an explicit retry limit: {line.strip()}")
@@ -436,7 +449,10 @@ def _restore_overlay_function(text):
     return None
 
 
-SUITES = ("roamux_unittests", "roamux_browser_unittests", "roamux_browsertests")
+# In the script's run order — B2 asserts the suites ran in exactly this sequence (roam-282 added
+# roamux_sparkle_tests between the unit suites and the browser tests).
+SUITES = ("roamux_unittests", "roamux_browser_unittests", "roamux_sparkle_tests",
+          "roamux_browsertests")
 
 
 def _make_fake_bin(bindir):

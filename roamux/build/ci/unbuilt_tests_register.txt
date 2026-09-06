@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Tests the overlay OWNS or EDITS that tier-2 (roamux/build/ci/tier2_job.sh) does not build or run
+# (roam-282, grill H15). Machine-checked by roamux/build/tests/test_browsertest_fixtures.py: every
+# overlay gtest source, every build_webui_tests() input, and every test-named upstream file that a
+# roamux/patches/*.patch touches must be built AND run by tier2_job.sh with every case admitted by
+# that suite's filter — or appear here. A row is REJECTED (the test goes red) once its item becomes
+# reachable, or once tier-2 builds and runs the upstream target the row names: delete the row in the
+# same change (the ADR 0003 re-entry idiom). ADR 0003's six interactive_ui_tests cases are a
+# different class and keep their own register in docs/adr/0003-upstream-tests-of-revoked-surfaces.md.
+#
+# Format:  <path> | <upstream target that compiles it> | <owner roam-N> | <re-entry condition>
+# Overlay paths are repo-relative. Upstream paths are Chromium-src-relative and are validated
+# without a checkout by requiring a patch that touches them. Limit: for patch-edited upstream
+# fixtures the checker cannot count cases without a checkout, so those rows record presence,
+# not-yet-built and ownership only.
+roamux/app/resources/settings_about/test/roamux_settings_about_browsertest.cc | browser_tests | roam-140/roam-160 (patch 0033) | M41 nightly unit_tests/browser_tests leg (roam-295 umbrella): delete this row in the change that adds the leg
+roamux/app/resources/settings_about/test/roamux_settings_about_test.ts | browser_tests | roam-140/roam-160 (patch 0033) | M41 nightly unit_tests/browser_tests leg (roam-295 umbrella): delete this row in the change that adds the leg
+roamux/app/resources/settings_about/test/roamux_settings_menu_test.ts | browser_tests | roam-140/roam-160 (patch 0033) | M41 nightly unit_tests/browser_tests leg (roam-295 umbrella): delete this row in the change that adds the leg
+chrome/browser/ui/tabs/vertical_tab_strip_state_controller_unittest.cc | unit_tests | roam-244 (patch 0061) | M41 nightly unit_tests/browser_tests leg (roam-295 umbrella): delete this row in the change that adds the leg
+chrome/browser/ui/tabs/tab_metrics_provider_unittest.cc | unit_tests | roam-249/roam-254 (patch 0062) | M41 nightly unit_tests/browser_tests leg (roam-295 umbrella): delete this row in the change that adds the leg

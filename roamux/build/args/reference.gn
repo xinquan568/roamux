@@ -36,5 +36,13 @@ ffmpeg_branding = "Chrome"
 # --- propagation semantics as the codec pins above; this single arg is the revert point. ---
 disable_fieldtrial_testing_config = true
 
+# --- roam-282 (grill M29): the Sparkle-backed updater surface is ON, as in release.gn and every CI ---
+# --- out-dir. The arg decides which sources, targets and factories EXIST (roamux_sparkle_tests, the ---
+# --- update service, the version-updater seam), so a dev build must match the shipped/CI reality. ---
+# --- Requires the vendored framework: BOOTSTRAP step 3 runs roamux/build/fetch_sparkle.py before ---
+# --- the first build, and //roamux/app:check_sparkle_vendored fails loudly without it. Same manual ---
+# --- propagation semantics as the pins above (re-copy args.gn + gn gen to reach an existing out dir). ---
+roamux_enable_sparkle = true
+
 # --- Optional distributor Google API keys (keep OUT of source; §12.3). Uncomment on a keyed build: ---
 # import("//roamux/build/google_keys.gni")
