@@ -53,7 +53,8 @@ OVERLAY_TEST_RE = re.compile(r"(_unittest|_browsertest|_test)\.(cc|mm)$")
 # The frozen rule: *_unittest.*, *_browsertest.*, *_interactive_uitest.*, and any *test.cc/.mm
 # (perftest, uitest, …). Wider than the overlay rule on purpose: a patch must not be able to
 # carry an upstream test under a name the inventory ignores.
-UPSTREAM_TEST_RE = re.compile(r"(_unittest|_browsertest|_interactive_uitest)\.[A-Za-z0-9]+$|test\.(cc|mm)$")
+# `*_unittest.*` etc. are globs: anything may follow the suffix dot (x_unittest.py.in counts).
+UPSTREAM_TEST_RE = re.compile(r"(_unittest|_browsertest|_interactive_uitest)\.|test\.(cc|mm)$")
 CASE_RE = re.compile(
     r"\b(IN_PROC_BROWSER_TEST_[FP]|TYPED_TEST(?:_P)?|TEST_[FP]|TEST)\s*\(\s*(\w+)\s*,\s*(\w+)", re.S)
 INSTANTIATE_RE = re.compile(r"\bINSTANTIATE_TEST_SUITE_P\s*\(\s*(\w+)\s*,\s*(\w+)", re.S)
@@ -613,12 +614,19 @@ class SyntheticRegressionTest(unittest.TestCase):
                                    sources=PLAIN_SRC, webui_gn=gn))
 
     def test_patch_touched_tests_of_any_extension_enter_the_inventory(self):
+        names = ("x_unittest.py", "x_browsertest.cpp", "y_interactive_uitest.mm",
+                 "x_unittest.py.in", "x_browsertest.test.ts", "z_perftest.cc")
         patches = {f"000{i}-x.patch": UPSTREAM_PATCH.replace("x_unittest.cc", name)
-                   for i, name in enumerate(("x_unittest.py", "x_browsertest.cpp", "y_interactive_uitest.mm"), 1)}
+                   for i, name in enumerate(names, 1)}
         c = Checker(_fake_repo(self.tmp, build_gn=PLAIN_GN, script=PLAIN_SH, sources=PLAIN_SRC,
                                patches=patches))
-        self.assertEqual({"chrome/x_unittest.py", "chrome/x_browsertest.cpp", "chrome/y_interactive_uitest.mm"},
+        self.assertEqual({f"chrome/{n}" for n in names},
                          {p for p, k in c.inventory.items() if k == "upstream"})
+        # and a non-test file touched by a patch stays out (note: `latest.cc` WOULD match the
+        # frozen `*test.cc` wildcard — a visible false positive, preferred over a silent miss)
+        d = Checker(_fake_repo(self.tmp / "d", build_gn=PLAIN_GN, script=PLAIN_SH, sources=PLAIN_SRC,
+                               patches={"0001-x.patch": UPSTREAM_PATCH.replace("x_unittest.cc", "manifest.cc")}))
+        self.assertEqual(set(), {p for p, k in d.inventory.items() if k == "upstream"})
 
     def test_maybe_prefixed_fixture_is_not_execution(self):
         srcs = {"a_unittest.cc": "TEST_F(MAYBE_RoamuxA, Case) {}\n"}
