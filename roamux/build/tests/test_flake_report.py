@@ -163,6 +163,36 @@ class RetryClassificationTest(Case):
         self.assertEqual(0, rc, out)
         self.assertNotIn("2 attempts", md)
 
+    def test_later_iteration_failure_is_not_hidden_by_an_earlier_retry(self):
+        # Step-8 F1: iteration 1 passes on retry, iteration 2 crashes — both must render, exit 1.
+        doc = summary([{FLAKY: [attempt("FAILURE", 9, "first"), attempt("SUCCESS", 4)]},
+                       {FLAKY: [attempt("CRASH", 7, "second time")]}])
+        self.all_clean(roamux_browsertests=doc)
+        rc, out, md = self.run_report()
+        self.assertEqual(1, rc, out)
+        self.assertIn("FAILURE → SUCCESS", md)
+        self.assertIn("(iteration 1)", md)
+        self.assertIn("(iteration 2)", md)
+        self.assertIn("CRASH", md)
+        self.assertIn("second time", md)
+        self.assertIn(f"::error::roamux_browsertests: {FLAKY} final status CRASH", out)
+
+    def test_table_rows_stay_contiguous_and_snippets_follow_escaped(self):
+        # Step-8 F4: several flaky tests with multiline snippets; rows must not be interleaved.
+        tests = {f"RoamuxM.T{i}": [attempt("FAILURE", 1, f"line one `tick`\nline two {i}"), attempt()] for i in range(3)}
+        self.all_clean(roamux_unittests=summary(tests))
+        rc, out, md = self.run_report()
+        lines = md.splitlines()
+        rows = [i for i, l in enumerate(lines) if l.startswith("| `RoamuxM")]
+        self.assertEqual(3, len(rows))
+        self.assertEqual(rows, list(range(rows[0], rows[0] + 3)), "table rows must be consecutive")
+        snippet_lines = [l for l in lines if "line one" in l]
+        self.assertEqual(3, len(snippet_lines))
+        for l in snippet_lines:
+            self.assertNotIn("`tick`", l)          # backticks escaped
+            self.assertIn("⏎", l)                  # newlines folded
+            self.assertGreater(lines.index(l), rows[-1])
+
     def test_final_non_success_is_listed_and_exits_one(self):
         doc = summary({"RoamuxA.Dead": [attempt("FAILURE", 5, "boom"), attempt("CRASH", 6, "boom again")]})
         self.all_clean(roamux_unittests=doc)
@@ -262,7 +292,7 @@ class LedgerTest(Case):
         self.assertEqual(0, rc)
         self.assertIn("stale", md)
 
-    def test_listed_but_not_executed_test_is_not_stale(self):
+    def test_listed_but_not_executed_test_is_not_stale_and_is_rendered(self):
         # Present in all_tests (the known universe) but absent from per_iteration_data (executed).
         doc = summary({"RoamuxA.One": [attempt()]}, all_tests=["RoamuxA.One", "RoamuxA.Listed"])
         for mode in ("warn", "fail"):
@@ -272,6 +302,28 @@ class LedgerTest(Case):
                 rc, out, md = self.run_report()
                 self.assertEqual(0, rc, out)
                 self.assertNotIn("stale", md)
+                self.assertIn("### Ledger", md)
+                self.assertRegex(md, r"`RoamuxA\.Listed` \| roam-1 \| listed — listed, not executed this run")
+
+    def test_empty_all_tests_still_evaluates_stale_rows(self):
+        # Step-8 F3: an available-but-empty universe is an answer; stale rows must still be judged.
+        doc = summary({}, all_tests=[])
+        for s in SUITES:
+            self.write(s, doc)
+        self.ledger.write_text("mode: fail\nRoamuxGone.Case | roam-9 | gone\n")
+        rc, out, md = self.run_report()
+        self.assertEqual(1, rc, out)
+        self.assertIn("stale", md)
+        self.assertIn("::error::ledger line 2", out)
+
+    def test_all_absent_summaries_do_not_judge_stale_rows(self):
+        for s in SUITES:
+            (self.art / f"{s}.log").write_text("log\n")
+        self.ledger.write_text("mode: fail\nRoamuxGone.Case | roam-9 | gone\n")
+        rc, out, md = self.run_report()
+        self.assertEqual(1, rc)                          # via the four absent states
+        self.assertIn("stale rows not checked", md)
+        self.assertNotIn("::error::ledger line", out)
 
 
 if __name__ == "__main__":

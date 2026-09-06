@@ -1285,91 +1285,110 @@ class KillSwitchIsRedTest(unittest.TestCase):
 # AFTER it, each guarded by exactly `always() && steps.tier2.outcome != 'skipped'` so the hosted
 # kill-switch path (first step red, checkout skipped) runs nothing after the kill switch. Order is
 # asserted, not position: unrelated later steps stay allowed.
-TIER2_GUARD = "if: always() && steps.tier2.outcome != 'skipped'"
+TIER2_GUARD = "always() && steps.tier2.outcome != 'skipped'"
 TIER2_SCRIPT_INVOCATION = "bash roamux/build/ci/tier2_job.sh"
+TIER2_REPORT_RUN = ('python3 roamux/build/ci/flake_report.py --artifacts "$ROAMUX_CI_ARTIFACTS" '
+                    '--ledger roamux/build/ci/known_flakes.txt --summary "$GITHUB_STEP_SUMMARY"')
+TIER2_PUBLISH_SCRIPT = ['d="${RUNNER_TEMP}/tier2-artifacts"', 'mkdir -p "$d"',
+                        'echo "ROAMUX_CI_ARTIFACTS=$d" >> "$GITHUB_ENV"']
+TIER2_UPLOAD_WITH = {"name": "tier2-artifacts", "path": "${{ env.ROAMUX_CI_ARTIFACTS }}",
+                     "if-no-files-found": "warn", "retention-days": "14"}
 
 
 def _tier2_jobs():
     return {k: t for k, t in _all_jobs().items() if TIER2_SCRIPT_INVOCATION in t}
 
 
-def _find_step(steps, needle):
-    hits = [i for i, s in enumerate(steps) if needle in s]
-    return hits
+def _step_scalar(step_text, key):
+    """The exact value of a step-level `key: value` line (8-space indent, or the `- key:` head)."""
+    m = re.search(rf"^(?:        |      - ){re.escape(key)}:[ \t]*(.*?)[ \t]*$", step_text, re.M)
+    return m.group(1) if m else None
+
+
+def _step_with(step_text):
+    """{key: exact value} of the step's `with:` entries (10-space indent)."""
+    return {m.group(1): m.group(2) for m in re.finditer(r"^          ([A-Za-z-]+):[ \t]*(.*?)[ \t]*$", step_text, re.M)}
+
+
+def tier2_artifact_problems(steps):
+    """The roam-283 contract, evaluated on a job's step list with EXACT field comparisons. One
+    validator for the real workflows and the synthetic regressions, so a weaker check cannot hide
+    behind a stronger-looking test. Returns a list of problems (empty = compliant)."""
+    problems = []
+
+    def one(needle, label):
+        hits = [i for i, s in enumerate(steps) if needle in s]
+        if len(hits) != 1:
+            problems.append(f"{label}: expected exactly one step containing {needle!r}, found {len(hits)}")
+            return None
+        return hits[0]
+
+    checkout = one("actions/checkout@", "checkout")
+    publish = one("ROAMUX_CI_ARTIFACTS=", "publish")
+    tier2 = one(TIER2_SCRIPT_INVOCATION, "tier2")
+    report = one("flake_report.py", "report")
+    upload = one("actions/upload-artifact@", "upload")
+    if None in (checkout, publish, tier2, report, upload):
+        return problems
+    if not (checkout < publish < tier2 < report < upload):
+        problems.append(f"order: checkout({checkout}) < publish({publish}) < tier2({tier2}) < report({report}) < upload({upload}) violated")
+    script = _step_run_script(steps[publish]) or ""
+    if [l.strip() for l in script.splitlines() if l.strip()] != TIER2_PUBLISH_SCRIPT:
+        problems.append(f"publish step script differs from the contract: {script!r}")
+    if _step_scalar(steps[tier2], "id") != "tier2":
+        problems.append("script step lacks `id: tier2`")
+    if _step_scalar(steps[tier2], "run") != TIER2_SCRIPT_INVOCATION:
+        problems.append(f"script step run differs: {_step_scalar(steps[tier2], 'run')!r}")
+    for label, i in (("report", report), ("upload", upload)):
+        if _step_scalar(steps[i], "if") != TIER2_GUARD:
+            problems.append(f"{label} step guard differs: {_step_scalar(steps[i], 'if')!r}")
+    if _step_scalar(steps[report], "run") != TIER2_REPORT_RUN:
+        problems.append(f"report step run differs: {_step_scalar(steps[report], 'run')!r}")
+    if _step_scalar(steps[upload], "uses") != "actions/upload-artifact@v4":
+        problems.append(f"upload step uses differs: {_step_scalar(steps[upload], 'uses')!r}")
+    if _step_with(steps[upload]) != TIER2_UPLOAD_WITH:
+        problems.append(f"upload step with-block differs: {_step_with(steps[upload])!r}")
+    return problems
 
 
 class Tier2ArtifactsTest(unittest.TestCase):
-    def _steps(self, key):
-        return _job_steps(_tier2_jobs()[key])
-
     def test_the_known_jobs_invoke_the_script(self):
         self.assertEqual({("ci.yml", "targeted-suite-selfhosted"), ("nightly.yml", "nightly-selfhosted")},
                          set(_tier2_jobs()))
 
-    def test_publish_step_between_checkout_and_the_script_step(self):
-        for key in _tier2_jobs():
+    def test_every_script_invoking_job_meets_the_artifact_contract(self):
+        for key, text in _tier2_jobs().items():
             with self.subTest(job=key):
-                steps = self._steps(key)
-                checkout = _find_step(steps, "actions/checkout")
-                publish = _find_step(steps, 'ROAMUX_CI_ARTIFACTS=')
-                tier2 = _find_step(steps, TIER2_SCRIPT_INVOCATION)
-                self.assertEqual(1, len(checkout)); self.assertEqual(1, len(publish)); self.assertEqual(1, len(tier2))
-                self.assertLess(checkout[0], publish[0]); self.assertLess(publish[0], tier2[0])
-                script = _step_run_script(steps[publish[0]]) or ""
-                self.assertIn('${RUNNER_TEMP}/tier2-artifacts', script)
-                self.assertIn('>> "$GITHUB_ENV"', script)
-                self.assertIn("id: tier2", steps[tier2[0]])
-
-    def test_report_and_upload_follow_the_script_step_with_the_exact_guard(self):
-        for key in _tier2_jobs():
-            with self.subTest(job=key):
-                steps = self._steps(key)
-                tier2 = _find_step(steps, TIER2_SCRIPT_INVOCATION)[0]
-                report = _find_step(steps, "roamux/build/ci/flake_report.py")
-                upload = _find_step(steps, "actions/upload-artifact@v4")
-                self.assertEqual(1, len(report)); self.assertEqual(1, len(upload))
-                self.assertLess(tier2, report[0]); self.assertLess(report[0], upload[0])
-                for i in (report[0], upload[0]):
-                    self.assertIn(TIER2_GUARD, steps[i], steps[i])
-                rep = steps[report[0]]
-                for needle in ("--ledger roamux/build/ci/known_flakes.txt", '--artifacts "$ROAMUX_CI_ARTIFACTS"',
-                               '--summary "$GITHUB_STEP_SUMMARY"'):
-                    self.assertIn(needle, rep, rep)
-                up = steps[upload[0]]
-                for needle in ("name: tier2-artifacts", "path: ${{ env.ROAMUX_CI_ARTIFACTS }}",
-                               "if-no-files-found: warn", "retention-days: 14"):
-                    self.assertIn(needle, up, up)
-
-    # Synthetic regressions: the same assertions must reject the shapes they exist to catch.
-    def _check(self, steps):
-        checkout = _find_step(steps, "actions/checkout"); publish = _find_step(steps, "ROAMUX_CI_ARTIFACTS=")
-        tier2 = _find_step(steps, TIER2_SCRIPT_INVOCATION); report = _find_step(steps, "flake_report.py")
-        upload = _find_step(steps, "upload-artifact@v4")
-        ok = (len(publish) == 1 and checkout[0] < publish[0] < tier2[0] < report[0] < upload[0]
-              and all(TIER2_GUARD in steps[i] for i in (report[0], upload[0])))
-        return ok
+                self.assertEqual([], tier2_artifact_problems(_job_steps(text)))
 
     GOOD = ("      - uses: actions/checkout@v4\n"
-            "      - name: Tier-2 artifact directory\n        run: |\n          echo \"ROAMUX_CI_ARTIFACTS=${RUNNER_TEMP}/tier2-artifacts\" >> \"$GITHUB_ENV\"\n"
+            "      - name: Tier-2 artifact directory\n        run: |\n"
+            "          d=\"${RUNNER_TEMP}/tier2-artifacts\"\n          mkdir -p \"$d\"\n"
+            "          echo \"ROAMUX_CI_ARTIFACTS=$d\" >> \"$GITHUB_ENV\"\n"
             "      - name: Warm-base incremental build + Roamux suites\n        id: tier2\n        run: bash roamux/build/ci/tier2_job.sh\n"
-            "      - name: Flake report\n        if: always() && steps.tier2.outcome != 'skipped'\n        run: python3 roamux/build/ci/flake_report.py\n"
-            "      - name: Upload tier-2 artifacts\n        if: always() && steps.tier2.outcome != 'skipped'\n        uses: actions/upload-artifact@v4\n"
+            f"      - name: Flake report\n        if: {TIER2_GUARD}\n        run: {TIER2_REPORT_RUN}\n"
+            f"      - name: Upload tier-2 artifacts\n        if: {TIER2_GUARD}\n        uses: actions/upload-artifact@v4\n"
+            "        with:\n          name: tier2-artifacts\n          path: ${{ env.ROAMUX_CI_ARTIFACTS }}\n"
+            "          if-no-files-found: warn\n          retention-days: 14\n"
             "      - name: Something later\n        run: echo fine\n")
 
     def test_synthetic_good_shape_passes_and_later_steps_are_allowed(self):
-        self.assertTrue(self._check(_job_steps(self.GOOD)))
+        self.assertEqual([], tier2_artifact_problems(_job_steps(self.GOOD)))
 
-    def test_synthetic_unguarded_always_is_rejected(self):
-        bad = self.GOOD.replace("if: always() && steps.tier2.outcome != 'skipped'\n        run: python3",
-                                "if: always()\n        run: python3")
-        self.assertFalse(self._check(_job_steps(bad)))
+    def _reject(self, text, needle):
+        problems = tier2_artifact_problems(_job_steps(text))
+        self.assertTrue(any(needle in p for p in problems), problems)
 
-    def test_synthetic_upload_before_report_is_rejected(self):
-        steps = _job_steps(self.GOOD)
-        steps[3], steps[4] = steps[4], steps[3]
-        self.assertFalse(self._check(steps))
-
-    def test_synthetic_publish_after_the_script_is_rejected(self):
-        steps = _job_steps(self.GOOD)
-        steps[1], steps[2] = steps[2], steps[1]
-        self.assertFalse(self._check(steps))
+    def test_synthetic_mutations_are_rejected(self):
+        g = self.GOOD
+        self._reject(g.replace(f"if: {TIER2_GUARD}\n        run:", "if: always()\n        run:"), "report step guard")
+        self._reject(g.replace(f"if: {TIER2_GUARD}", f"if: {TIER2_GUARD} || true"), "guard differs")
+        self._reject(g.replace(f"run: {TIER2_REPORT_RUN}", f"run: echo {TIER2_REPORT_RUN}"), "report step run")
+        self._reject(g.replace('d="${RUNNER_TEMP}/tier2-artifacts"', 'd="/wrong-path"'), "publish step script")
+        self._reject(g.replace("path: ${{ env.ROAMUX_CI_ARTIFACTS }}", "path: /tmp/x"), "with-block")
+        self._reject(g.replace("retention-days: 14", "retention-days: 90"), "with-block")
+        self._reject(g.replace("        id: tier2\n", ""), "id: tier2")
+        steps = _job_steps(g); steps[3], steps[4] = steps[4], steps[3]
+        self.assertTrue(any("order" in p for p in tier2_artifact_problems(steps)))
+        steps = _job_steps(g); steps[1], steps[2] = steps[2], steps[1]
+        self.assertTrue(any("order" in p for p in tier2_artifact_problems(steps)))

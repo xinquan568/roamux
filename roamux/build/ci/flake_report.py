@@ -121,18 +121,19 @@ def load_summary(path):
 
 
 def classify(doc):
-    """-> (retried, final_non_success, skipped): lists of (name, attempts), per iteration."""
+    """-> (retried, final_non_success, skipped): lists of (iteration_index, name, attempts).
+    Iterations are kept apart — a test may pass on retry in one iteration and crash in the next."""
     retried, failed, skipped = [], [], []
-    for it in doc["per_iteration_data"]:
+    for k, it in enumerate(doc["per_iteration_data"]):
         for name, attempts in it.items():
             if len(attempts) > 1:
-                retried.append((name, attempts))
+                retried.append((k, name, attempts))
             if attempts[-1]["status"] not in ("SUCCESS", "SKIPPED"):   # a skip is not a failure
-                failed.append((name, attempts))
+                failed.append((k, name, attempts))
             if any(a["status"] == "SKIPPED"
                    or any(isinstance(p, dict) and p.get("type") == "skip" for p in (a.get("result_parts") or []))
                    for a in attempts):
-                skipped.append((name, attempts))
+                skipped.append((k, name, attempts))
     return retried, failed, skipped
 
 
@@ -144,13 +145,18 @@ def _elapsed(attempts):
     return ", ".join(str(a.get("elapsed_time_ms", "?")) for a in attempts)
 
 
+def _plain(text):
+    """One line, no backticks — safe inside a Markdown list item."""
+    return " ⏎ ".join(l.strip() for l in text.splitlines() if l.strip()).replace("`", "'")
+
+
 def _snippets(attempts):
     out = []
     for i, a in enumerate(attempts, start=1):
         if a["status"] != "SUCCESS":
             snip = (a.get("output_snippet") or "").strip()
             if snip:
-                out.append(f"attempt {i} ({a['status']}): `{snip[:SNIPPET_CHARS]}`")
+                out.append(f"attempt {i} ({a['status']}): {_plain(snip[:SNIPPET_CHARS])}")
     return out
 
 
@@ -169,13 +175,15 @@ def render_and_check(artifacts, suites, ledger_path):
         md.append(f"**no artifacts:** `{artifacts}` does not exist — tier-2 produced no artifacts.")
         return md, ann, 1
 
-    known_universe = set()
+    known_universe, universe_available, executed = set(), False, set()
+    retried_names = set()
     for suite in suites:
         path = artifacts / f"{suite}.json"
         log = f"{suite}.log"
         state, doc, detail = load_summary(path)
         if doc and isinstance(doc.get("all_tests"), list):
-            known_universe.update(str(t) for t in doc["all_tests"])
+            universe_available = True                     # even an empty list is an answer
+            known_universe.update(str(x) for x in doc["all_tests"])
         if state != "complete":
             rc = 1
             ann.append(f"::error::{suite}: summary {state} ({detail}) — see {log}")
@@ -185,23 +193,29 @@ def render_and_check(artifacts, suites, ledger_path):
                 md.append(f"global_tags: `{', '.join(map(str, doc['global_tags']))}`")
             continue
         retried, failed, skipped = classify(doc)
+        n_iter = len(doc["per_iteration_data"])
+        executed.update(n for it in doc["per_iteration_data"] for n in it)
         n_tests = sum(len(it) for it in doc["per_iteration_data"])
         md.append(f"### {suite} — complete ({n_tests} tests run, {len(retried)} retried, "
                   f"{len(failed)} final non-success, {len(skipped)} skipped)")
         if doc.get("global_tags"):
             md.append(f"global_tags: `{', '.join(map(str, doc['global_tags']))}`")
-        if retried or failed:
-            md.append("| test | attempts | statuses | elapsed (ms) | ledger |")
-            md.append("|---|---|---|---|---|")
-        seen = set()
-        for name, attempts in retried + failed:
-            if name in seen:
-                continue
-            seen.add(name)
-            row = next(((p, o, note) for p, o, note, _ in rows if pattern_matches(name, p)), None)
+        entries = []                                      # (k, name, attempts) — one row per iteration
+        for e in retried + failed:
+            if e not in entries:
+                entries.append(e)
+        entries.sort(key=lambda e: (e[0], e[1]))
+        table, snippets = [], []
+        for k, name, attempts in entries:
+            label = f"`{name}`" + (f" (iteration {k + 1})" if n_iter > 1 else "")
+            row = next(((pat, o, note) for pat, o, note, _ in rows if pattern_matches(name, pat)), None)
+            is_retry = len(attempts) > 1
             if row:
                 ledger_cell = f"{row[1]} ({row[2]})"
-            elif (name, attempts) in retried:
+                if is_retry:
+                    retried_names.add(name)
+            elif is_retry:
+                retried_names.add(name)
                 ledger_cell = "unlisted → " + ("warning" if mode == "warn" else "ERROR")
                 ann.append(f"::{'warning' if mode == 'warn' else 'error'}::{suite}: {name} passed only on retry "
                            f"({_statuses(attempts)}) — not in {ledger_path.name}")
@@ -209,22 +223,42 @@ def render_and_check(artifacts, suites, ledger_path):
                     rc = 1
             else:
                 ledger_cell = "—"
-            md.append(f"| `{name}` | {len(attempts)} attempts | {_statuses(attempts)} | {_elapsed(attempts)} | {ledger_cell} |")
+            table.append(f"| {label} | {len(attempts)} attempts | {_statuses(attempts)} | {_elapsed(attempts)} | {ledger_cell} |")
             for s in _snippets(attempts):
-                md.append(f"  - {s}")
+                snippets.append(f"- `{name}`" + (f" (iteration {k + 1})" if n_iter > 1 else "") + f" — {s}")
             if attempts[-1]["status"] not in ("SUCCESS", "SKIPPED"):
                 rc = 1
                 ann.append(f"::error::{suite}: {name} final status {attempts[-1]['status']} ({_statuses(attempts)})")
+        if table:
+            md.append("| test | attempts | statuses | elapsed (ms) | ledger |")
+            md.append("|---|---|---|---|---|")
+            md.extend(table)
+        if snippets:
+            md.append("snippets (non-success attempts):")
+            md.extend(snippets)
         if skipped:
-            md.append("skipped (informational; L17 will enforce): " + ", ".join(f"`{n}`" for n, _ in skipped))
-    stale = [(p, o, n) for p, o, _, n in rows if not any(pattern_matches(t, p) for t in known_universe)]
-    if stale and known_universe:
-        for p, o, n in stale:
-            line = f"ledger line {n}: `{p}` ({o}) is stale — matches no test in any suite's all_tests"
+            md.append("skipped (informational; L17 will enforce): " + ", ".join(f"`{n}`" for _, n, _ in skipped))
+
+    # Ledger section: every row's status this run. Stale = matches nothing in the known universe
+    # (the union of all_tests), which is distinct from "not executed this run".
+    md.append("### Ledger")
+    if not universe_available:
+        md.append("stale rows not checked — no summary carried an all_tests list this run.")
+    for pat, owner, note, n in rows:
+        if any(pattern_matches(x, pat) for x in retried_names):
+            status = "retried in this run (listed)"
+        elif any(pattern_matches(x, pat) for x in executed):
+            status = "listed, not retried"
+        elif universe_available and not any(pattern_matches(x, pat) for x in known_universe):
+            status = "**stale** — matches no test in any suite's all_tests"
             if mode == "fail":
                 rc = 1
-                ann.append(f"::error::{line}")
-            md.append(f"- **stale row** — {line}")
+                ann.append(f"::error::ledger line {n}: `{pat}` ({owner}) is stale — matches no test in any suite's all_tests")
+        elif universe_available:
+            status = "listed, not executed this run"
+        else:
+            status = "listed (universe unavailable)"
+        md.append(f"- line {n}: `{pat}` | {owner} | {note} — {status}")
     md.append(f"**Verdict:** exit {rc} ({'all suites complete' if rc == 0 else 'see errors above'}; mode {mode}).")
     return md, ann, rc
 
