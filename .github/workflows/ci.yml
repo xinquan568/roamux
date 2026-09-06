@@ -151,8 +151,6 @@ jobs:
           echo "ROAMUX_CI_ARTIFACTS=$d" >> "$GITHUB_ENV"
       - name: Warm-base incremental build + Roamux suites
         id: tier2
-        env:
-          ROAMUX_CI_FORCED_FAIL_PROBE: roam-283   # TEMPORARY acceptance probe — reverted by the next commit
         run: bash roamux/build/ci/tier2_job.sh
       # roam-283: both steps run whenever tier-2 RAN — green or red — and never on a path where the
       # script step was skipped (the hosted kill-switch path skips checkout and the script; a bare
