@@ -221,6 +221,9 @@ phase run:roamux_unittests
 echo "::group::run ${OUT}/roamux_unittests"
 "${OUT}/roamux_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_unittests.json" 2>&1 | tee "${ART}/roamux_unittests.log"
 echo "::endgroup::"
+# TEMPORARY (roam-283 acceptance probe, reverted by the next commit): fail the job right after the
+# first suite so the forced-fail path — Flake report + artifact upload — is observed on the builder.
+if [ -n "${ROAMUX_CI_FORCED_FAIL_PROBE:-}" ]; then echo "ROAMUX-FORCED-FAIL-PROBE ${ROAMUX_CI_FORCED_FAIL_PROBE}: exiting 1 after roamux_unittests"; exit 1; fi
 phase run:roamux_browser_unittests
 echo "::group::run ${OUT}/roamux_browser_unittests"
 "${OUT}/roamux_browser_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_browser_unittests.json" 2>&1 | tee "${ART}/roamux_browser_unittests.log"
