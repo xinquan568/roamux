@@ -53,13 +53,13 @@ OVERLAY_TEST_RE = re.compile(r"(_unittest|_browsertest|_test)\.(cc|mm)$")
 # The frozen rule: *_unittest.*, *_browsertest.*, *_interactive_uitest.*, and any *test.cc/.mm
 # (perftest, uitest, …). Wider than the overlay rule on purpose: a patch must not be able to
 # carry an upstream test under a name the inventory ignores.
-UPSTREAM_TEST_RE = re.compile(r"(_unittest|_browsertest|_interactive_uitest)\.(cc|mm)$|test\.(cc|mm)$")
+UPSTREAM_TEST_RE = re.compile(r"(_unittest|_browsertest|_interactive_uitest)\.[A-Za-z0-9]+$|test\.(cc|mm)$")
 CASE_RE = re.compile(
     r"\b(IN_PROC_BROWSER_TEST_[FP]|TYPED_TEST(?:_P)?|TEST_[FP]|TEST)\s*\(\s*(\w+)\s*,\s*(\w+)", re.S)
 INSTANTIATE_RE = re.compile(r"\bINSTANTIATE_TEST_SUITE_P\s*\(\s*(\w+)\s*,\s*(\w+)", re.S)
 GN_TEST_RE = re.compile(r'^[ \t]*test\("(\w+)"\)\s*\{', re.M)
 GN_GATE_RE = re.compile(r"^[ \t]*if\s*\(\s*" + CAPABILITY_ARG + r"\s*\)\s*\{", re.M)
-GN_SOURCES_OP_RE = re.compile(r"\bsources\s*(\+=|-=|=)\s*\[")
+GN_SOURCES_OP_RE = re.compile(r"\bsources\s*(\+=|-=|=)\s*(\S)")
 WEBUI_BLOCK_RE = re.compile(r'build_webui_tests\("[^"]*"\)\s*\{')
 WEBUI_LIST_OP_RE = re.compile(r"^[ \t]*(cc_test_files|files)\s*(\+=|-=|=)\s*(\S)", re.M)
 BUILD_LINE_RE = re.compile(r'^autoninja -C "\$\{OUT\}"\s+(.+?)\s*$', re.M)
@@ -110,6 +110,22 @@ class UnsupportedGn(ValueError):
     """A GN construct the oracle refuses to guess about (e.g. a list assigned from a variable)."""
 
 
+def _literal_string_list(text, list_open, where):
+    """[(string, absolute offset)] for the `[ "a", "b" ]` literal starting at text[list_open];
+    raises UnsupportedGn if the list holds anything but string literals (an identifier, a nested
+    expression) or is followed by an operator (`[…] + other`)."""
+    list_end = _brace_block(text, list_open, "[", "]")
+    body = text[list_open + 1:list_end - 1]
+    entries = [(m.group(1), list_open + 1 + m.start()) for m in re.finditer(r'"([^"]*)"', body)]
+    leftover = re.sub(r'"[^"]*"', "", body)
+    if re.sub(r"[\s,]", "", leftover):
+        raise UnsupportedGn(f"{where}: non-literal list entry {leftover.strip()!r}")
+    tail = text[list_end:].lstrip()
+    if tail.startswith(("+", "-")):
+        raise UnsupportedGn(f"{where}: list expression `[…] {tail[0]} …` is not supported")
+    return entries, list_end
+
+
 def parse_gn_tests(build_gn_text):
     """{target: {source_path: gated}} from every test("…") block, at any indentation.
 
@@ -133,10 +149,11 @@ def parse_gn_tests(build_gn_text):
         end = _brace_block(text, open_i)
         sources = {}
         for op in GN_SOURCES_OP_RE.finditer(text, open_i, end):
-            list_open = op.end() - 1
-            list_end = _brace_block(text, list_open, "[", "]")
-            entries = [(e.group(1), e.start()) for e in re.finditer(r'"([^"]+)"', text[list_open:list_end])]
-            entries = [(name, list_open + pos) for name, pos in entries if name.endswith((".cc", ".mm"))]
+            where = f'test("{m.group(1)}") sources {op.group(1)}'
+            if op.group(2) != "[":
+                raise UnsupportedGn(f"{where} {op.group(2)}… — only literal lists are supported")
+            entries, _ = _literal_string_list(text, op.end() - 1, where)
+            entries = [(name, pos) for name, pos in entries if name.endswith((".cc", ".mm"))]
             if op.group(1) == "=":
                 sources = {}
             for name, pos in entries:
@@ -252,9 +269,8 @@ class Checker:
                     if operator == "-=" or first != "[":
                         raise UnsupportedGn(f"{gn}: `{field} {operator} {first}…` — only literal "
                                             "`= […]` / `+= […]` lists are supported")
-                    list_open = op.end() - 1
-                    body = block[list_open:_brace_block(block, list_open, "[", "]")]
-                    for f in re.findall(r'"([^"]+)"', body):
+                    entries, _ = _literal_string_list(block, op.end() - 1, f"{gn}: {field} {operator}")
+                    for f, _ in entries:
                         rel = os.path.normpath(gn.parent.relative_to(self.repo) / f)
                         items.setdefault(pathlib.PurePath(rel).as_posix(), "webui")
         patches = self.overlay / "patches"
@@ -447,6 +463,14 @@ class GnParsingTest(unittest.TestCase):
         self.assertEqual({"t": {"test/a_unittest.cc": False, "test/d_unittest.cc": False}},
                          parse_gn_tests(gn))
 
+    def test_non_literal_sources_operations_are_refused(self):
+        for gn in ('test("t") {\n  sources = [ "test/a_unittest.cc" ]\n  sources -= removed_list\n}\n',
+                   'test("t") {\n  sources = [ "test/a_unittest.cc" ] + extra\n}\n',
+                   'test("t") {\n  sources = [\n    "test/a_unittest.cc",\n    extra_source,\n  ]\n}\n',
+                   'test("t") {\n  sources = some_var\n}\n'):
+            with self.assertRaises(UnsupportedGn, msg=gn):
+                parse_gn_tests(gn)
+
     def test_hash_inside_a_string_is_not_a_comment(self):
         self.assertEqual('x = "a#b"\n   \n', strip_gn_comments('x = "a#b"\n# c\n'))
 
@@ -580,11 +604,21 @@ class SyntheticRegressionTest(unittest.TestCase):
         self.assertEqual(["roamux/app/x/test/added_test.ts: compiles only into an upstream target no "
                           "workflow builds"], c.reachability_failures())
 
-    def test_webui_non_literal_list_is_refused(self):
-        gn = 'build_webui_tests("build") {\n  files = some_list\n}\n'
-        with self.assertRaises(UnsupportedGn):
-            Checker(_fake_repo(self.tmp, build_gn=PLAIN_GN, script=PLAIN_SH, sources=PLAIN_SRC,
-                               webui_gn=gn))
+    def test_webui_non_literal_lists_are_refused(self):
+        for i, body in enumerate(('files = some_list', 'files += [ extra_test ]',
+                                  'files += [] + extra_files', 'files -= [ "x_test.ts" ]')):
+            gn = 'build_webui_tests("build") {\n  files = [ "x_test.ts" ]\n  ' + body + '\n}\n'
+            with self.assertRaises(UnsupportedGn, msg=body):
+                Checker(_fake_repo(self.tmp / str(i), build_gn=PLAIN_GN, script=PLAIN_SH,
+                                   sources=PLAIN_SRC, webui_gn=gn))
+
+    def test_patch_touched_tests_of_any_extension_enter_the_inventory(self):
+        patches = {f"000{i}-x.patch": UPSTREAM_PATCH.replace("x_unittest.cc", name)
+                   for i, name in enumerate(("x_unittest.py", "x_browsertest.cpp", "y_interactive_uitest.mm"), 1)}
+        c = Checker(_fake_repo(self.tmp, build_gn=PLAIN_GN, script=PLAIN_SH, sources=PLAIN_SRC,
+                               patches=patches))
+        self.assertEqual({"chrome/x_unittest.py", "chrome/x_browsertest.cpp", "chrome/y_interactive_uitest.mm"},
+                         {p for p, k in c.inventory.items() if k == "upstream"})
 
     def test_maybe_prefixed_fixture_is_not_execution(self):
         srcs = {"a_unittest.cc": "TEST_F(MAYBE_RoamuxA, Case) {}\n"}
