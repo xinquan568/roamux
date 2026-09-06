@@ -47,8 +47,10 @@ ln -s /abs/path/to/codes/roamux/roamux ~/chromium/src/roamux
 # Apply ALL managed patches (0001 gn_all wiring, 0002 chromium_src redirect, ...) — idempotent, fail-loud:
 python3 ~/chromium/src/roamux/build/apply_patches.py --chromium-src ~/chromium/src
 
-# Roamux (roam-32): vendor the pinned Sparkle.framework (needed by roamux_enable_sparkle=true
-# builds — the flag-on GN targets fail loudly without it; hash-verified, see plan §13.6/R16).
+# Roamux (roam-32): vendor the pinned Sparkle.framework. MANDATORY for every dev build since
+# roam-282: roamux/build/args/reference.gn sets roamux_enable_sparkle=true (as release.gn and the
+# CI out-dirs always did), and the flag-on GN targets fail loudly without the framework
+# (hash-verified, see plan §13.6/R16).
 python3 ~/chromium/src/roamux/build/fetch_sparkle.py
 
 # Roamux (roam-132): rebrand user-visible "Chromium" -> "Roamux" across the upstream GRIT string

@@ -175,7 +175,13 @@ if [ ! -d "${OUT}" ]; then
   echo "clone published as ${OUT} in $((SECONDS - clone_started))s"
 fi
 
-autoninja -C "${OUT}" roamux_unittests roamux_browser_unittests roamux_browsertests
+# roam-282 (grill H15): roamux_sparkle_tests — the only test that drives real Sparkle against the
+# signed/tampered/unsigned fixtures — had existed in roamux/BUILD.gn since roam-32 without any
+# workflow building or running it. It exists only under roamux_enable_sparkle=true (reference.gn
+# pins that since roam-282; out/Default already carried it). The echo makes the target list visible
+# in the job log, which never traces commands.
+echo "tier-2 build targets: roamux_unittests roamux_browser_unittests roamux_sparkle_tests roamux_browsertests"
+autoninja -C "${OUT}" roamux_unittests roamux_browser_unittests roamux_sparkle_tests roamux_browsertests
 
 # roam-195: run every suite with an EXPLICIT retry limit. The launcher silently zeroes
 # retries when a --gtest_filter is passed outside bot mode (test_launcher.cc: "not in bot
@@ -188,13 +194,29 @@ autoninja -C "${OUT}" roamux_unittests roamux_browser_unittests roamux_browserte
 # so it restores retries; 2 absorbs a stochastic hang (bounded: a persistently hanging test
 # still fails after 3 attempts, ~30s each) without masking a deterministic failure — a
 # retried test is reported as such in the launcher summary. This is mitigation, not a cure:
-# roam-195 stays open for the underlying teardown stall.
+# roam-195 stays open for the underlying teardown stall. roam-282 removed the last filter; the
+# explicit limit stays on EVERY line so a future filter cannot silently disarm retries again.
 RETRY_LIMIT="${ROAMUX_CI_RETRY_LIMIT:-2}"
+# Each suite runs inside a named log group, so the job log shows which binary produced which
+# launcher output (roam-282: a suite joining or leaving this list is provable from these lines).
+echo "::group::run ${OUT}/roamux_unittests"
 "${OUT}/roamux_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}"
+echo "::endgroup::"
+echo "::group::run ${OUT}/roamux_browser_unittests"
 "${OUT}/roamux_browser_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}"
-# roam-6: the settings-surface DOM suite. Filtered to the roamux tests to keep tier-2 wall-clock
-# sane while E1 is the only browser-test suite; widen as later epics add suites.
-"${OUT}/roamux_browsertests" --gtest_filter="Roamux*" --test-launcher-retry-limit="${RETRY_LIMIT}"
+echo "::endgroup::"
+echo "::group::run ${OUT}/roamux_sparkle_tests"
+"${OUT}/roamux_sparkle_tests" --test-launcher-retry-limit="${RETRY_LIMIT}"
+echo "::endgroup::"
+# roam-282 (grill H14): UNFILTERED. The roam-6 --gtest_filter="Roamux*" that once kept tier-2
+# wall-clock sane when E1 was the only suite silently dropped the one fixture not named Roamux*
+# (ThreeCarrierTest — the only three-carrier import-survival proof) for months. The target holds
+# only overlay suites, so a filter buys nothing and fixture names are free (see roamux/BUILD.gn);
+# roamux/build/tests/test_browsertest_fixtures.py proves every case reachable and
+# test_tier2_job.py pins that no run line carries a filter.
+echo "::group::run ${OUT}/roamux_browsertests"
+"${OUT}/roamux_browsertests" --test-launcher-retry-limit="${RETRY_LIMIT}"
+echo "::endgroup::"
 
 # Staleness gate against this job's overlay.
 python3 "${GITHUB_WORKSPACE}/roamux/build/check_override_staleness.py" \

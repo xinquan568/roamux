@@ -2,7 +2,8 @@
 // roam-15 (I-3.1): the RoamuxEdgeImporter StartImport→bridge envelope, the
 // CreateImporterByType mapping, and the SourceProfile IPC ParamTraits
 // round-trip (guards the raised ImporterType range). Lives in
-// chrome/utility:unit_tests, which links :utility (Importer + the glue).
+// roamux_browser_unittests (roam-282 — patch 0013 used to wire it into upstream
+// unit_tests, which no workflow built), linking //chrome/utility (Importer + glue).
 
 #include "roamux/utility/importer/roamux_edge_importer.h"
 
