@@ -37,6 +37,14 @@ ROAMUX_CANONICAL_OVERLAY="${ROAMUX_CANONICAL_OVERLAY:?set in the runner .env —
 
 export PATH="${DEPOT}:${PATH}"
 SECONDS=0
+# roam-283 (grill H17): per-suite launcher summaries (--test-launcher-summary-output) and tee'd
+# logs go HERE — never under the base. CI publishes ROAMUX_CI_ARTIFACTS from RUNNER_TEMP
+# (ci.yml / nightly.yml, then uploads it if: always()); locally and in the hermetic harness it
+# defaults under the temp dir. Created right before the first suite runs.
+ART="${ROAMUX_CI_ARTIFACTS:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tier2-artifacts}"
+# Cumulative phase-start checkpoints (roam-283): the job log shows them live; the step summary
+# publishes when the step ends, so a 12h timeout is attributable to the phase that was running.
+phase() { echo "phase=$1 elapsed=${SECONDS}s" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
 
 # roam-280 (grill M9): reconcile FIRST — recovery must never depend on the previous job's EXIT
 # trap having run (it does not survive a SIGKILL: a cancel past GitHub's grace window, runner
@@ -103,11 +111,13 @@ ln -sfn "${GITHUB_WORKSPACE}/roamux" "${SRC}/roamux"
 # warm caches live there); single -f never descends into nested git repos (the
 # DEPS-managed submodules). Consequence, documented in docs/ci/self-hosted-runner.md:
 # the base's tracked state is CI-owned — uncommitted local edits do not survive a run.
+phase reconcile
 echo "reconciling base to pristine (drops any superseded stack state)"
 git -C "${SRC}" reset --hard HEAD
 git -C "${SRC}" clean -fd -e /roamux
 
 # Declared channel 2: the runhook (idempotent; fails loudly on conflict — the rebase signal).
+phase runhook
 python3 "${GITHUB_WORKSPACE}/roamux/build/apply_patches.py" --chromium-src "${SRC}"
 
 # roam-147: vendor Sparkle into this job's overlay before building. out/Default carries
@@ -115,6 +125,7 @@ python3 "${GITHUB_WORKSPACE}/roamux/build/apply_patches.py" --chromium-src "${SR
 # link the Sparkle-backed updater — so the framework must be present at
 # roamux/third_party/sparkle (gitignored; absent in a fresh CI checkout). Mirrors the
 # release pipeline's "Vendor Sparkle" step; idempotent (a no-op once vendored, SHA-pinned).
+phase sparkle
 python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
 
 # roam-132: the rebrand-channel's XTB-binding tests are GRIT-dependent, so tier-1 CI (no
@@ -122,6 +133,7 @@ python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
 # re-key" assertions live. This runner HAS the checkout, so run them fail-not-skip
 # (REQUIRE_GRIT=1 turns a skip into a failure). Hermetic (tmp fixtures) — runs before the
 # hours-long build so a regression fails fast. Uses ${SRC} only to import GRIT read-only.
+phase rebrand-gate
 ( cd "${GITHUB_WORKSPACE}" && REQUIRE_GRIT=1 ROAMUX_CHROMIUM_SRC="${SRC}" \
     python3 -m unittest roamux.build.tests.test_rebrand_strings )
 
@@ -140,6 +152,7 @@ python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
 # the shipped Roamux.dmg's symlink/exec-bit preservation. Fail-not-skip: with
 # the flag set, a missing hdiutil FAILS rather than skipping. Asserted by
 # test_tier2_job.py; the rationale lives above dmg_mount_decision.
+phase signing-gate
 ( cd "${GITHUB_WORKSPACE}" && REQUIRE_SIGNING_PARTS=1 REQUIRE_DMG_MOUNT=1 \
     ROAMUX_CHROMIUM_SRC="${SRC}" \
     python3 -m unittest roamux.build.tests.test_release_signing )
@@ -152,6 +165,7 @@ python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
 # overridden ROAMUX_CI_OUT in that state is refused, never deleted; the copy goes to
 # ${OUT}.partial (ours, always safe to discard), is checked for readiness, and is renamed into
 # place atomically. out/Default is never a deletion target under any branch.
+phase clone
 cd "${SRC}"
 if [ -d "${OUT}" ] && { [ ! -f "${OUT}/build.ninja" ] || [ ! -f "${OUT}/args.gn" ]; }; then
   if [ "${OUT}" = "out/CI" ]; then
@@ -180,6 +194,7 @@ fi
 # workflow building or running it. It exists only under roamux_enable_sparkle=true (reference.gn
 # pins that since roam-282; out/Default already carried it). The echo makes the target list visible
 # in the job log, which never traces commands.
+phase build
 echo "tier-2 build targets: roamux_unittests roamux_browser_unittests roamux_sparkle_tests roamux_browsertests"
 autoninja -C "${OUT}" roamux_unittests roamux_browser_unittests roamux_sparkle_tests roamux_browsertests
 
@@ -199,14 +214,20 @@ autoninja -C "${OUT}" roamux_unittests roamux_browser_unittests roamux_sparkle_t
 RETRY_LIMIT="${ROAMUX_CI_RETRY_LIMIT:-2}"
 # Each suite runs inside a named log group, so the job log shows which binary produced which
 # launcher output (roam-282: a suite joining or leaving this list is provable from these lines).
+# roam-283: every suite writes its launcher summary JSON and a tee'd log into ${ART} (pipefail is
+# on, so the suite's status survives the tee); the Flake report step reads the JSON afterwards.
+mkdir -p "${ART}"
+phase run:roamux_unittests
 echo "::group::run ${OUT}/roamux_unittests"
-"${OUT}/roamux_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}"
+"${OUT}/roamux_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_unittests.json" 2>&1 | tee "${ART}/roamux_unittests.log"
 echo "::endgroup::"
+phase run:roamux_browser_unittests
 echo "::group::run ${OUT}/roamux_browser_unittests"
-"${OUT}/roamux_browser_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}"
+"${OUT}/roamux_browser_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_browser_unittests.json" 2>&1 | tee "${ART}/roamux_browser_unittests.log"
 echo "::endgroup::"
+phase run:roamux_sparkle_tests
 echo "::group::run ${OUT}/roamux_sparkle_tests"
-"${OUT}/roamux_sparkle_tests" --test-launcher-retry-limit="${RETRY_LIMIT}"
+"${OUT}/roamux_sparkle_tests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_sparkle_tests.json" 2>&1 | tee "${ART}/roamux_sparkle_tests.log"
 echo "::endgroup::"
 # roam-282 (grill H14): UNFILTERED. The roam-6 --gtest_filter="Roamux*" that once kept tier-2
 # wall-clock sane when E1 was the only suite silently dropped the one fixture not named Roamux*
@@ -214,12 +235,15 @@ echo "::endgroup::"
 # only overlay suites, so a filter buys nothing and fixture names are free (see roamux/BUILD.gn);
 # roamux/build/tests/test_browsertest_fixtures.py proves every case reachable and
 # test_tier2_job.py pins that no run line carries a filter.
+phase run:roamux_browsertests
 echo "::group::run ${OUT}/roamux_browsertests"
-"${OUT}/roamux_browsertests" --test-launcher-retry-limit="${RETRY_LIMIT}"
+"${OUT}/roamux_browsertests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_browsertests.json" 2>&1 | tee "${ART}/roamux_browsertests.log"
 echo "::endgroup::"
 
 # Staleness gate against this job's overlay.
+phase staleness
 python3 "${GITHUB_WORKSPACE}/roamux/build/check_override_staleness.py" \
   --chromium-src "${SRC}" --overlay "${GITHUB_WORKSPACE}/roamux"
 
+phase done
 echo "tier-2 job green in ${SECONDS}s (warm incremental)" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"

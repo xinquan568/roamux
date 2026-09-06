@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Tier-2 flake ledger (roam-283, grill H17). Read by roamux/build/ci/flake_report.py after every
+# tier-2 run, over the per-suite --test-launcher-summary-output JSON in the tier2-artifacts
+# artifact. A test that passed only on a retry (roam-195's --test-launcher-retry-limit=2) is
+# "retried"; a retried test with no matching row below is UNLISTED.
+#
+#   mode: warn  — an unlisted retried test is a ::warning:: in the step summary; exit 0.
+#   mode: fail  — an unlisted retried test is a ::error::; the Flake report step goes red.
+#
+# Seeding window: warn-only for two weeks from 2026-09-06. FLIP to `mode: fail` on or after
+# 2026-09-20 — tracked by roam-308 (one-line change here + the docs/ci/self-hosted-runner.md
+# section). Listed flakes are still SHOWN in every report (a row suppresses the failure, never the
+# data). A row whose test no longer exists in any suite's all_tests is stale (an error in fail
+# mode). Closing an owner issue means deleting its row in the same change.
+#
+# Format:  <Fixture.Case | Fixture.*> | <owner roam-N> | <signature / note>
+# ('*' matches within the test name only; '|' separates exactly three fields; '#' starts a comment.)
+mode: warn
+RoamuxTabStripToggleTest.* | roam-306 | first-attempt CRASH: FATAL vertical_tab_view.cc:1222 Check failed: collection_node_ (5 cases seen 2026-09-06; roam-214/240/275)
+RoamuxNewTabPositionVerticalScrollTest.NewTabAfterActiveIsFullyVisible | roam-307 | first attempt FAILED after ~10 s, passes on retry in ~4.7 s (timing)
