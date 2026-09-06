@@ -89,7 +89,7 @@ jobs:
           if [ "$IS_FORK" = "true" ]; then
             echo "tier-1 only: fork PR — self-hosted tier-2 is unreachable by design (R15)." | tee -a "$GITHUB_STEP_SUMMARY"
           elif [ -z "$CAP" ]; then
-            echo "SKIPPED: no capable Chromium runner provisioned (roam-36 not enabled)." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "KILL SWITCH ENGAGED: ROAMUX_CI_CHROMIUM_RUNNER is unset — targeted-suite-selfhosted fails RED on same-repo branches until a builder is provisioned and the variable set (roam-281)." | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo "tier-2 runs on the self-hosted runner '$CAP' — see the targeted-suite-selfhosted job." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
@@ -99,7 +99,12 @@ jobs:
     # Trust predicate enumerated exactly (no non-PR catch-all): protected-main pushes OR same-repo
     # (non-fork) PRs — code someone with push rights already chose to push. Tighten to
     # protected-refs/merge-queue if this repo ever gains outside collaborators.
-    if: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)) }}
+    # roam-281 (grill H7): this is a REQUIRED check, and branch protection treats a skipped required
+    # check as satisfied. The capability switch therefore no longer gates the job: an empty
+    # ROAMUX_CI_CHROMIUM_RUNNER selects a hosted runner (runs-on below) where the first step fails
+    # RED in seconds — merges are blocked, honestly — instead of skipping into a vacuous pass. Forks
+    # stay excluded here (they cannot reach the builder or the fallback; the announce job tells them).
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false) }}
     # roam-279 (grill H5): the three self-hosted jobs — this one, nightly-selfhosted and release's
     # build-sign-package — reset and re-patch the SAME base checkout and re-point the same overlay
     # symlink. Their serialization used to be an accident of having one runner; this job-level
@@ -118,8 +123,23 @@ jobs:
     # build is ~5-6h (the universal2 release is ~10.5h for two). 12h = twice the observed kill
     # point and half the release cap: a cold rebuild fails honestly at a stated bound.
     timeout-minutes: 720
-    runs-on: [self-hosted, macos, chromium-builder]
+    # roam-281: the fixed label triple when the switch is non-empty (unchanged routing); a hosted
+    # runner when it is empty, so the job can RUN and fail red. The value of the variable is never a
+    # label — any non-empty value turns the switch on; a switch that is on with no registered runner
+    # matching the triple queues the job (blocks merge, not red) until GitHub's queue timeout.
+    runs-on: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && fromJSON('["self-hosted", "macos", "chromium-builder"]') || 'macos-14' }}
     steps:
+      # roam-281 (grill H7): FIRST, before checkout and before the tier-2 script — with the switch
+      # empty this step is the whole job: a loud red on a hosted runner.
+      - name: Kill switch — tier-2 capability must be provisioned
+        env:
+          CAP: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER }}
+        run: |
+          if [ -z "$CAP" ]; then
+            echo "::error::ROAMUX_CI_CHROMIUM_RUNNER is unset/empty — the tier-2 kill switch is engaged, so this required check is deliberately RED for same-repo branches (roam-281). Provision a builder and set the variable (gh variable set ROAMUX_CI_CHROMIUM_RUNNER --body <runner-name>); see docs/ci/self-hosted-runner.md." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "tier-2 capability switch is on ('$CAP') — running on the builder." | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v4
       - name: Warm-base incremental build + Roamux suites
         run: bash roamux/build/ci/tier2_job.sh

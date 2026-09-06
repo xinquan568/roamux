@@ -65,6 +65,12 @@ These encode the tier-1 + release posture structurally, so every future workflow
   20. Every self-hosted job declares timeout-minutes above GitHub's silent 6h default — a cold
       tier-2 exceeds it (nightly run 29827734729 was service-cancelled at exactly 6h00m on
       2026-07-21, roam-110's tier-2 twin); invariant 7 generalized (grill M9).
+  21. The REQUIRED targeted-suite-selfhosted check is never skipped by the capability switch: an
+      empty ROAMUX_CI_CHROMIUM_RUNNER selects a hosted runner (runs-on expression) and the job's
+      first step fails red there. Branch protection treats a skipped required check as satisfied
+      ("successful, skipped, or neutral"), so the old if:-gate was a vacuous pass. Forks stay
+      skipped by the trust predicate (R15); nightly keeps its arm (not a required check)
+      (roam-281 / grill H7).
 """
 
 import os
@@ -78,6 +84,11 @@ import unittest
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[3] / ".github" / "workflows"
 
 CAPABILITY_VAR = "ROAMUX_CI_CHROMIUM_RUNNER"
+# roam-281: the required tier-2 job selects its runner by expression — the fixed label triple when
+# the capability switch is non-empty, a hosted runner when it is empty (where the first step fails
+# red). Pinned exactly; `self-hosted` must stay on the runs-on line for the enumeration helpers.
+SELFHOSTED_RUNS_ON_EXPR = ("${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && "
+                           "fromJSON('[\"self-hosted\", \"macos\", \"chromium-builder\"]') || 'macos-14' }}")
 MARKER = "ROAMUX_CHROMIUM_DEPENDENT"
 FORK_CONDITION = "head.repo.fork"
 
@@ -175,9 +186,19 @@ class WorkflowInvariantsTest(unittest.TestCase):
         blocks = self._selfhosted_blocks(text)
         self.assertTrue(blocks, "ci.yml must contain the self-hosted targeted-suite job (roam-36)")
         for block in blocks:
-            self.assertIn("[self-hosted, macos, chromium-builder]", block,
-                          "self-hosted job must pin the exact label triple")
-            self.assertIn(CAPABILITY_VAR, block, "missing the capability-variable arm")
+            # roam-281 (grill H7): the label triple is pinned INSIDE the runner-selection expression
+            # — the fixed triple when the capability switch is non-empty, a hosted runner when it is
+            # empty, so the required check can go red instead of being skipped. `self-hosted` stays
+            # on the runs-on line, which is what every enumeration helper keys on.
+            runs_on = next((l for l in block.splitlines() if l.strip().startswith("runs-on:")), "")
+            self.assertIn(SELFHOSTED_RUNS_ON_EXPR, runs_on,
+                          "self-hosted job must select the exact label triple by expression, with "
+                          "a hosted fallback when the switch is empty (roam-281)")
+            self.assertIn(CAPABILITY_VAR, block, "missing the capability variable")
+            if_line = next((l for l in block.splitlines() if l.strip().startswith("if:")), "")
+            self.assertNotIn(CAPABILITY_VAR, if_line,
+                             "the capability switch must NOT skip the required job — a skipped "
+                             "required check is a vacuous pass (roam-281 / H7)")
             self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'", block,
                           "missing the protected-main push arm")
             self.assertIn("github.event.pull_request.head.repo.fork == false", block,
@@ -1108,3 +1129,149 @@ class SelfHostedTimeoutTest(unittest.TestCase):
                                  f"{wf}:{job}: timeout-minutes must be a literal integer")
                 self.assertGreaterEqual(int(value), SELFHOSTED_TIMEOUT_FLOOR,
                                         f"{wf}:{job}: the bound must exceed the 6h default it replaces")
+
+
+# ---------------------------------------------------------------------------------------------
+# roam-281 (grill H7): the kill switch must be RED, not a skip.
+
+
+def _job_steps(job_text):
+    """A job's step blocks (comment lines dropped), split at EVERY step-sequence entry at the
+    steps indentation (`      - <key>:`) — named or not. A splitter that only recognized
+    `- name:`/`- uses:` would let an unnamed `- run:`/`- id:` step slip in ahead of the guard
+    and still report the guard as first (Step-8 review of roam-281)."""
+    steps, cur = [], None
+    for line in job_text.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        if re.match(r"^      - [A-Za-z_-]+:", line):
+            if cur is not None:
+                steps.append("\n".join(cur))
+            cur = [line]
+        elif cur is not None:
+            cur.append(line)
+    if cur is not None:
+        steps.append("\n".join(cur))
+    return steps
+
+
+class KillSwitchIsRedTest(unittest.TestCase):
+    """Invariant 21 (roam-281 / H7). Branch protection on main requires `targeted-suite-selfhosted`;
+    GitHub treats a required check in `skipped` status as satisfied. So gating that job on the
+    capability variable made an empty variable a vacuous pass. The job must instead run for every
+    same-repo event, pick a hosted runner when the variable is empty, and fail red in its first step
+    there; the announce job says so; nightly (not a required check) keeps its arm on purpose."""
+
+    JOB = "targeted-suite-selfhosted"
+
+    def _job(self):
+        text = _read("ci.yml")
+        self.assertIsNotNone(text, "ci.yml missing")
+        block = _job_block(text, self.JOB)
+        self.assertIsNotNone(block, f"ci.yml has no {self.JOB} job")
+        return block
+
+    def test_required_job_is_not_skippable_by_the_switch(self):
+        block = self._job()
+        if_line = next((l for l in block.splitlines() if l.strip().startswith("if:")), None)
+        self.assertIsNotNone(if_line, "the job must keep an explicit trust predicate")
+        self.assertNotIn(CAPABILITY_VAR, if_line,
+                         "an if:-skipped required check is a vacuous pass — the switch must not gate it")
+        self.assertIn("github.event.pull_request.head.repo.fork == false", if_line,
+                      "forks must stay excluded by the trust predicate (R15)")
+        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'", if_line)
+
+    def test_runner_falls_back_to_hosted_when_switch_is_empty(self):
+        block = self._job()
+        runs_on = next((l for l in block.splitlines() if l.strip().startswith("runs-on:")), "")
+        self.assertIn(SELFHOSTED_RUNS_ON_EXPR, runs_on,
+                      "runs-on must pick the fixed triple when the switch is non-empty and a hosted "
+                      "runner when it is empty")
+        self.assertIn("self-hosted", runs_on, "the enumeration helpers key on this substring")
+
+    @staticmethod
+    def _binds_cap(step_text):
+        """The step reads the switch through an env binding, not merely by naming it in text."""
+        return re.search(r"^\s+CAP:\s*\$\{\{\s*vars\.ROAMUX_CI_CHROMIUM_RUNNER\s*\}\}\s*$",
+                         step_text, re.M) is not None
+
+    def test_first_step_fails_red_when_switch_is_empty(self):
+        steps = _job_steps(self._job())
+        self.assertGreaterEqual(len(steps), 3, f"expected kill-switch, checkout, tier-2 steps; got {steps}")
+        first, rest = steps[0], "\n".join(steps[1:])
+        self.assertIn(CAPABILITY_VAR, first, "the FIRST step must read the switch")
+        self.assertTrue(self._binds_cap(first),
+                        "the first step must BIND CAP to vars.ROAMUX_CI_CHROMIUM_RUNNER — a message that "
+                        "merely names the variable would let a missing binding fail every provisioned job")
+        self.assertIn("exit 1", first, "the first step must fail when the switch is empty")
+        self.assertIn("::error::", first, "the failure must be loud")
+        self.assertNotIn("actions/checkout", first)
+        self.assertNotIn("tier2_job.sh", first)
+        self.assertIn("actions/checkout", rest, "checkout must come AFTER the kill-switch step")
+        self.assertIn("tier2_job.sh", rest, "the tier-2 script must come AFTER the kill-switch step")
+
+    def test_job_steps_sees_unnamed_steps_and_the_cap_binding_is_required(self):
+        # Regressions for the Step-8 review: (a) an unnamed `- run:` step ahead of the guard must
+        # not be invisible to the splitter; (b) a guard without the env binding must not count.
+        guard = ("      - name: Kill switch — tier-2 capability must be provisioned\n"
+                 "        env:\n          CAP: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER }}\n"
+                 "        run: |\n          [ -n \"$CAP\" ] || exit 1\n")
+        job = ("    runs-on: macos-14\n    steps:\n"
+               "      - run: echo sneaky\n" + guard +
+               "      - uses: actions/checkout@v4\n"
+               "      - name: tier-2\n        run: bash roamux/build/ci/tier2_job.sh\n")
+        steps = _job_steps(job)
+        self.assertEqual(len(steps), 4, steps)
+        self.assertTrue(steps[0].lstrip().startswith("- run: echo sneaky"),
+                        "an unnamed step must be split out as its own step")
+        self.assertFalse(self._binds_cap(steps[0]))
+        self.assertTrue(self._binds_cap(steps[1]))
+        unbound = guard.replace("          CAP: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER }}\n", "")
+        self.assertFalse(self._binds_cap(unbound),
+                         "a guard that only names ROAMUX_CI_CHROMIUM_RUNNER in text must not count as bound")
+
+    def test_kill_switch_step_script_exits_1_when_empty(self):
+        # BEHAVIOURAL: the first step's script, extracted from ci.yml (never a copy), run the way
+        # GitHub runs a `run:` step (bash -e) with the switch empty and then set.
+        first = _job_steps(self._job())[0]
+        script = _step_run_script(first)
+        self.assertIsNotNone(script, "the kill-switch step must carry an inline `run: |` script")
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-killswitch-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        summary = tmp / "summary"
+
+        def run(cap):
+            summary.write_text("")
+            e = {"PATH": "/usr/bin:/bin", "CAP": cap, "GITHUB_STEP_SUMMARY": str(summary)}
+            return subprocess.run(["/bin/bash", "-e", "-c", script], capture_output=True,
+                                  text=True, env=e, timeout=30)
+
+        r = run("")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 1, out)
+        self.assertIn("::error::", out)
+        self.assertIn(CAPABILITY_VAR, out, "the error must name the variable")
+        self.assertIn(CAPABILITY_VAR, summary.read_text(), "the summary must say why the check is red")
+        r = run("roamux-builder-1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_announce_names_the_red_consequence(self):
+        text = _read("ci.yml")
+        block = _job_block(text, "targeted-suite")
+        self.assertIsNotNone(block, "ci.yml has no announce job")
+        code = "\n".join(l for l in block.splitlines() if not l.strip().startswith("#"))
+        self.assertNotIn("SKIPPED: no capable", code,
+                         "the announce job must no longer describe the off state as a skip")
+        self.assertIn("RED", code, "the announce job must say the required check goes red")
+        self.assertIn(CAPABILITY_VAR, code)
+        self.assertNotIn("exit 1", code, "the announce job stays informational (never fails)")
+
+    def test_nightly_keeps_its_capability_arm(self):
+        # Deliberate asymmetry, pinned so it is not "fixed" by accident: nightly-selfhosted is not a
+        # required check, and its schedule/dispatch arms are a different contract.
+        text = _read("nightly.yml")
+        self.assertIsNotNone(text, "nightly.yml missing")
+        block = _job_block(text, "nightly-selfhosted")
+        self.assertIsNotNone(block)
+        if_line = next((l for l in block.splitlines() if l.strip().startswith("if:")), "")
+        self.assertIn(CAPABILITY_VAR, if_line, "nightly keeps the capability arm (not a required check)")
