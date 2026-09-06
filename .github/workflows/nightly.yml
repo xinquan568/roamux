@@ -37,5 +37,30 @@ jobs:
     runs-on: [self-hosted, macos, chromium-builder]
     steps:
       - uses: actions/checkout@v4
+      # roam-283 (grill H17): ONE artifact directory for the script, the flake report and the upload.
+      # Resolved in a step because the `runner` context is not available in job-level env, and
+      # published through GITHUB_ENV so the later steps read $ROAMUX_CI_ARTIFACTS / env.ROAMUX_CI_ARTIFACTS.
+      - name: Tier-2 artifact directory
+        run: |
+          d="${RUNNER_TEMP}/tier2-artifacts"
+          mkdir -p "$d"
+          echo "ROAMUX_CI_ARTIFACTS=$d" >> "$GITHUB_ENV"
       - name: Nightly warm-base build + Roamux suites
+        id: tier2
         run: bash roamux/build/ci/tier2_job.sh
+      # roam-283: both steps run whenever tier-2 RAN — green or red — and never on a path where the
+      # script step was skipped (the hosted kill-switch path skips checkout and the script; a bare
+      # always() would then fail the report for the wrong reason and upload nothing). The report reads
+      # the per-suite launcher summaries, lists retried / non-success / skipped tests into the step
+      # summary and checks retried tests against known_flakes.txt (mode: warn until roam-308 flips it).
+      - name: Flake report
+        if: always() && steps.tier2.outcome != 'skipped'
+        run: python3 roamux/build/ci/flake_report.py --artifacts "$ROAMUX_CI_ARTIFACTS" --ledger roamux/build/ci/known_flakes.txt --summary "$GITHUB_STEP_SUMMARY"
+      - name: Upload tier-2 artifacts
+        if: always() && steps.tier2.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tier2-artifacts
+          path: ${{ env.ROAMUX_CI_ARTIFACTS }}
+          if-no-files-found: warn
+          retention-days: 14

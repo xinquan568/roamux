@@ -133,6 +133,40 @@ class Tier2JobScriptTest(unittest.TestCase):
             self.assertIn("--test-launcher-retry-limit=", line,
                           f"suite run without an explicit retry limit: {line.strip()}")
 
+    def test_every_suite_writes_a_summary_and_a_log_into_the_artifact_dir(self):
+        # roam-283 (grill H17): the launcher's summary JSON is the only record of WHICH tests
+        # needed a retry; the tee'd log is the human-readable twin. Both go to ${ART}, never
+        # under the base. Pinned per run line so a fifth suite cannot join without them.
+        run_lines = [l for l in self.code.splitlines() if '"${OUT}/roamux' in l]
+        self.assertEqual(4, len(run_lines))
+        for line in run_lines:
+            suite = line.split('"${OUT}/')[1].split('"')[0]
+            self.assertIn(f'--test-launcher-summary-output="${{ART}}/{suite}.json"', line, line.strip())
+            self.assertIn(f'2>&1 | tee "${{ART}}/{suite}.log"', line, line.strip())
+
+    def test_artifact_dir_is_defined_with_a_local_default_and_created_before_the_first_suite(self):
+        self.assertIn('ART="${ROAMUX_CI_ARTIFACTS:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tier2-artifacts}"',
+                      self.code)
+        mk = self.code.index('mkdir -p "${ART}"')
+        first_run = self.code.index('"${OUT}/roamux_unittests"')
+        self.assertLess(mk, first_run, "the artifact dir must exist before the first tee")
+
+    PHASES = ("reconcile", "runhook", "sparkle", "rebrand-gate", "signing-gate", "clone", "build",
+              "run:roamux_unittests", "run:roamux_browser_unittests", "run:roamux_sparkle_tests",
+              "run:roamux_browsertests", "staleness", "done")
+
+    def test_phase_checkpoints_exist_in_order(self):
+        # roam-283: cumulative phase-start checkpoints into the step summary, so a 12h timeout is
+        # attributable to the phase that was running.
+        self.assertIn('phase() { echo "phase=$1 elapsed=${SECONDS}s" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"; }',
+                      self.code)
+        positions = []
+        for name in self.PHASES:
+            needle = f"phase {name}\n"
+            self.assertIn(needle, self.code, f"missing checkpoint: phase {name}")
+            positions.append(self.code.index(needle))
+        self.assertEqual(positions, sorted(positions), "checkpoints must appear in phase order")
+
     def test_release_signing_run_opts_into_the_dmg_mount(self):
         # roam-261: the disk-image mount is opt-in per tier (see
         # dmg_mount_decision in test_release_signing.py). Tier-2 is one of its
@@ -471,8 +505,13 @@ def _make_fake_bin(bindir):
     _write_exec(bindir / "autoninja",
                 'echo "autoninja $*" >> "${ROAMUX_FAKE_EVENTS:?}"\n'
                 'if [ -n "${ROAMUX_FAKE_AUTONINJA:-}" ]; then . "${ROAMUX_FAKE_AUTONINJA}"; fi\nexit 0\n')
+    # roam-283: when (and only when) the launcher flag is present, the stub writes a minimal valid
+    # summary BEFORE sourcing the per-suite body, so a failing body cannot bypass the write (a body
+    # may overwrite the file). Event line and exit status are unchanged from before roam-283.
     _write_exec(bindir / "suite_stub",
                 'name="$(basename "$0")"\necho "$name $*" >> "${ROAMUX_FAKE_EVENTS:?}"\n'
+                'for a in "$@"; do case "$a" in --test-launcher-summary-output=*)\n'
+                '  printf \'%s\' \'{"all_tests":[],"disabled_tests":[],"global_tags":[],"per_iteration_data":[{}],"test_locations":{}}\' > "${a#--test-launcher-summary-output=}" ;; esac; done\n'
                 'if [ -n "${ROAMUX_FAKE_SUITE_DIR:-}" ] && [ -f "${ROAMUX_FAKE_SUITE_DIR}/$name" ]; then\n'
                 '  . "${ROAMUX_FAKE_SUITE_DIR}/$name"\nfi\nexit 0\n')
     _write_exec(bindir / "cp",
@@ -505,6 +544,7 @@ class _Tier2Harness:
         self.link.symlink_to(self.prev_ws)          # what a previous job left behind
         self.events = self.tmp / "events.log"
         self.summary = self.tmp / "summary.txt"
+        self.artifacts = self.tmp / "artifacts"        # roam-283: per-test, never shared
         (self.default / "build.ninja").write_text("# fake ninja file\n")
         (self.default / "args.gn").write_text("is_debug = false\n")
         for name in SUITES:
@@ -526,6 +566,7 @@ class _Tier2Harness:
              "ROAMUX_CANONICAL_OVERLAY": str(self.canonical),
              "GITHUB_WORKSPACE": str(self.ws),
              "GITHUB_STEP_SUMMARY": str(self.summary),
+             "ROAMUX_CI_ARTIFACTS": str(self.artifacts),
              "ROAMUX_FAKE_EVENTS": str(self.events),
              "ROAMUX_FAKE_AUTONINJA": str(self.bodies / "autoninja"),
              "ROAMUX_FAKE_SUITE_DIR": str(self.bodies / "suites")}
@@ -765,6 +806,41 @@ class Tier2JobBehaviourTest(unittest.TestCase):
                 self.assertIn("::error::", out)
                 self.assertIn("incomplete", out)
                 self.assertFalse(h.out().exists(), "out/CI must not have been published")
+
+    # B13 (roam-283) — the acceptance's hermetic half: a failing suite leaves its JSON + log, the
+    # earlier suite's too, nothing for the suites that never ran; the trap still restores the link
+    # and the injected status survives.
+    def test_forced_suite_failure_leaves_json_and_log_in_artifacts(self):
+        h = self._harness(suites={"roamux_browser_unittests": "exit 7"})
+        r = h.run()
+        self.assertEqual(r.returncode, 7, r.stdout + r.stderr)
+        self.assertEqual(os.readlink(h.link), str(h.canonical))
+        for name in ("roamux_unittests", "roamux_browser_unittests"):
+            self.assertTrue((h.artifacts / f"{name}.json").exists(), name)
+            self.assertTrue((h.artifacts / f"{name}.log").exists(), name)
+        for name in ("roamux_sparkle_tests", "roamux_browsertests"):
+            self.assertFalse((h.artifacts / f"{name}.json").exists(), name)
+            self.assertFalse((h.artifacts / f"{name}.log").exists(), name)
+
+    # B14 (roam-283)
+    def test_phase_checkpoints_in_order(self):
+        h = self._harness()
+        r = h.run()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = [l for l in h.summary.read_text().splitlines() if l.startswith("phase=")]
+        self.assertEqual([f"phase={p}" for p in Tier2JobScriptTest.PHASES],
+                         [l.split(" ")[0] for l in lines], lines)
+        for l in lines:
+            self.assertRegex(l, r"^phase=[a-z:_-]+ elapsed=\d+s$")
+
+    # B15 (roam-283)
+    def test_artifacts_dir_is_created_before_the_first_suite(self):
+        h = self._harness()
+        self.assertFalse(h.artifacts.exists())
+        r = h.run()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        names = sorted(p.name for p in h.artifacts.iterdir())
+        self.assertEqual(sorted(f"{s}.{ext}" for s in SUITES for ext in ("json", "log")), names)
 
 
 if __name__ == "__main__":

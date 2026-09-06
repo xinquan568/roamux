@@ -93,6 +93,36 @@ the two patch-pinned upstream fixtures (0061/0062 → `unit_tests`), all waiting
 leg (roam-295 umbrella). The job log shows each suite in its own `::group::run …` block, which is
 the evidence that a suite ran.
 
+## Flake signal and artifacts (roam-283)
+
+Every suite runs with `--test-launcher-retry-limit=2` (roam-195), so a test that passes only on a
+retry used to be invisible in the job's verdict. Since roam-283 each suite writes its launcher
+summary (`--test-launcher-summary-output`) and a tee'd log into one artifact directory
+(`$ROAMUX_CI_ARTIFACTS`, resolved from `RUNNER_TEMP` in the "Tier-2 artifact directory" step), and
+two steps run after the script **whenever it ran, green or red** (`if: always() && steps.tier2.outcome != 'skipped'`
+— on the hosted kill-switch path the script is skipped and so are they):
+
+- **Flake report** — `roamux/build/ci/flake_report.py` writes `## Tier-2 flake report` into the
+  step summary: per suite its state (`complete`, or `absent` / `malformed` / `incomplete` — each an
+  error naming the suite's log and listing possible causes without asserting one), the tests that
+  needed a retry (attempt count, status sequence, per-attempt elapsed, the failed attempt's
+  snippet), final non-success tests, and skips (`GTEST_SKIP()` shows up as a `result_parts` skip
+  entry — listed only; failing on skips is L17). Retried tests are matched against
+  `roamux/build/ci/known_flakes.txt`: rows `<Fixture.Case | Fixture.*> | <owner roam-N> | <note>`
+  under a `mode:` directive. `mode: warn` (now, seeding window from 2026-09-06): an unlisted retry
+  is a `::warning::`. `mode: fail` (roam-308, on/after 2026-09-20): an unlisted retry turns the
+  step red. Listed flakes are always shown; a row matching no test in any suite's `all_tests` is
+  stale (error in fail mode). Closing an owner issue deletes its row in the same change.
+- **Upload tier-2 artifacts** — `actions/upload-artifact@v4`, artifact `tier2-artifacts`, 14 days:
+  `<suite>.json` + `<suite>.log` for every suite that ran. Download with
+  `gh run download <run-id> -n tier2-artifacts`.
+
+The script also prints cumulative checkpoints `phase=<name> elapsed=<s>s` (reconcile, runhook,
+sparkle, rebrand-gate, signing-gate, clone, build, run:<suite> ×4, staleness, done) to the log and
+the step summary, so a run killed by the 12 h bound is attributable to the phase it was in. Bounds:
+the step summary is published when the step ends (runner loss leaves only the log); the runs are
+keyless, but logs and snippets are not privacy-scrubbed (paths and hostnames may appear).
+
 ## Cache model
 
 `out/CI` is an APFS clone of the operator's warm `out/Default` (near-instant, ~zero disk until
