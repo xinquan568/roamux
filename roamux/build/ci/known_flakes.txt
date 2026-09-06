@@ -18,3 +18,4 @@
 mode: warn
 RoamuxTabStripToggleTest.* | roam-306 | first-attempt CRASH: FATAL vertical_tab_view.cc:1222 Check failed: collection_node_ (5 cases seen 2026-09-06; roam-214/240/275)
 RoamuxNewTabPositionVerticalScrollTest.NewTabAfterActiveIsFullyVisible | roam-307 | first attempt FAILED after ~10 s, passes on retry in ~4.7 s (timing)
+RoamuxSparkleFeedTest.TamperedItemRejectedAtSignatureGate | roam-310 | first two attempts FAIL with SUSparkleErrorDomain Code=10 (harness updater error) before the signature gate is observed; passes on the third (seen 2026-09-06, PR #309 run 34018213575)
