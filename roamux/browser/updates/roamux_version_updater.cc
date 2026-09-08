@@ -23,6 +23,11 @@ constexpr char16_t kDownloadFailedCopy[] =
 constexpr char16_t kSignatureFailedCopy[] =
     u"The update couldn't be verified and wasn't installed.";
 constexpr char16_t kInstallFailedCopy[] = u"Couldn't install the update.";
+// roam-287: registered verbatim as `roamuxUpdateErrUnavailable` in
+// settings_ui.cc (patch 0033) — the page compares the first line against it
+// to hide "Try again"; roamux/build/tests/test_about_copy_sync.py pins both.
+constexpr char16_t kUpdaterUnavailableCopy[] =
+    u"Updates aren't available in this build.";
 
 std::u16string ErrorCopy(UpdateErrorClass error_class) {
   switch (error_class) {
@@ -34,6 +39,8 @@ std::u16string ErrorCopy(UpdateErrorClass error_class) {
       return kSignatureFailedCopy;
     case UpdateErrorClass::kInstallFailed:
       return kInstallFailedCopy;
+    case UpdateErrorClass::kUpdaterUnavailable:
+      return kUpdaterUnavailableCopy;
   }
 }
 
@@ -73,7 +80,11 @@ MappedStatus MapSnapshot(const UpdateSnapshot& snapshot) {
       // cr:error only for FAILED; the variant rides the message.
       mapped.status = VersionUpdater::FAILED;
       const UpdateErrorClass error_class = ClassifyUpdateError(snapshot.error);
-      mapped.offer_retry = error_class != UpdateErrorClass::kSignatureFailed;
+      // No retry for a signature failure (security-relevant) nor for a dead
+      // updater (roam-287: retrying cannot succeed). The page mirrors this by
+      // hiding Try again for those two registered copies.
+      mapped.offer_retry = error_class != UpdateErrorClass::kSignatureFailed &&
+                           error_class != UpdateErrorClass::kUpdaterUnavailable;
       mapped.message = ErrorCopy(error_class);
       if (!snapshot.error.empty()) {
         // Alpha-only dimmed raw line (rendered after the newline by the 0033
@@ -87,6 +98,10 @@ MappedStatus MapSnapshot(const UpdateSnapshot& snapshot) {
 }
 
 UpdateErrorClass ClassifyUpdateError(const std::string& error_text) {
+  // roam-287: the owner's tag wins over every text heuristic below.
+  if (base::StartsWith(error_text, kUpdaterUnavailableErrorPrefix)) {
+    return UpdateErrorClass::kUpdaterUnavailable;
+  }
   const std::string lower = base::ToLowerASCII(error_text);
   // Signature first: security-relevant and its Sparkle text mentions
   // validation, which must not fall through to friendlier classes.

@@ -3,9 +3,11 @@
 #define ROAMUX_BROWSER_UPDATES_ROAMUX_UPDATE_SERVICE_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/callback_list.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -37,9 +39,41 @@ class SparkleOwner;
 // (roamux_enable_sparkle).
 SparkleOwner* GetOrCreateSharedSparkleOwner();
 
+// The event sink signature: the conformer hands translated events to the
+// owner, which broadcasts them to every subscribed facade.
+using EventCallback = base::RepeatingCallback<void(const UpdateEvent&)>;
+
+// --- roam-287 test seams (the owner stays opaque to C++ includers) ---------
+// Deleter for an owner-for-testing (the destructor is private; the .mm
+// defines operator()).
+struct SparkleOwnerDeleter {
+  void operator()(SparkleOwner* owner) const;
+};
+// The injected start outcome for an owner-for-testing: it runs the PRODUCTION
+// start-result handling on this outcome and allocates no SPUUpdater (so the
+// one-updater rule of roam-140 holds in tests and every command is inert).
+struct InjectedSparkleStart {
+  bool started = true;
+  std::string domain;
+  int code = 0;
+  std::string description;
+};
+std::unique_ptr<SparkleOwner, SparkleOwnerDeleter> CreateSparkleOwnerForTesting(
+    const InjectedSparkleStart& start);
+const std::optional<std::string>& SparkleOwnerStartErrorForTesting(
+    const SparkleOwner* owner);
+bool AutomaticChecksEnabledForTesting(const SparkleOwner* owner);
+base::CallbackListSubscription AddSparkleOwnerEventSinkForTesting(
+    SparkleOwner* owner,
+    EventCallback callback);
+
 class RoamuxUpdateService : public KeyedService, public UpdateCommands {
  public:
   RoamuxUpdateService();
+  // roam-287: bind to a specific owner (tests bind an owner-for-testing
+  // through the keyed-service testing factory). The default constructor
+  // delegates with the shared process-wide owner.
+  explicit RoamuxUpdateService(SparkleOwner* owner);
   ~RoamuxUpdateService() override;
 
   RoamuxUpdateService(const RoamuxUpdateService&) = delete;
@@ -76,6 +110,11 @@ class RoamuxUpdateService : public KeyedService, public UpdateCommands {
  private:
   void PushSnapshot(const UpdateSnapshot& snapshot);
 
+  // Member order is load-bearing (roam-287): the owner REPLAYS retained
+  // events synchronously inside AddEventSink, i.e. OnUpdateEvent runs during
+  // the constructor body — everything it touches (the machine, the snapshot
+  // list) is declared here, before shared_owner_/sink_subscription_, and the
+  // WeakPtrFactory is last (fully constructed before the body runs).
   UpdateStateMachine state_machine_;
   int checks_for_testing_ = 0;
   int downloads_for_testing_ = 0;

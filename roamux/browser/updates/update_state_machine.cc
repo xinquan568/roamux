@@ -34,19 +34,27 @@ UpdateSnapshot UpdateStateMachine::OnEvent(const UpdateEvent& event) {
       break;
 
     case UpdateEventType::kUpdateFound:
-      // Only the outcome of a check surfaces an update.
-      if (snapshot_.status != UpdateStatus::kChecking) {
+      // roam-287 (grill H11): an update found is an update available, whoever
+      // asked — a SCHEDULED check delivers this with no kCheckStarted, and the
+      // old "only the outcome of a check" rule dropped every background find.
+      // The one thing a find must not disturb is a download in flight.
+      if (snapshot_.status == UpdateStatus::kDownloading ||
+          snapshot_.status == UpdateStatus::kReadyToInstall) {
         break;
       }
       if (!event.version.empty() && event.version == skipped_version_) {
-        // A skipped version is treated as up-to-date (never surfaced).
-        snapshot_.status = UpdateStatus::kUpToDate;
-      } else {
-        snapshot_.status = UpdateStatus::kAvailable;
-        snapshot_.version = event.version;
-        snapshot_.date = event.date;
-        snapshot_.notes = event.notes;
+        // A skipped version never surfaces; it reads as up-to-date only as
+        // the outcome of a (user-initiated) check, otherwise nothing changes.
+        if (snapshot_.status == UpdateStatus::kChecking) {
+          snapshot_.status = UpdateStatus::kUpToDate;
+        }
+        break;
       }
+      snapshot_ = UpdateSnapshot{};  // a fresh offer clears stale error/progress
+      snapshot_.status = UpdateStatus::kAvailable;
+      snapshot_.version = event.version;
+      snapshot_.date = event.date;
+      snapshot_.notes = event.notes;
       break;
 
     case UpdateEventType::kDownloadStarted:

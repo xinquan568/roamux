@@ -27,6 +27,9 @@ enum class UpdateErrorClass {
   kDownloadFailed,   // download interrupted
   kSignatureFailed,  // EdDSA verification failed — security-relevant
   kInstallFailed,    // install step failed
+  // roam-287 (grill H10): the Sparkle updater never started (a configuration
+  // failure at launch, tagged by the owner) — dead for the process, no retry.
+  kUpdaterUnavailable,
 };
 
 struct MappedStatus {

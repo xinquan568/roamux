@@ -33,6 +33,8 @@ if (roamux_enable_sparkle) {
       "roamux_update_service.mm",
       "roamux_update_service_factory.cc",
       "roamux_update_service_factory.h",
+      "roamux_update_user_driver.h",  # roam-287: the conformer, test-reachable
+      "roamux_update_user_driver.mm",
       "version_updater_seam.h",
     ]
     deps = [

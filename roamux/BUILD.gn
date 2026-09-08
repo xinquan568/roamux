@@ -212,7 +212,16 @@ test("roamux_browser_unittests") {
       "browser/updates/roamux_version_updater.cc",
       "browser/updates/roamux_version_updater.h",
       "test/roamux_version_updater_unittest.cc",
+
+      # roam-287: the process-wide SparkleOwner + its SPUUserDriver conformer,
+      # isolated from a live SPUUpdater (owner-for-testing).
+      "test/roamux_sparkle_owner_unittest.mm",
     ]
+    deps += [ "//roamux/browser/updates:update_service" ]
+
+    # roam-287: the owner test imports <Sparkle/Sparkle.h>; the framework
+    # search path is update_service's PRIVATE config, not inherited.
+    configs += [ "//roamux/app:sparkle_link" ]
 
     # //chrome/browser/ui is now an unconditional dep above (roam-268).
   }
@@ -342,13 +351,19 @@ test("roamux_browsertests") {
   # service is compiled in.
   if (roamux_enable_sparkle) {
     sources += [
+      "test/roamux_update_driver_browsertest.mm",  # roam-287
       "test/roamux_update_row_browsertest.cc",
       "test/roamux_update_service_factory_browsertest.cc",
     ]
     deps += [ "//roamux/browser/updates:update_service" ]
 
     # roam-150: same as roamux_browser_unittests — the linked Sparkle framework
-    # needs an rpath so the test executable resolves it at launch.
-    configs += [ "//roamux/app:sparkle_test_rpath" ]
+    # needs an rpath so the test executable resolves it at launch. roam-287:
+    # the driver browsertest imports <Sparkle/Sparkle.h> — the framework
+    # search path (sparkle_link) is not inherited from update_service.
+    configs += [
+      "//roamux/app:sparkle_link",
+      "//roamux/app:sparkle_test_rpath",
+    ]
   }
 }
