@@ -312,7 +312,8 @@ class WorkflowInvariantsTest(unittest.TestCase):
 
     def test_release_resolves_chromium_src_from_machine_env(self):
         # roam-108: machine paths come from the runner machine-env file contract
-        # (~/roamux-runner/.env), required + sourced unconditionally, fail-loud — never a
+        # (~/roamux-runner/.env), required + read and parsed unconditionally (never sourced,
+        # roam-286), fail-loud — never a
         # workspace-relative Chromium path (actions/checkout git-cleans the workspace, so a
         # checkout inside it cannot durably exist on the v1 personal-machine builder).
         text = _read("release.yml")

@@ -8,9 +8,10 @@ no public-key-only mode (it takes a private key from the keychain or a file), so
 until roam-286 this step imported the production PRIVATE key into the runner's
 login keychain to perform a public-key operation, with a bash EXIT trap as the only
 cleanup (grill C1/M42). Now: the pure-Python reference verifier (ed25519_ref —
-byte-equivalent to Sparkle's signer, enforced by the committed fixture guard in
-test_sparkle_fixture.py and by regenerate_fixture.py's parity self-check), no
-external tool, no keychain, no private key. In-app verification stays Sparkle's own.
+interoperable with Sparkle's canonical signatures, as the committed fixture guard
+in test_sparkle_fixture.py, regenerate_fixture.py's parity self-check and the live
+alpha.9 check show), no external tool, no keychain, no private key. In-app
+verification stays Sparkle's own.
 
 Checks, in this order — any failure stops the release before publish:
   1. SUPublicEDKey present in the plist and 32 bytes of base64;

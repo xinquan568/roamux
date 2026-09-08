@@ -44,8 +44,8 @@ jobs:
       - name: Resolve machine env (v1 builder contract, roam-108)
         run: |
           set -euo pipefail
-          # The machine-env file contract (docs/ci/self-hosted-runner.md): required, sourced
-          # unconditionally, every value validated. The actions-runner also injects it into
+          # The machine-env file contract (docs/ci/self-hosted-runner.md): required, read and
+          # parsed unconditionally (never sourced — roam-286), every value validated. The actions-runner also injects it into
           # job envs, but injection is background behavior — the checks below are the contract.
           env_file="${HOME}/roamux-runner/.env"
           if [ ! -f "${env_file}" ]; then

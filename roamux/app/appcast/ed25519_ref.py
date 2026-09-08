@@ -7,7 +7,9 @@ Used by (1) the release job's staging validation (verify_appcast.py, roam-286):
 the DOWNLOADED appcast/artifact are verified with the committed SUPublicEDKey
 ONLY — no keychain, no private key, no external tool; and (2) the hermetic tests
 and the fixture generator (regenerate_fixture.py's parity self-check, which
-keeps this verifier byte-equivalent to Sparkle's own sign_update). In-app update
+keeps this verifier accepting Sparkle's canonical sign_update signatures — an
+interoperability claim for canonical signatures, not identical acceptance of
+every input). In-app update
 verification is Sparkle's; the BoringSSL roamux/app/appcast_verifier is the
 separate C++ pipeline/test helper. Signing here is test-only: the release job
 signs with Sparkle's sign_update and the production key never appears in the
