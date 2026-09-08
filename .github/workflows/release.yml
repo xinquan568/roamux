@@ -44,14 +44,31 @@ jobs:
       - name: Resolve machine env (v1 builder contract, roam-108)
         run: |
           set -euo pipefail
-          # The machine-env file contract (docs/ci/self-hosted-runner.md): required, sourced
-          # unconditionally, every value validated. The actions-runner also injects it into
+          # The machine-env file contract (docs/ci/self-hosted-runner.md): required, read and
+          # parsed unconditionally (never sourced — roam-286), every value validated. The actions-runner also injects it into
           # job envs, but injection is background behavior — the checks below are the contract.
           env_file="${HOME}/roamux-runner/.env"
           if [ ! -f "${env_file}" ]; then
             echo "::error::machine-env contract unsatisfied: ${env_file} not found (docs/ci/self-hosted-runner.md)"; exit 1
           fi
-          set -a; . "${env_file}"; set +a
+          # roam-286 (grill C1 step 4): the machine-env file is DATA, never sourced — sourcing ran an
+          # operator dotfile as shell inside the secrets-bearing job. Accept only KEY=value lines (a
+          # POSIX name; a value from a safe charset — absolute paths, no whitespace, quotes,
+          # expansions or commands), blank lines and # comments; anything else fails the job naming
+          # the line. Only the three contract keys are exported; other well-formed keys are ignored
+          # (the actions-runner reads the same file as its own env file, so it may carry more).
+          pat='^([A-Z][A-Z0-9_]*)=([A-Za-z0-9_./:@+-]*)$'
+          lineno=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            lineno=$((lineno + 1))
+            case "$line" in ''|'#'*) continue ;; esac
+            if [[ ! "$line" =~ $pat ]]; then
+              echo "::error::${env_file}:${lineno}: not a plain KEY=value line — quotes, spaces, expansions and commands are rejected (docs/ci/self-hosted-runner.md)"; exit 1
+            fi
+            case "${BASH_REMATCH[1]}" in
+              ROAMUX_CHROMIUM_SRC|ROAMUX_DEPOT_TOOLS|ROAMUX_CANONICAL_OVERLAY) export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}" ;;
+            esac
+          done < "${env_file}"
           if [ -z "${ROAMUX_CHROMIUM_SRC:-}" ]; then
             echo "::error::ROAMUX_CHROMIUM_SRC missing/empty in ${env_file} — write it per docs/ci/self-hosted-runner.md"; exit 1
           fi
@@ -313,6 +330,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          umask 077   # roam-286/L11: the key file is born 0600 — no world-readable instant before chmod
           keyfile="${RUNNER_TEMP}/sparkle_ed_priv"
           trap 'rm -f "$keyfile"' EXIT   # remove the key on any exit path
           printf '%s' "${SPARKLE_ED_PRIVATE_KEY:?Sparkle EdDSA key required for every release (K3)}" > "$keyfile"
@@ -339,23 +357,19 @@ jobs:
           python3 roamux/app/appcast/generate_appcast.py             --version "${appcast_ver}" --short-version "${appcast_short}" --enclosure-url "$url"             --artifact "$rel/Roamux.zip" --ed-signature "$ZIP_SIG"             --pub-date "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"             --out "$rel/appcast.xml"
           rm -f "$keyfile"
 
+      # roam-286 (grill C1 steps 3-5 / M42): this step holds NO Sparkle secret. Staging validation is a
+      # public-key operation and is done with the committed SUPublicEDKey only (pure-Python
+      # reference verifier). It used to import the production PRIVATE key into the runner's login
+      # keychain for Sparkle's CLI verifier, with a bash EXIT trap as the only cleanup — on the Mac
+      # and login user that also run every same-repo PR job. The private key now touches exactly one
+      # step (the sign step above); keychain_cleanup.sh removes any legacy item left by earlier runs.
       - name: Create DRAFT release + staging-validate the DOWNLOADED assets
         env:
           GH_TOKEN: ${{ github.token }}
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           rel="${CHROMIUM_SRC}/out/Release"
-          bindir="roamux/third_party/sparkle/bin"
-          acct="roamux-release-verify"
-          keyfile="${RUNNER_TEMP}/sparkle_ed_priv_verify"
-          # Import the signing key into a keychain account for Sparkle's own
-          # verifier; remove it (and the temp key) on every exit path.
-          trap 'security delete-generic-password -s "https://sparkle-project.org" -a "$acct" >/dev/null 2>&1 || true; rm -f "$keyfile"' EXIT
-          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$keyfile"
-          chmod 600 "$keyfile"
-          "$bindir/generate_keys" --account "$acct" -f "$keyfile"
           # Re-cut safety (roam-124): a prior release on this tag makes create() spawn a
           # SECOND draft while an edit-by-tag would publish the OLD release. Delete the
           # predecessor (the re-pointed tag orphaned it anyway) so the tag is unambiguous
@@ -386,15 +400,14 @@ jobs:
           echo "RELEASE_ID=${release_id}" >> "$GITHUB_ENV"
           # K2: validate the ACTUAL DRAFT ASSETS, not the local files — download
           # the appcast + artifact from the draft and verify those bytes against
-          # the committed SUPublicEDKey via Sparkle's verifier, before publish.
+          # the committed SUPublicEDKey (public key only, roam-286), before publish.
           dl="${RUNNER_TEMP}/roamux-staging"
           mkdir -p "$dl"
           gh release download "$TAG" --pattern 'appcast.xml' \
             --pattern 'Roamux.zip' --dir "$dl" --clobber
           python3 roamux/app/appcast/verify_appcast.py \
             --appcast "$dl/appcast.xml" --artifact "$dl/Roamux.zip" \
-            --public-key-plist roamux/app/sparkle-Info.plist \
-            --sparkle-bin-dir "$bindir" --account "$acct"
+            --public-key-plist roamux/app/sparkle-Info.plist
 
       - name: Publish (only after staging validation)
         env:

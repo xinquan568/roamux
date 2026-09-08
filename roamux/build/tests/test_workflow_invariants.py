@@ -71,6 +71,14 @@ These encode the tier-1 + release posture structurally, so every future workflow
       ("successful, skipped, or neutral"), so the old if:-gate was a vacuous pass. Forks stay
       skipped by the trust predicate (R15); nightly keeps its arm (not a required check)
       (roam-281 / grill H7).
+  22. The Sparkle PRIVATE key never enters a keychain and touches exactly one release step: no
+      workflow calls generate_keys (Sparkle's keychain import) or `security import`; the secret is
+      bound to the sign step only, which sets umask 077 before writing the key file; staging
+      validation verifies the downloaded appcast with the committed SUPublicEDKey through the pure
+      Python reference verifier (no subprocess); the always() cleanup deletes the legacy
+      roamux-release-verify keychain account, ACCOUNT-scoped (the service name is shared with the
+      operator's own keys); and the machine-env file is parsed as strict KEY=value data, never
+      sourced (roam-286 / grill C1 steps 3-5, M42, L11).
 """
 
 import os
@@ -304,7 +312,8 @@ class WorkflowInvariantsTest(unittest.TestCase):
 
     def test_release_resolves_chromium_src_from_machine_env(self):
         # roam-108: machine paths come from the runner machine-env file contract
-        # (~/roamux-runner/.env), required + sourced unconditionally, fail-loud — never a
+        # (~/roamux-runner/.env), required + read and parsed unconditionally (never sourced,
+        # roam-286), fail-loud — never a
         # workspace-relative Chromium path (actions/checkout git-cleans the workspace, so a
         # checkout inside it cannot durably exist on the v1 personal-machine builder).
         text = _read("release.yml")
@@ -318,8 +327,11 @@ class WorkflowInvariantsTest(unittest.TestCase):
                         "the .env existence check must be explicit")
         self.assertTrue(any("::error::" in l and "env_file" in l for l in lines),
                         "the missing-file case must fail loudly")
-        self.assertIn('. "${env_file}"', text,
-                      "the machine env must be sourced explicitly")
+        self.assertNotIn('. "${env_file}"', text,
+                         "roam-286: the machine-env file is parsed as data, never sourced")
+        self.assertIn("=~ $pat", text, "roam-286: the strict KEY=value parser must be present")
+        self.assertIn('done < "${env_file}"', text,
+                      "roam-286: the parser reads the .env file line by line")
         self.assertFalse(any("ROAMUX_CHROMIUM_SRC:-" in l and "env_file" in l for l in lines),
                          "sourcing must be unconditional, not guarded on an injected variable")
         self.assertTrue(any("::error::" in l and "ROAMUX_CHROMIUM_SRC" in l for l in lines),
@@ -1112,6 +1124,57 @@ class ReleaseMachineEnvBehaviourTest(unittest.TestCase):
         self.assertIn(f"CHROMIUM_SRC={self.src}\n", exported)
         self.assertIn(str(self.depot), self.github_path.read_text())
 
+    # --- roam-286 (grill C1 step 4): the .env file is DATA. It used to be sourced (`set -a; . file`),
+    # i.e. executed as shell inside the secrets-bearing job. The parser accepts only KEY=value lines
+    # from a safe charset, blank lines and # comments; exports only the three contract keys.
+    def _valid(self):
+        return self._base_env() + [f"ROAMUX_CANONICAL_OVERLAY={self.canonical}"]
+
+    def _assert_refused(self, r, lineno):
+        out = r.stdout + r.stderr
+        self.assertNotEqual(r.returncode, 0, out)
+        self.assertIn("::error::", out)
+        self.assertIn(f".env:{lineno}:", out, "the refusal must name the offending line")
+        self.assertNotIn("CHROMIUM_SRC=", self.github_env.read_text(),
+                         "nothing may be exported when the .env file is refused")
+
+    def test_command_line_in_env_is_refused_and_never_executed(self):
+        marker = self.home / "pwned"
+        r = self._run(self._valid() + [f"touch {marker}"])
+        self._assert_refused(r, 4)
+        self.assertFalse(marker.exists(), "the .env line was EXECUTED — the file is still sourced")
+
+    def test_command_substitution_value_is_refused_and_never_executed(self):
+        marker = self.home / "pwned-subst"
+        r = self._run(self._base_env() + [f"ROAMUX_CANONICAL_OVERLAY=$(touch {marker}; echo {self.canonical})"])
+        self._assert_refused(r, 3)
+        self.assertFalse(marker.exists(), "the value was EXPANDED — the file is still sourced")
+
+    def test_quoted_value_is_refused(self):
+        r = self._run(self._base_env() + [f'ROAMUX_CANONICAL_OVERLAY="{self.canonical}"'])
+        self._assert_refused(r, 3)
+
+    def test_export_prefix_is_refused(self):
+        r = self._run(self._base_env() + [f"export ROAMUX_CANONICAL_OVERLAY={self.canonical}"])
+        self._assert_refused(r, 3)
+
+    def test_crlf_line_is_refused(self):
+        r = self._run(self._base_env() + [f"ROAMUX_CANONICAL_OVERLAY={self.canonical}\r"])
+        self._assert_refused(r, 3)
+
+    def test_comments_blank_lines_and_extra_keys_are_tolerated_but_not_exported(self):
+        # The live builder file carries unrelated variables (the actions-runner reads the same file
+        # as its own env file); they must neither fail the job nor reach GITHUB_ENV.
+        r = self._run(["# machine env (runbook)", ""] + self._base_env()
+                      + ["LANG=en_US.UTF-8", "JAVA_HOME=/opt/java/current",
+                         f"ROAMUX_CANONICAL_OVERLAY={self.canonical}"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        exported = self.github_env.read_text()
+        self.assertIn(f"CANONICAL_OVERLAY={self.canonical}\n", exported)
+        self.assertIn(f"CHROMIUM_SRC={self.src}\n", exported)
+        self.assertNotIn("LANG", exported)
+        self.assertNotIn("JAVA_HOME", exported)
+
 
 class SelfHostedTimeoutTest(unittest.TestCase):
     """Invariant 20 (roam-279 / M9): every self-hosted job declares timeout-minutes above
@@ -1648,3 +1711,135 @@ class ReleasePublishLatestBehaviourTest(_ReleaseStepHarness):
         r = self.run_publish("noisy_older_latest")
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
         self.assert_patched_with("true")
+
+
+# --- roam-286 (invariant 22): Sparkle private-key hygiene in the release job -------------------------
+RELEASE_SCRIPTS = REPO_ROOT / "roamux" / "app" / "release"
+APPCAST_SCRIPTS = REPO_ROOT / "roamux" / "app" / "appcast"
+SIGN_STEP_NAME = "Sign updates + generate appcast (every mode)"
+STAGING_STEP_NAME = "Create DRAFT release + staging-validate the DOWNLOADED assets"
+LEGACY_VERIFY_ACCOUNT = "roamux-release-verify"
+SPARKLE_SERVICE = "https://sparkle-project.org"
+
+
+class ReleaseSparkleKeyHygieneTest(unittest.TestCase):
+    """Invariant 22 (roam-286 / grill C1 steps 3-5, M42, L11): the Sparkle PRIVATE key is exposed to
+    exactly one step and never enters a keychain; staging validation needs the committed public key
+    only. Before this, the draft/validate step ran Sparkle's generate_keys --account … -f <key> —
+    an import of the production signing key into the runner's LOGIN keychain (the same user runs
+    every same-repo PR job) with a bash EXIT trap as the only cleanup."""
+
+    def test_no_workflow_imports_key_material_into_a_keychain(self):
+        for wf in sorted(WORKFLOWS.glob("*.yml")):
+            text = wf.read_text()
+            self.assertNotIn("generate_keys", text,
+                             f"{wf.name}: generate_keys imports a PRIVATE key into the login keychain")
+            self.assertNotIn("security import", text, f"{wf.name}: no workflow imports key material")
+
+    def test_sparkle_secret_is_bound_to_the_sign_step_only(self):
+        text = _read("release.yml")
+        self.assertEqual(1, text.count("secrets.SPARKLE_ED_PRIVATE_KEY"),
+                         "the Sparkle secret must be bound to exactly one step")
+        holders = [s for s in _release_steps() if "secrets.SPARKLE_ED_PRIVATE_KEY" in s]
+        self.assertEqual(1, len(holders))
+        self.assertIn(f"name: {SIGN_STEP_NAME}", holders[0], "…and that step is the sign step")
+
+    def test_sign_step_sets_umask_before_writing_the_key_file(self):
+        steps = _release_steps()
+        i = _release_step_index(steps, f"name: {SIGN_STEP_NAME}")
+        self.assertIsNotNone(i, "release.yml has no sign step?")
+        lines = (_step_run_script(steps[i]) or "").splitlines()
+        umask = next((n for n, l in enumerate(lines) if l.split("#")[0].strip() == "umask 077"), None)
+        write = next((n for n, l in enumerate(lines) if '> "$keyfile"' in l), None)
+        self.assertIsNotNone(write, "the sign step no longer writes $keyfile — re-pin")
+        self.assertIsNotNone(umask, "umask 077 must precede the key-file write (L11)")
+        self.assertLess(umask, write)
+
+    def test_staging_validation_uses_the_committed_public_key_only(self):
+        steps = _release_steps()
+        i = _release_step_index(steps, f"name: {STAGING_STEP_NAME}")
+        self.assertIsNotNone(i, "release.yml has no staging-validation step?")
+        step = steps[i]
+        script = _step_run_script(step) or ""
+        self.assertIn("verify_appcast.py", script)
+        self.assertIn("--public-key-plist roamux/app/sparkle-Info.plist", script)
+        for forbidden in ("--account", "--sparkle-bin-dir", "security ", "keychain",
+                          "SPARKLE_ED_PRIVATE_KEY", "generate_keys", "keyfile"):
+            self.assertNotIn(forbidden, step, f"staging validation must not carry {forbidden!r}")
+
+    def test_verifier_calls_no_external_tool(self):
+        src = (APPCAST_SCRIPTS / "verify_appcast.py").read_text()
+        for forbidden in ("subprocess", "generate_keys", "--account"):
+            self.assertNotIn(forbidden, src, f"verify_appcast.py must not use {forbidden!r}")
+        self.assertIn("ed25519_ref", src, "verification goes through the reference verifier")
+
+    def test_cleanup_deletes_the_legacy_verify_account_account_scoped(self):
+        text = (RELEASE_SCRIPTS / "keychain_cleanup.sh").read_text()
+        dels = [l for l in text.splitlines()
+                if "delete-generic-password" in l and not l.strip().startswith("#")]
+        self.assertEqual(1, len(dels), "exactly one legacy-account deletion")
+        self.assertIn(f'-s "{SPARKLE_SERVICE}"', dels[0])
+        self.assertIn(f'-a "{LEGACY_VERIFY_ACCOUNT}"', dels[0])
+        self.assertIn("|| true", dels[0], "absent item must not fail the always() step")
+        for sh in sorted(RELEASE_SCRIPTS.glob("*.sh")):
+            for l in sh.read_text().splitlines():
+                if "delete-generic-password" in l and not l.strip().startswith("#"):
+                    self.assertIn(" -a ", l, f"{sh.name}: deletion by service alone would match the "
+                                             "operator's own Sparkle key — account-scope it")
+
+
+FAKE_SECURITY = """#!/bin/bash
+printf '%s\\0' "$@" >> "${FAKE_SECURITY_LOG:?}"; printf '\\n' >> "$FAKE_SECURITY_LOG"
+case "$1" in delete-generic-password) exit 44 ;; esac   # errSecItemNotFound
+exit 0
+"""
+
+
+class ReleaseKeychainCleanupBehaviourTest(unittest.TestCase):
+    """Invariant 22, EXECUTED: keychain_cleanup.sh (the always() step) removes the legacy
+    roamux-release-verify account with an ACCOUNT-scoped call, exits 0 when the item is absent, and
+    still removes the temporary signing keychain + work dir. A fake `security` first on PATH
+    records argv — no real keychain is ever touched by this test."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-keychain-cleanup-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        fake = self.bin / "security"
+        fake.write_text(FAKE_SECURITY)
+        fake.chmod(0o755)
+        self.log = self.tmp / "security.log"
+        self.runner_temp = self.tmp / "runner-temp"
+        self.work = self.runner_temp / "roamux-signing"
+        self.work.mkdir(parents=True)
+        (self.work / "env.sh").write_text("export X=1\n")
+
+    def _run(self, **env):
+        e = {"PATH": f"{self.bin}:/usr/bin:/bin", "RUNNER_TEMP": str(self.runner_temp),
+             "FAKE_SECURITY_LOG": str(self.log)}
+        e.update(env)
+        return subprocess.run(["/bin/bash", str(RELEASE_SCRIPTS / "keychain_cleanup.sh")],
+                              capture_output=True, text=True, env=e, cwd=str(self.tmp), timeout=30)
+
+    def calls(self):
+        if not self.log.exists():
+            return []
+        return [c.split("\0")[:-1] for c in self.log.read_text().split("\n") if c]
+
+    def test_deletes_the_legacy_account_account_scoped_and_exits_zero_when_absent(self):
+        r = self._run()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        dels = [c for c in self.calls() if c[:1] == ["delete-generic-password"]]
+        self.assertEqual([["delete-generic-password", "-s", SPARKLE_SERVICE, "-a", LEGACY_VERIFY_ACCOUNT]],
+                         dels)
+        self.assertFalse(self.work.exists(), "the signing work dir must still be removed")
+        self.assertIn("[ok]", r.stdout)
+
+    def test_signing_keychain_is_still_deleted_when_set(self):
+        kc = str(self.tmp / "roamux-signing.keychain-db")
+        r = self._run(ROAMUX_SIGNING_KEYCHAIN=kc)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn(["delete-keychain", kc], self.calls())
+        self.assertIn(["delete-generic-password", "-s", SPARKLE_SERVICE, "-a", LEGACY_VERIFY_ACCOUNT],
+                      self.calls())

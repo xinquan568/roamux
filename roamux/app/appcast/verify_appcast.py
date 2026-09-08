@@ -1,72 +1,111 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Staging validation (roam-34, K2): before publishing, prove the DRAFT
-release's appcast verifies against the committed SUPublicEDKey using Sparkle's
-OWN verifier (bin/sign_update --verify), not a test reference impl.
+"""Staging validation (roam-34, K2; roam-286): before publishing, prove the DRAFT
+release's DOWNLOADED appcast + artifact verify against the committed SUPublicEDKey
+— with the PUBLIC key only.
 
-Two checks: (1) the keychain signing account's public key EQUALS the plist
-SUPublicEDKey — so we are validating against the key the app actually trusts;
-(2) `sign_update --verify <artifact> <edSignature> --account <acct>` passes on
-the downloaded artifact bytes. A failure fails the release job before publish.
+Ed25519 verification needs only the 32-byte public key. Sparkle's CLI verifier has
+no public-key-only mode (it takes a private key from the keychain or a file), so
+until roam-286 this step imported the production PRIVATE key into the runner's
+login keychain to perform a public-key operation, with a bash EXIT trap as the only
+cleanup (grill C1/M42). Now: the pure-Python reference verifier (ed25519_ref —
+interoperable with Sparkle's canonical signatures, as the committed fixture guard
+in test_sparkle_fixture.py, regenerate_fixture.py's parity self-check and the live
+alpha.9 check show), no external tool, no keychain, no private key. In-app
+verification stays Sparkle's own.
+
+Checks, in this order — any failure stops the release before publish:
+  1. SUPublicEDKey present in the plist and 32 bytes of base64;
+  2. the appcast has an enclosure carrying a non-empty sparkle:edSignature of
+     64 bytes of base64;
+  3. the enclosure's `length` is present, an integer, and byte-exact against the
+     downloaded artifact;
+  4. the signature verifies over the downloaded artifact bytes.
 """
 
 import argparse
+import base64
+import binascii
 import pathlib
 import plistlib
-import subprocess
 import sys
 import xml.etree.ElementTree as ET
+
+import ed25519_ref as ed  # same directory: on sys.path both as a script and under the tests
 
 SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 
 
+class StagingValidationError(Exception):
+    """A staging check failed; the message is the reason printed as ::error::."""
+
+
 def public_key_from_plist(plist_path):
     with open(plist_path, "rb") as f:
-        return plistlib.load(f)["SUPublicEDKey"]
+        entries = plistlib.load(f)
+    key = entries.get("SUPublicEDKey") if isinstance(entries, dict) else None
+    if not isinstance(key, str) or not key:
+        raise StagingValidationError(f"SUPublicEDKey missing from {plist_path}")
+    return key
 
 
-def edsignature_from_appcast(appcast_path):
-    root = ET.fromstring(pathlib.Path(appcast_path).read_text())
-    return root.find(".//enclosure").get(f"{{{SPARKLE_NS}}}edSignature")
+def _decode(value, nbytes, what):
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        raw = None
+    if raw is None or len(raw) != nbytes:
+        raise StagingValidationError(f"{what} is not {nbytes} bytes of base64")
+    return raw
 
 
-def assert_public_key_matches(plist_pub, account_pub):
-    """The signing key's public half must equal the committed SUPublicEDKey —
-    else the app (which trusts SUPublicEDKey) would reject the update."""
-    if plist_pub.strip() != account_pub.strip():
-        raise ValueError(
-            "signing key public half does not match SUPublicEDKey: "
-            f"plist={plist_pub!r} account={account_pub!r}")
+def enclosure_from_appcast(appcast_path):
+    root = ET.fromstring(pathlib.Path(appcast_path).read_bytes())
+    enclosure = root.find(".//enclosure")
+    if enclosure is None:
+        raise StagingValidationError("appcast has no enclosure")
+    return enclosure
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--appcast", required=True)
+def verify_enclosure(appcast_path, artifact_path, plist_path):
+    """Raise StagingValidationError unless the appcast's edSignature verifies over
+    the artifact bytes with the plist's SUPublicEDKey. Returns the artifact size."""
+    public_key = _decode(public_key_from_plist(plist_path), 32, "SUPublicEDKey")
+    enclosure = enclosure_from_appcast(appcast_path)
+    signature_b64 = enclosure.get(f"{{{SPARKLE_NS}}}edSignature")
+    if not signature_b64:
+        raise StagingValidationError("enclosure has no sparkle:edSignature")
+    signature = _decode(signature_b64, 64, "edSignature")
+    length = enclosure.get("length")
+    if length is None:
+        raise StagingValidationError("enclosure length attribute missing")
+    try:
+        length = int(length)
+    except ValueError:
+        raise StagingValidationError(f"enclosure length is not an integer: {length!r}") from None
+    data = pathlib.Path(artifact_path).read_bytes()
+    if length != len(data):
+        raise StagingValidationError(f"enclosure length {length} != artifact size {len(data)}")
+    if not ed.verify(data, signature, public_key):
+        raise StagingValidationError("edSignature does not verify against SUPublicEDKey")
+    return len(data)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Verify a Sparkle appcast enclosure against the committed public key.")
+    parser.add_argument("--appcast", required=True, type=pathlib.Path)
     parser.add_argument("--artifact", required=True, type=pathlib.Path)
-    parser.add_argument("--public-key-plist", required=True)
-    parser.add_argument("--sparkle-bin-dir", required=True, type=pathlib.Path)
-    parser.add_argument("--account", required=True,
-                        help="keychain account holding the signing key")
-    args = parser.parse_args()
-
-    plist_pub = public_key_from_plist(args.public_key_plist)
-    account_pub = subprocess.run(
-        [str(args.sparkle_bin_dir / "generate_keys"), "--account",
-         args.account, "-p"], capture_output=True, text=True,
-        check=True).stdout.strip()
-    assert_public_key_matches(plist_pub, account_pub)
-
-    sig = edsignature_from_appcast(args.appcast)
-    result = subprocess.run(
-        [str(args.sparkle_bin_dir / "sign_update"), "--verify",
-         str(args.artifact), sig, "--account", args.account],
-        capture_output=True, text=True)
-    if result.returncode != 0:
-        print("::error::staging validation FAILED — appcast edSignature does "
-              f"not verify against SUPublicEDKey.\n{result.stderr}",
-              file=sys.stderr)
+    parser.add_argument("--public-key-plist", required=True, type=pathlib.Path,
+                        help="Info.plist fragment carrying SUPublicEDKey (base64)")
+    args = parser.parse_args(argv)
+    try:
+        size = verify_enclosure(args.appcast, args.artifact, args.public_key_plist)
+    except StagingValidationError as e:
+        print(f"::error::staging validation FAILED — {e}", file=sys.stderr)
         return 1
-    print("[ok] staging validation passed — appcast verifies against "
-          "SUPublicEDKey via Sparkle's verifier")
+    print(f"[ok] staging validation passed — appcast edSignature verifies against "
+          f"SUPublicEDKey over {size} bytes (public key only; ed25519 reference "
+          f"verifier, no keychain)")
     return 0
 
 

@@ -69,3 +69,22 @@ the deployment: expect rapid rejection measured from the gate step's start — n
 no build, no draft, no asset. The hermetic tests (`test_release_version.py`,
 `test_workflow_invariants.py` — the extracted step scripts run against a fake `gh`) prove the
 scripts; they do not cover approval, queueing or the overlay restore, which that observation does.
+
+## Key hygiene (roam-286, grill C1 steps 3-5 / M42 / L11)
+
+The Sparkle EdDSA private key (`SPARKLE_ED_PRIVATE_KEY`, the only secret in the `release`
+environment) is exposed to **exactly one step** — "Sign updates + generate appcast" — as a `0600` file
+under `$RUNNER_TEMP`, created under `umask 077`, removed by an `EXIT` trap and again explicitly. The
+workflow never places it in any keychain. Staging validation ("Create DRAFT release +
+staging-validate the DOWNLOADED assets") verifies the downloaded appcast and artifact with the
+**committed public key only** (`SUPublicEDKey` in `roamux/app/sparkle-Info.plist`) through the
+pure-Python reference verifier in `roamux/app/appcast/ed25519_ref.py`; Sparkle's own CLI verifier has
+no public-key-only mode, which is why the old step imported the private key into the runner's login
+keychain (on the machine and login user that also run every same-repo PR job). The `always()`
+cleanup (`keychain_cleanup.sh`) additionally deletes the legacy `roamux-release-verify` keychain
+account if a pre-roam-286 run left one behind — account-scoped, never by service name, because the
+operator's own Sparkle keys share it. The machine-env file (`~/roamux-runner/.env`) is parsed as
+strict `KEY=value` data and never sourced (format contract in `docs/ci/self-hosted-runner.md`).
+`test_workflow_invariants.py` (invariant 22) pins all of this; the first live observation of the
+public-key-only staging step is the `v0.0.1-alpha.10` cut (roam-294). Still open: the draft-id lookup
+interpolates the tag into a `jq` program (grill L11, tracked under roam-295).

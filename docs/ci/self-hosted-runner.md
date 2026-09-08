@@ -64,6 +64,12 @@ ROAMUX_CHROMIUM_SRC=<abs path to the pinned checkout, e.g. /Users/you/chromium/s
 ROAMUX_DEPOT_TOOLS=<abs path to depot_tools>
 ROAMUX_CANONICAL_OVERLAY=<abs path to codes/roamux/roamux — the symlink restore target>
 ENV
+# .env format contract (roam-286): the release job PARSES this file, it never sources it. Only
+# plain KEY=value lines (NAME = [A-Z][A-Z0-9_]*; value = [A-Za-z0-9_./:@+-]* — absolute paths
+# without spaces), blank lines and # comments are accepted; quotes, `export`, $(...)/backticks,
+# spaces, CRLF line endings or any command fail the job naming the line. The job exports only
+# the three ROAMUX_* keys above; other well-formed lines (the actions-runner reads this same
+# file as its own env file) are ignored.
 # Start (session-lifetime; dies on reboot):
 cd ~/roamux-runner && nohup ./run.sh >runner.log 2>&1 &
 # Persist across reboots (deeper machine mutation — operator choice):

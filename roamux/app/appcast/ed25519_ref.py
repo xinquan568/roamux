@@ -1,9 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pure-Python Ed25519 (public-domain ed25519.cr.yp.to reference impl) — sign
-AND verify — for HERMETIC TESTS ONLY (roam-34). Slow; never used in
-production (the app verifies via BoringSSL, roam-32; the release job signs via
-Sparkle's sign_update). Lets the appcast round-trip test prove a generated
-signature verifies against the public key with no keychain/native dep."""
+AND verify (roam-34). Slow (~1 s of curve arithmetic per verify; SHA-512 over
+the message is hashlib) and dependency-free.
+
+Used by (1) the release job's staging validation (verify_appcast.py, roam-286):
+the DOWNLOADED appcast/artifact are verified with the committed SUPublicEDKey
+ONLY — no keychain, no private key, no external tool; and (2) the hermetic tests
+and the fixture generator (regenerate_fixture.py's parity self-check, which
+keeps this verifier accepting Sparkle's canonical sign_update signatures — an
+interoperability claim for canonical signatures, not identical acceptance of
+every input). In-app update
+verification is Sparkle's; the BoringSSL roamux/app/appcast_verifier is the
+separate C++ pipeline/test helper. Signing here is test-only: the release job
+signs with Sparkle's sign_update and the production key never appears in the
+repo.
+
+verify() enforces RFC 8032 §5.1.7 decoding: S < l, canonical y (< q), and no
+x = 0 with the sign bit set (roam-286). Small-order rejection is deliberately
+not added — policy beyond the RFC, unnecessary for verifying our own canonical
+signatures under a fixed trusted key."""
 
 import hashlib
 
@@ -99,8 +114,13 @@ def decodeint(s):
 
 def decodepoint(s):
     y = int.from_bytes(s, "little") & ((1 << (b - 1)) - 1)
+    if y >= q:
+        raise ValueError("non-canonical point encoding (y >= q)")  # RFC 8032 §5.1.3 step 1
     x = xrecover(y)
-    if x & 1 != bit(s, b - 1):
+    sign = bit(s, b - 1)
+    if x == 0 and sign:
+        raise ValueError("non-canonical point encoding (x = 0 with sign bit set)")  # §5.1.3 step 4
+    if x & 1 != sign:
         x = q - x
     P = [x, y]
     if not isoncurve(P):
@@ -118,5 +138,7 @@ def verify(m, s, pk):
     except ValueError:
         return False
     S = decodeint(s[b // 8:b // 4])
+    if S >= l:
+        return False  # RFC 8032 §5.1.7 step 1: reject non-canonical scalars (malleable S + l)
     h = Hint(encodepoint(R) + pk + m)
     return scalarmult(B, S) == edwards(R, scalarmult(A, h))
