@@ -213,6 +213,11 @@ jobs:
             || { echo "::error::rebrand gate: legal attribution 'The Chromium Authors' was lost"; exit 1; }
           python3 "${CHROMIUM_SRC}/roamux/build/rebrand_strings.py" --chromium-src "${CHROMIUM_SRC}" --check \
             || { echo "::error::rebrand gate: --check still reports un-rebranded user-visible strings"; exit 1; }
+          # roam-284: the locale verifier — no brand token may survive glued to a CJK code
+          # point in the compiled translations of the CJK locales (the agglutinated shape the
+          # channel's old \b boundaries missed; protected forms like ChromiumOS are exempt).
+          python3 "${CHROMIUM_SRC}/roamux/build/rebrand_strings.py" --chromium-src "${CHROMIUM_SRC}" --check --verify-locales ko,zh-CN,ja,zh-TW,zh-HK \
+            || { echo "::error::rebrand gate: a CJK-adjacent 'Chromium' survived in locale translations (roam-284)"; exit 1; }
           # roam-114: pass args via import() — NEVER newline-flatten the args file (its first
           # '#' would comment out every arg on the single flattened line). The overlay symlink
           # above makes //roamux/... resolve inside the checkout.

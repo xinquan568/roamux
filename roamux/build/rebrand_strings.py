@@ -31,9 +31,13 @@ Exclusions (legal/attribution, ChromeOS, domains, URLs, code/histogram/policy
 identifiers) are versioned and test-pinned in rebrand_exclusions.py.
 
 Usage:
-  rebrand_strings.py --chromium-src ~/chromium/src [--check]
+  rebrand_strings.py --chromium-src ~/chromium/src [--check] [--verify-locales ko,zh-CN,...]
 
 ``--check`` reports (non-zero) whether a rebrand is pending; mutates nothing.
+``--verify-locales`` (roam-284) scans the listed locales' xtb translations of
+compiled messages for a brand token glued to a CJK code point — the shape the
+channel used to miss — and fails (non-zero) naming file + id; composable with
+``--check`` (the release gate) and with the apply mode (runs after the apply).
 """
 
 import argparse
@@ -71,7 +75,12 @@ def rebrand_text(text):
 
 
 def _import_grit(chromium_src):
-    """Import GRIT read-only from the checkout. Returns (tclib, grd_reader)."""
+    """Import GRIT read-only from the checkout. Returns (tclib, grd_reader).
+
+    Bytecode writes are disabled first (roam-284): importing GRIT must not
+    create ``__pycache__`` under the checkout — the channel and its tests
+    promise that nothing under ``chromium_src`` is written."""
+    sys.dont_write_bytecode = True
     grit_path = os.path.join(str(chromium_src), "tools", "grit")
     if grit_path not in sys.path:
         sys.path.insert(0, grit_path)
@@ -208,16 +217,13 @@ class _PermissiveDefines(dict):
         return False
 
 
-def compute_id_map(grd_path, chromium_src, target_platform="darwin"):
-    """Walk a grd's messages via GRIT (following grdp includes) and return the
-    ``{old_id: new_id}`` map for messages that rebrand. Excluded messages and
-    no-op messages (nothing to rebrand) are omitted. ``use_name_for_id``
-    messages keep their id (the map still lists them so their xtb TEXT rebrands).
+def _walk_messages(grd_path, chromium_src, target_platform):
+    """Yield ``(node, msg)`` for every non-excluded message of a grd, via GRIT.
 
-    Enumeration is a PREORDER walk over every ``<if>`` branch (not just the ones
-    active for ``target_platform``): xtb ids are global content hashes shared
-    across platforms, so re-keying the superset never misses an active message's
-    translation, and inactive-branch messages (no rebrand, or no xtb) are inert.
+    A PREORDER walk over every ``<if>`` branch (not just the ones active for
+    ``target_platform``): xtb ids are global content hashes shared across
+    platforms, so the superset never misses an active message's translation,
+    and inactive-branch messages (no rebrand, or no xtb) are inert.
     """
     tclib, grd_reader = _import_grit(chromium_src)
     grd_path = pathlib.Path(grd_path)
@@ -225,8 +231,6 @@ def compute_id_map(grd_path, chromium_src, target_platform="darwin"):
                             defines=_PermissiveDefines(),
                             target_platform=target_platform,
                             skip_validation_checks=True)
-
-    id_map = {}
     for node in root:                            # preorder: all branches
         if node.name != "message":
             continue
@@ -235,18 +239,134 @@ def compute_id_map(grd_path, chromium_src, target_platform="darwin"):
         cliques = node.GetCliques()
         if not cliques:
             continue
-        msg = cliques[0].GetMessage()
-        presentable = msg.GetPresentableContent()
-        new_presentable, did = _excl.guarded_substitute(presentable)
+        yield tclib, node, cliques[0].GetMessage()
+
+
+def compute_id_map(grd_path, chromium_src, target_platform="darwin"):
+    """Walk a grd's messages via GRIT (following grdp includes) and return the
+    ``{old_id: new_id}`` map for messages that rebrand. Excluded messages and
+    no-op messages (nothing to rebrand) are omitted. ``use_name_for_id``
+    messages keep their id (the map still lists them so their xtb TEXT rebrands).
+
+    roam-284: the decision AND the hash are computed over the message's PARTS —
+    text parts through guarded_substitute, placeholders contributing their
+    presentation unchanged — i.e. with the same boundaries rewrite_grd_text uses
+    (it skips ``<ph>`` subtrees). Substituting the flattened presentable string
+    instead hid a token glued to a placeholder name ("...ChromiumEND_LINK") and
+    either omitted the message from the map or hashed a half-substituted string,
+    detaching its translations.
+    """
+    id_map = {}
+    for tclib, node, msg in _walk_messages(grd_path, chromium_src, target_platform):
+        did = False
+        parts = []
+        for part in msg.GetContent():
+            if isinstance(part, str):
+                new, changed = _excl.guarded_substitute(part)
+                did = did or changed
+                parts.append(new)
+            else:
+                parts.append(part.GetPresentation())   # placeholder: never rebranded
         if not did:
             continue
         old_id = msg.GetId()
         if node.attrs.get("use_name_for_id") == "true":
             new_id = old_id                      # id derives from name, not text
         else:
-            new_id = tclib.GenerateMessageId(new_presentable, msg.GetMeaning())
+            new_id = tclib.GenerateMessageId("".join(parts), msg.GetMeaning())
         id_map[old_id] = new_id
     return id_map
+
+
+def compute_compiled_ids(grd_path, chromium_src, target_platform="darwin"):
+    """The xtb ids of every non-excluded, translateable message of a grd (the
+    ids GRIT binds translations by), independent of whether anything remains to
+    substitute — so it is meaningful on an already-rebranded unit, where
+    compute_id_map is empty by design. Same preorder superset walk (roam-284)."""
+    ids = set()
+    for _tclib, node, msg in _walk_messages(grd_path, chromium_src, target_platform):
+        if not node.IsTranslateable():
+            continue
+        ids.add(msg.GetId())
+    return ids
+
+
+# ---------------------------------------------------------------------------
+# roam-284: the CJK-adjacent locale verifier (pure). It uses the channel's OWN
+# token eligibility (rebrand_exclusions._TOKEN + _VETO_AFTER — leading ./@:
+# guards, ASCII word classes at both ends, the OS/Authors/open-source/dotted/
+# scheme vetoes), so the gate never flags a form the channel deliberately keeps
+# (ChromiumOS, chromium.org, org.chromium, Chromium://...). What it catches is a
+# COVERAGE gap: a channel-eligible token that survived in a compiled translation
+# because the channel never visited it (message missing from the id map, xtb
+# not re-keyed, channel not run) — glued to a CJK code point, the shape that
+# was invisible before this fix.
+# ---------------------------------------------------------------------------
+# The BMP ranges the corpus uses: Hiragana/Katakana, CJK Ext-A, Unified
+# Ideographs, Hangul Syllables, CJK Compatibility Ideographs.
+_CJK = re.compile('[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]')
+
+
+def scan_cjk_adjacent(text):
+    """Snippets of every channel-eligible brand token (would be substituted by
+    guarded_substitute) that is glued to a CJK code point in ``text``."""
+    hits = []
+    for m in _excl._TOKEN.finditer(text):
+        if _excl._VETO_AFTER.match(text[m.end():]):
+            continue
+        before = text[m.start() - 1] if m.start() > 0 else ""
+        after = text[m.end()] if m.end() < len(text) else ""
+        if _CJK.match(before or " ") or _CJK.match(after or " "):
+            s, e = max(0, m.start() - 12), min(len(text), m.end() + 12)
+            hits.append(" ".join(text[s:e].split()))
+    return hits
+
+
+def verify_xtb_text(raw, compiled_ids):
+    """``[(id, snippet)]`` for every ``<translation>`` whose id is in
+    ``compiled_ids`` and whose TEXT NODES (tags stripped exactly as
+    _rebrand_xtb_content splits them) carry a CJK-adjacent brand token."""
+    hits = []
+    for m in _TRANS_RE.finditer(raw):
+        tid = m.group(2)
+        if tid not in compiled_ids:
+            continue
+        content = m.group(4)
+        last = 0
+        nodes = []
+        for tm in _XTB_TAG.finditer(content):
+            nodes.append(content[last:tm.start()])
+            last = tm.end()
+        nodes.append(content[last:])
+        for node in nodes:
+            for snippet in scan_cjk_adjacent(node):
+                hits.append((tid, snippet))
+    return hits
+
+
+def _locale_xtb_files(grd_path, locales):
+    return [f for f in discover_xtb_files(grd_path)
+            if f.is_file() and any(f.name.endswith(f"_{loc}.xtb") for loc in locales)]
+
+
+def _verify_unit_locales(grd_path, chromium_src, locales):
+    """``(hits, n_scanned)`` over one unit's xtb files of ``locales``."""
+    xtbs = _locale_xtb_files(grd_path, locales)
+    if not xtbs:
+        return [], 0
+    compiled = compute_compiled_ids(grd_path, chromium_src)
+    hits, n = [], 0
+    for f in xtbs:
+        raw = f.read_text(encoding="utf-8")
+        n += sum(1 for i in _TRANS_ID_RE.findall(raw) if i in compiled)
+        hits.extend((f, tid, snippet) for tid, snippet in verify_xtb_text(raw, compiled))
+    return hits, n
+
+
+def verify_locales(grd_path, chromium_src, locales):
+    """``[(xtb_path, id, snippet)]`` — CJK-adjacent brand tokens surviving in the
+    compiled translations of ``locales`` for one grd unit (roam-284)."""
+    return _verify_unit_locales(pathlib.Path(grd_path), chromium_src, list(locales))[0]
 
 
 _PART_RE = re.compile(r'<part\b[^>]*\bfile="([^"]+)"')
@@ -332,7 +452,12 @@ def main():
                         help="path to the Chromium src/ checkout")
     parser.add_argument("--check", action="store_true",
                         help="report pending rebrand (non-zero); mutate nothing")
+    parser.add_argument("--verify-locales", metavar="LOCALES", default="",
+                        help="comma-separated locales (e.g. ko,zh-CN) whose compiled "
+                             "translations must carry no CJK-adjacent brand token "
+                             "(roam-284); fails non-zero naming file + id")
     args = parser.parse_args()
+    locales = [l.strip() for l in args.verify_locales.split(",") if l.strip()]
 
     src = args.chromium_src
     if not src.is_dir():
@@ -340,6 +465,7 @@ def main():
         return 1
 
     pending = False
+    locale_hits, locale_n = [], 0
     for rel in TARGET_GRDS:
         grd = src / rel
         if not grd.is_file():
@@ -364,12 +490,31 @@ def main():
             print(f"[rebrand]   {rel} — {len(result.changed_files)} file(s) updated")
         else:
             print(f"[ok]        {rel} — already rebranded")
+        if locales:
+            try:
+                hits, n = _verify_unit_locales(grd, src, locales)
+            except Exception as e:  # noqa: BLE001 — fail loud, name the file
+                print(f"FAIL: {grd}: locale scan: {e}", file=sys.stderr)
+                return 1
+            locale_n += n
+            for f, tid, snippet in hits:
+                locale_hits.append((f, tid))
+                print(f"FAIL: {os.path.relpath(f, src)}: id={tid}: …{snippet}…", file=sys.stderr)
 
+    status = 0
     if args.check and pending:
         print("FAIL: user-visible strings still read 'Chromium' — run "
               "rebrand_strings.py before the resource compile.", file=sys.stderr)
-        return 1
-    return 0
+        status = 1
+    if locales:
+        if locale_hits:
+            print(f"FAIL: locale scan ({','.join(locales)}): {len(locale_hits)} CJK-adjacent "
+                  f"brand token(s) survived in compiled translations (roam-284).", file=sys.stderr)
+            status = 1
+        else:
+            print(f"[ok] locale scan ({','.join(locales)}): 0 CJK-adjacent brand tokens "
+                  f"in {locale_n} compiled translations")
+    return status
 
 
 if __name__ == "__main__":
