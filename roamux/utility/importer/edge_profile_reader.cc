@@ -288,14 +288,15 @@ std::optional<user_data_importer::SourceProfile> DetectEdgeSourceProfile(
   edge.importer_name = u"Microsoft Edge";
   edge.importer_type = user_data_importer::TYPE_EDGE_CHROMIUM;
   edge.source_path = profile_dir;
+  // roam-288 (grill H8, decision b): PASSWORDS/COOKIES are NOT advertised. The
+  // browser-side secret importer exists but has no production entry point
+  // (MaybeStartEdgeBrowserSideImport has no caller; the importer-host seam is
+  // roam-299), and the utility importer ignores those bits — advertising them
+  // put a dead "Saved passwords" checkbox in the picker (COOKIES has no upstream
+  // checkbox at all). Re-add them only together with the seam.
   edge.services_supported =
       user_data_importer::HISTORY | user_data_importer::FAVORITES |
-      user_data_importer::SEARCH_ENGINES |
-      user_data_importer::AUTOFILL_FORM_DATA |
-      // roam-16: passwords/cookies now imported by the
-      // browser-side secret stage (not the utility
-      // importer).
-      user_data_importer::PASSWORDS | user_data_importer::COOKIES;
+      user_data_importer::SEARCH_ENGINES | user_data_importer::AUTOFILL_FORM_DATA;
   return edge;
 }
 

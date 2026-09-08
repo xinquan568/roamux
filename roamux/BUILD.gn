@@ -242,6 +242,7 @@ test("roamux_browsertests") {
     "test/roamux_clear_browsing_data_browsertest.cc",
     "test/roamux_dark_logo_browsertest.cc",
     "test/roamux_edge_import_coordinator_browsertest.cc",
+    "test/roamux_edge_import_picker_browsertest.cc",  # roam-288
     "test/roamux_edge_import_driver_browsertest.cc",
     "test/roamux_external_open_profile_browsertest.mm",
     "test/roamux_external_open_settings_browsertest.cc",
