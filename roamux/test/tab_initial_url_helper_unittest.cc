@@ -148,6 +148,32 @@ TEST_F(TabInitialUrlHelperTest, RestoredValueBlocksNextCapture) {
   EXPECT_EQ(GURL("https://restored.test/"), helper()->initial_url());
 }
 
+// roam-289 (grill M18): a user write (dialog or "set to current page") is
+// refused unless the URL is an http(s) navigation target or exactly
+// about:blank. A refused write leaves NO value and NO lock, so a later
+// navigation still captures normally.
+TEST_F(TabInitialUrlHelperTest, UserSetRejectsDisallowedSchemes) {
+  const char* const kRejected[] = {"javascript:alert(1)", "data:text/html,x",
+                                   "file:///etc/hosts", "chrome://settings/"};
+  for (const char* spec : kRejected) {
+    SCOPED_TRACE(spec);
+    EXPECT_FALSE(helper()->SetUserInitialUrl(GURL(spec)));
+    EXPECT_FALSE(helper()->has_initial_url());
+    EXPECT_FALSE(helper()->is_user_locked());
+  }
+  content::NavigationSimulator::NavigateAndCommitFromBrowser(
+      web_contents(), GURL("https://navigated.test/"));
+  EXPECT_TRUE(helper()->has_initial_url()) << "a refused write must not block capture";
+  EXPECT_EQ(GURL("https://navigated.test/"), helper()->initial_url());
+  EXPECT_FALSE(helper()->is_user_locked());
+}
+
+TEST_F(TabInitialUrlHelperTest, UserSetAcceptsAboutBlank) {
+  EXPECT_TRUE(helper()->SetUserInitialUrl(GURL("about:blank")));
+  EXPECT_EQ(GURL("about:blank"), helper()->initial_url());
+  EXPECT_TRUE(helper()->is_user_locked());
+}
+
 class TabInitialUrlHelperFlagOffTest : public ChromeRenderViewHostTestHarness {
  public:
   void SetUp() override {

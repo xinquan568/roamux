@@ -14,6 +14,7 @@
 #include "content/public/browser/web_contents.h"
 #include "roamux/common/roamux_features.h"
 #include "ui/base/page_transition_types.h"
+#include "url/url_constants.h"
 
 namespace roamux::tabs {
 
@@ -83,6 +84,11 @@ bool TabInitialUrlHelper::DecodeExtraData(const std::string& value,
   if (!parsed.is_valid()) {
     return false;
   }
+  // roam-289: persisted data is DATA (a hand-edited session file can carry
+  // anything); a disallowed scheme restores as "uncaptured", never re-armed.
+  if (!IsAllowedInitialUrl(parsed)) {
+    return false;
+  }
   *url = std::move(parsed);
   *locked = value[0] == '1';
   return true;
@@ -147,11 +153,28 @@ TabInitialUrlHelper::TabInitialUrlHelper(content::WebContents* web_contents)
 
 TabInitialUrlHelper::~TabInitialUrlHelper() = default;
 
-void TabInitialUrlHelper::SetUserInitialUrl(const GURL& url) {
+// static
+bool TabInitialUrlHelper::IsAllowedInitialUrl(const GURL& url) {
+  if (!url.is_valid()) {
+    return false;
+  }
+  if (url.SchemeIs(url::kHttpScheme) || url.SchemeIs(url::kHttpsScheme)) {
+    return true;
+  }
+  // Exactly about:blank — not about:srcdoc, not about:blank#x / about:blank/
+  // (GURL::IsAboutBlank() would admit those; none is a meaningful initial URL).
+  return url.spec() == url::kAboutBlankURL;
+}
+
+bool TabInitialUrlHelper::SetUserInitialUrl(const GURL& url) {
+  if (!IsAllowedInitialUrl(url)) {
+    return false;  // roam-289: refused writes leave no value and no lock.
+  }
   initial_url_ = url;
   captured_ = true;
   user_locked_ = true;
   PersistToSession();
+  return true;
 }
 
 void TabInitialUrlHelper::SetRestoredInitialUrl(const GURL& url) {

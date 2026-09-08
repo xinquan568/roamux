@@ -109,7 +109,9 @@ TEST_F(ReloadInitialUrlPredicateTest, AgreesWhenInitialUrlIsRestored) {
 
 TEST_F(ReloadInitialUrlPredicateTest, AgreesWhenInitialUrlIsInvalid) {
   content::WebContents* contents = AddTabWithHelper(GURL(kOther));
-  HelperFor(contents)->SetUserInitialUrl(GURL("not a url"));
+  // roam-289: user writes are allowlisted (an invalid URL is refused, no
+  // write); the restore overload is the seam for synthetic invalid state.
+  HelperFor(contents)->SetRestoredInitialUrl(GURL("not a url"), /*locked=*/true);
 
   EXPECT_FALSE(CanReloadInitialUrlForContents(contents));
   EXPECT_EQ(CanReloadInitialUrl(browser()),

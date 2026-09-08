@@ -69,7 +69,22 @@ class TabInitialUrlHelper
   const GURL& initial_url() const { return initial_url_; }
   bool has_initial_url() const { return captured_; }
   bool is_user_locked() const { return user_locked_; }
-  void SetUserInitialUrl(const GURL& url);
+
+  // roam-289 (grill M18) — the SCOPED invariant: every explicitly user-written
+  // (SetUserInitialUrl: the Edit dialog, "set to current page") and every
+  // decoded (DecodeExtraData: session restore / reopen-closed) initial URL is
+  // an http(s) navigation target or exactly about:blank. A persisted
+  // javascript: value would execute in the tab's CURRENT document on every
+  // replay (both replay commands load it with a typed transition) — a stored
+  // self-XSS; data:/file:/chrome:/about:srcdoc and friends are refused with it.
+  // Automatic capture and the discard/duplicate transfer paths are outside the
+  // invariant by decision (capture cannot capture javascript:; a captured
+  // file:/data: page is the tab's own page and is dropped on the next restore).
+  static bool IsAllowedInitialUrl(const GURL& url);
+
+  // User write. Returns false — and writes NOTHING (no value, no lock, no
+  // persist) — when `url` is not allowed (roam-289); true after a write.
+  bool SetUserInitialUrl(const GURL& url);
   void SetRestoredInitialUrl(const GURL& url);
   // Restore path with the persisted lock bit (locked == a user-edited value).
   void SetRestoredInitialUrl(const GURL& url, bool locked);
