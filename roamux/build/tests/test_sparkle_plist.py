@@ -3,8 +3,9 @@
 Info.plist. `SUVerifyUpdateBeforeExtraction` must be the plist BOOLEAN true —
 Sparkle 2 defaults it to NO and then runs the zip/dmg parsers on
 unauthenticated bytes; the key needs EdDSA-signed enclosures (K3) and Sparkle
-≥ 2.7.3 (vendored 2.9.4). A `<string>YES</string>` would be silently ignored,
-hence the type check. check_sparkle_bundle.py (the manual flag-on smoke gate;
+≥ 2.7.3 (vendored 2.9.4). Roamux requires the plist BOOLEAN form (<true/>) as
+the one canonical representation — hence the type check (Sparkle itself would
+also accept a YES string). check_sparkle_bundle.py (the manual flag-on smoke gate;
 no CI caller) enforces the same on the merged bundle — this pins the source
 plist for CI and pins that the bundle script still names the key."""
 

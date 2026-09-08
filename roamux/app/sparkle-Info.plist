@@ -10,7 +10,9 @@
      EdDSA-verified BEFORE extraction (Sparkle 2 defaults to NO and would run
      the zip/dmg parsers on unauthenticated bytes). Requires EdDSA-signed
      enclosures (K3) and Sparkle >= 2.7.3 (vendored 2.9.4); effective in the
-     updater of the build that ships it. A plist BOOLEAN, not a string. -->
+     updater of the build that ships it. Kept as a plist BOOLEAN — Roamux's
+     canonical form, pinned by check_sparkle_bundle.py and the hermetic
+     test_sparkle_plist.py. -->
 <plist version="1.0">
 <dict>
   <key>SUFeedURL</key>
