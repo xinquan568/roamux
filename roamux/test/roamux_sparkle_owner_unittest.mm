@@ -160,9 +160,12 @@ TEST_F(RoamuxSparkleOwnerTest, StartFailureFormatsLogsAndReplaysToEveryLateSink)
 
 TEST_F(RoamuxSparkleOwnerTest, StartedOwnerEnablesAutomaticChecksAndReplaysNothing) {
   base::test::MockLog log;
+  // gMock matches the most recently registered expectation first: the
+  // catch-all goes FIRST so the specific Times(0) below actually constrains
+  // (registered the other way round, the catch-all swallowed every call).
+  EXPECT_CALL(log, Log(_, _, _, _, _)).WillRepeatedly(Return(false));
   EXPECT_CALL(log, Log(logging::LOGGING_ERROR, _, _, _, HasSubstr("Sparkle")))
       .Times(0);
-  EXPECT_CALL(log, Log(_, _, _, _, _)).WillRepeatedly(Return(false));
   log.StartCapturingLogs();
   Owner owner = CreateSparkleOwnerForTesting(Started());
   log.StopCapturingLogs();

@@ -137,6 +137,13 @@ IN_PROC_BROWSER_TEST_F(RoamuxUpdateDriverBrowserTest,
   ASSERT_EQ(UpdateStatus::kIdle, service_->snapshot_for_testing().status);
   SUAppcastItem* item = MakeItem();
   ASSERT_NE(nil, item);
+  // The fixture is a VALID Sparkle item (version + enclosure) with distinct
+  // version / display version, so the driver's choice is observable below.
+  EXPECT_EQ("990", base::SysNSStringToUTF8(item.versionString));
+  EXPECT_EQ("99.0.0-test", base::SysNSStringToUTF8(item.displayVersionString));
+  EXPECT_EQ("notes", base::SysNSStringToUTF8(item.itemDescription));
+  EXPECT_NE(nil, item.fileURL);
+  EXPECT_EQ(1234u, item.contentLength);
   SPUUserUpdateState* state = [[SPUUserUpdateState alloc]
       initWithStage:SPUUserUpdateStageNotDownloaded
       userInitiated:NO];
