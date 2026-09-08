@@ -75,7 +75,12 @@ def rebrand_text(text):
 
 
 def _import_grit(chromium_src):
-    """Import GRIT read-only from the checkout. Returns (tclib, grd_reader)."""
+    """Import GRIT read-only from the checkout. Returns (tclib, grd_reader).
+
+    Bytecode writes are disabled first (roam-284): importing GRIT must not
+    create ``__pycache__`` under the checkout — the channel and its tests
+    promise that nothing under ``chromium_src`` is written."""
+    sys.dont_write_bytecode = True
     grit_path = os.path.join(str(chromium_src), "tools", "grit")
     if grit_path not in sys.path:
         sys.path.insert(0, grit_path)
@@ -287,33 +292,30 @@ def compute_compiled_ids(grd_path, chromium_src, target_platform="darwin"):
 
 
 # ---------------------------------------------------------------------------
-# roam-284: the CJK-adjacent locale verifier (pure) — mirrors the channel's
-# boundary model so the gate flags exactly what the channel should have changed.
+# roam-284: the CJK-adjacent locale verifier (pure). It uses the channel's OWN
+# token eligibility (rebrand_exclusions._TOKEN + _VETO_AFTER — leading ./@:
+# guards, ASCII word classes at both ends, the OS/Authors/open-source/dotted/
+# scheme vetoes), so the gate never flags a form the channel deliberately keeps
+# (ChromiumOS, chromium.org, org.chromium, Chromium://...). What it catches is a
+# COVERAGE gap: a channel-eligible token that survived in a compiled translation
+# because the channel never visited it (message missing from the id map, xtb
+# not re-keyed, channel not run) — glued to a CJK code point, the shape that
+# was invisible before this fix.
 # ---------------------------------------------------------------------------
-_BRAND = re.compile(r'Chromium|chromium')
-_ASCII_WORD = re.compile(r'[A-Za-z0-9_]')
-# The protected suffixes: _VETO_AFTER's vocabulary plus the no-space product name
-# (translated attribution is protected at the excluded-message layer, not here).
-_PROTECTED_AFTER = re.compile(r'^(?:OS(?![A-Za-z0-9_])|\ OS(?![A-Za-z0-9_])'
-                              r'|\ Authors(?![A-Za-z0-9_])|\ open\ source)')
 # The BMP ranges the corpus uses: Hiragana/Katakana, CJK Ext-A, Unified
 # Ideographs, Hangul Syllables, CJK Compatibility Ideographs.
 _CJK = re.compile('[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]')
 
 
 def scan_cjk_adjacent(text):
-    """Snippets of every brand token glued to a CJK code point in ``text`` —
-    excluding protected forms (ChromiumOS / Chromium OS / Chromium Authors /
-    Chromium open source, either casing) and tokens glued to an ASCII identifier
-    character (which the channel's token classes also leave alone)."""
+    """Snippets of every channel-eligible brand token (would be substituted by
+    guarded_substitute) that is glued to a CJK code point in ``text``."""
     hits = []
-    for m in _BRAND.finditer(text):
+    for m in _excl._TOKEN.finditer(text):
+        if _excl._VETO_AFTER.match(text[m.end():]):
+            continue
         before = text[m.start() - 1] if m.start() > 0 else ""
         after = text[m.end()] if m.end() < len(text) else ""
-        if _ASCII_WORD.match(before or " ") or _ASCII_WORD.match(after or " "):
-            continue
-        if _PROTECTED_AFTER.match(text[m.end():]):
-            continue
         if _CJK.match(before or " ") or _CJK.match(after or " "):
             s, e = max(0, m.start() - 12), min(len(text), m.end() + 12)
             hits.append(" ".join(text[s:e].split()))

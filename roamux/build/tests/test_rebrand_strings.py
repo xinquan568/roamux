@@ -307,26 +307,59 @@ class LocaleScanTest(unittest.TestCase):
             "从chromium OS中导入",
             "Chromium Authors를 참조",
             "Chromium open source를 참조",
+            "chromium Authors를 참조",
+            "chromium open source를 참조",
             "Chromium，欢迎",               # fullwidth comma is not a CJK letter
             "About Chromium",
             "Roamux을 정보",
+            # The channel's leading guards / dotted + scheme vetoes (F1): kept by
+            # guarded_substitute, so the gate must not flag them either.
+            "从chromium.org下载",
+            "org.chromium을 사용",
+            "从Chromium://example",
         ):
             with self.subTest(text=text):
                 self.assertEqual(rb.scan_cjk_adjacent(text), [], text)
+
+    def test_protected_forms_are_kept_by_the_channel_too(self):
+        # Fixture validity for the protected group: the gate exempts these because
+        # guarded_substitute keeps them — so the channel must indeed keep them.
+        for text in ("ChromiumOS를 사용", "从Chromium OS中导入", "从chromium OS中导入",
+                     "Chromium Authors를 참조", "chromium open source를 참조",
+                     "从chromium.org下载", "org.chromium을 사용", "从Chromium://example"):
+            with self.subTest(text=text):
+                self.assertEqual(rb.rebrand_text(text)[0], text)
+
+    def test_scanner_matches_channel_eligibility(self):
+        # The gate flags exactly the CJK-adjacent tokens the channel WOULD
+        # substitute: every hit disappears under guarded_substitute, and every
+        # CJK-adjacent token guarded_substitute leaves is not a hit.
+        for text in ("Chromium을 정보", "从chromium中导入", "ChromiumOS를 사용",
+                     "从Chromium OS中导入", "org.chromium을 사용", "从chromium.org下载"):
+            with self.subTest(text=text):
+                changed = rb.rebrand_text(text)[1]
+                self.assertEqual(bool(rb.scan_cjk_adjacent(text)), changed)
 
     def test_verify_xtb_text_scans_compiled_ids_only(self):
         xtb = ('<?xml version="1.0" ?>\n<!DOCTYPE translationbundle>\n'
                '<translationbundle lang="ko">\n'
                '<translation id="1001">Chromium을 정보</translation>\n'
                '<translation id="1002">Chromium을 정보</translation>\n'
-               '<translation id="1003">Chromium &amp; <ph name="X"/>을</translation>\n'
+               '<translation id="1003">Chromium<ph name="X"/>을</translation>\n'
+               '<translation id="1004">Chromium &amp; 을</translation>\n'
+               '<translation id="1005"><ph name="X"/>을Chromium</translation>\n'
                '</translationbundle>\n')
-        hits = rb.verify_xtb_text(xtb, {"1001", "1003"})
+        hits = rb.verify_xtb_text(xtb, {"1001", "1003", "1004", "1005"})
         # 1001 compiled + miss -> reported; 1002 not compiled -> silent; 1003:
-        # text nodes are scanned separately ("Chromium &amp; " | "을"), so the
-        # placeholder split is not an adjacency (the channel's own boundary).
-        self.assertEqual([h[0] for h in hits], ["1001"])
-        self.assertIn("Chromium을", hits[0][1])
+        # text nodes are scanned SEPARATELY ("Chromium" | "을") so the placeholder
+        # split is not an adjacency (the channel's own boundary) — concatenating
+        # the nodes would wrongly report it; 1004: the entity keeps the token
+        # apart; 1005: a real adjacency after a placeholder IS reported.
+        self.assertEqual([h[0] for h in hits], ["1001", "1005"])
+        self.assertEqual(sorted(h[0] for h in rb.verify_xtb_text(xtb, {"1001", "1005"})),
+                         ["1001", "1005"])
+        self.assertEqual(rb.verify_xtb_text(xtb, {"1003", "1004"}), [])
+        self.assertIn("Chromium을", rb.verify_xtb_text(xtb, {"1001"})[0][1])
         self.assertEqual(rb.verify_xtb_text(xtb, set()), [])
 
 
@@ -604,8 +637,9 @@ class VerifyLocalesCliTest(unittest.TestCase):
 
     def _main(self, *args):
         script = pathlib.Path(rb.__file__).resolve()
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")   # never write under the checkout
         return subprocess.run([sys.executable, str(script), "--chromium-src", str(self.tmp), *args],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=env)
 
     def _seed(self, text):
         raw = self.ko.read_text(encoding="utf-8")
@@ -654,10 +688,7 @@ class LiveLocaleScanTest(unittest.TestCase):
         cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-rebrand-live-"))
         cls.units = []                         # (rel_grd, [rel_xtb...])
         for rel in rb.TARGET_GRDS:
-            grd = _git_show(CHROMIUM_SRC, rel)
-            if grd is None:
-                _rmtree(cls.tmp)
-                raise unittest.SkipTest(f"git show HEAD:{rel} failed in {CHROMIUM_SRC}")
+            grd = cls._show(rel)
             cls._put(rel, grd)
             stack = [(rel, grd)]
             seen = set()
@@ -668,9 +699,7 @@ class LiveLocaleScanTest(unittest.TestCase):
                     if not prel.endswith(".grdp") or prel in seen:
                         continue
                     seen.add(prel)
-                    praw = _git_show(CHROMIUM_SRC, prel)
-                    if praw is None:
-                        continue               # mirrors discover_grdp_files (skips non-files)
+                    praw = cls._show(prel)     # fail closed: a missing part is an error
                     cls._put(prel, praw)
                     stack.append((prel, praw))
             xtbs = []
@@ -678,15 +707,27 @@ class LiveLocaleScanTest(unittest.TestCase):
                 if not any(xrel.endswith(f"_{loc}.xtb") for loc in CJK_LOCALES):
                     continue
                 arel = posixpath.normpath(posixpath.join(posixpath.dirname(rel), xrel))
-                xraw = _git_show(CHROMIUM_SRC, arel)
-                if xraw is not None:
-                    cls._put(arel, xraw)
-                    xtbs.append(arel)
+                cls._put(arel, cls._show(arel))
+                xtbs.append(arel)
+            for loc in CJK_LOCALES:
+                if not any(x.endswith(f"_{loc}.xtb") for x in xtbs):
+                    _rmtree(cls.tmp)
+                    raise AssertionError(f"{rel}: no {loc} xtb referenced — snapshot incomplete")
             cls.units.append((rel, xtbs))
 
     @classmethod
     def tearDownClass(cls):
         _rmtree(cls.tmp)
+
+    @classmethod
+    def _show(cls, rel):
+        # Fail CLOSED (not skip): with the checkout present, every snapshot read
+        # is required — a silent omission would print a misleading "0 -> 0".
+        raw = _git_show(CHROMIUM_SRC, rel)
+        if raw is None:
+            _rmtree(cls.tmp)
+            raise AssertionError(f"git -C {CHROMIUM_SRC} show HEAD:{rel} failed — pristine snapshot incomplete")
+        return raw
 
     @classmethod
     def _put(cls, rel, text):
@@ -701,36 +742,43 @@ class LiveLocaleScanTest(unittest.TestCase):
     def test_channel_leaves_zero_cjk_adjacent_survivors(self):
         before = {loc: 0 for loc in CJK_LOCALES}
         after = {loc: 0 for loc in CJK_LOCALES}
-        n_xtb = 0
+        scanned = {loc: 0 for loc in CJK_LOCALES}   # compiled translations per locale
         probe_done = False
         for rel, xtbs in self.units:
             grd = self.tmp / rel
             compiled = rb.compute_compiled_ids(grd, self.tmp)
             id_map = rb.compute_id_map(grd, self.tmp)
             post_ids = {id_map.get(i, i) for i in compiled}
+            rekeyed = {old: new for old, new in id_map.items() if old != new and old in compiled}
             for xrel in xtbs:
                 loc = self._locale_of(xrel)
                 raw = (self.tmp / xrel).read_text(encoding="utf-8")
                 before[loc] += len(rb.verify_xtb_text(raw, compiled))
                 new = rb.rewrite_xtb_text(raw, id_map)[0]
+                scanned[loc] += sum(1 for i in rb._TRANS_ID_RE.findall(new) if i in post_ids)
                 survivors = rb.verify_xtb_text(new, post_ids)
                 after[loc] += len(survivors)
-                n_xtb += 1
                 with self.subTest(unit=rel, xtb=xrel):
                     self.assertEqual(survivors, [], f"{xrel}: {survivors[:5]}")
                 if not probe_done and loc == "ko":
-                    # Non-vacuity: seed one transformed ko translation (under its
-                    # RESULTING id) and the scan must name exactly that id.
-                    ids = [i for i in rb._TRANS_ID_RE.findall(new) if i in post_ids]
-                    self.assertTrue(ids, f"{xrel}: no compiled translation to probe")
-                    target = ids[0]
+                    # Non-vacuity: seed a RE-KEYED ko translation (old id != new id)
+                    # under its resulting id — the post-rebrand scan must name exactly
+                    # that id, and a scan by the pristine ids must NOT see it (that is
+                    # the F1 hole the reviewer closed in the plan: old ids vanish).
+                    present = set(rb._TRANS_ID_RE.findall(new))
+                    target = next((n for o, n in rekeyed.items() if n in present), None)
+                    self.assertIsNotNone(target, f"{xrel}: no re-keyed translation to probe")
+                    self.assertNotIn(target, compiled)
                     seeded = re.sub(r'(<translation id="%s"[^>]*>)(.*?)(</translation>)' % re.escape(target),
                                     r"\g<1>Chromium을 테스트\g<3>", new, count=1, flags=re.DOTALL)
                     self.assertNotEqual(seeded, new)
                     self.assertEqual([h[0] for h in rb.verify_xtb_text(seeded, post_ids)], [target])
+                    self.assertEqual([h for h in rb.verify_xtb_text(seeded, compiled) if h[0] == target], [])
                     probe_done = True
-        self.assertGreater(n_xtb, 0, "no CJK xtb materialised")
         self.assertTrue(probe_done, "non-vacuity probe did not run")
+        for loc in CJK_LOCALES:
+            with self.subTest(coverage=loc):
+                self.assertGreater(scanned[loc], 0, f"{loc}: no compiled translations scanned")
         print("\n[roam-284 live scan] CJK-adjacent brand tokens before -> after the channel:")
         for loc in CJK_LOCALES:
             print(f"  {loc}: {before[loc]} -> {after[loc]}")

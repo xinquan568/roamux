@@ -147,6 +147,35 @@ def _marked_job_blocks(text):
     return blocks
 
 
+_CJK_GATE_LOCALES = "ko,zh-CN,ja,zh-TW,zh-HK"
+
+
+def _locale_verifier_line(lines):
+    """Index of the release.yml line that INVOKES the roam-284 locale verifier:
+    a shell command whose argv[0] is python3, whose script is rebrand_strings.py,
+    and whose arguments contain the exact tokens ``--check`` and
+    ``--verify-locales`` followed by the exact five-locale list. Comments, echoed
+    commands and lookalike locale lists do not qualify."""
+    import shlex
+    for i, line in enumerate(lines):
+        try:
+            argv = shlex.split(line.strip().rstrip("\\"))
+        except ValueError:
+            continue
+        if not argv or argv[0] != "python3" or len(argv) < 2:
+            continue
+        if not argv[1].endswith("/rebrand_strings.py") and argv[1] != "rebrand_strings.py":
+            continue
+        if "||" in argv:
+            argv = argv[:argv.index("||")]
+        if "--check" not in argv or "--verify-locales" not in argv:
+            continue
+        k = argv.index("--verify-locales")
+        if k + 1 < len(argv) and argv[k + 1] == _CJK_GATE_LOCALES:
+            return i
+    return None
+
+
 class WorkflowInvariantsTest(unittest.TestCase):
     def test_no_pull_request_target_anywhere(self):
         self.assertTrue(WORKFLOWS.is_dir(), f"missing {WORKFLOWS}")
@@ -505,16 +534,36 @@ class WorkflowInvariantsTest(unittest.TestCase):
                         "the gate must assert legal attribution stays 'Chromium'")
         self.assertTrue(any("::error::rebrand gate" in l for l in lines),
                         "the rebrand gate must fail the release loudly (::error::)")
-        # roam-284: the CJK locale verifier — an EXECUTABLE line (not a comment)
-        # that passes --check together with the exact five-locale argument, after
-        # the plain --check gate and before the compile.
-        five = "--verify-locales ko,zh-CN,ja,zh-TW,zh-HK"
-        verify_i = _first(lambda l: not l.strip().startswith("#")
-                          and "rebrand_strings.py" in l and "--check" in l and five in l)
-        self.assertIsNotNone(verify_i, "release.yml must run the locale verifier: "
-                                       f"rebrand_strings.py --check {five} (roam-284)")
+        # roam-284: the CJK locale verifier — a python3 INVOCATION (not a comment,
+        # not an echo) of rebrand_strings.py whose argv carries --check and the
+        # exact five-locale token, after the plain --check gate, before the compile.
+        verify_i = _locale_verifier_line(lines)
+        self.assertIsNotNone(verify_i, "release.yml must run the locale verifier: python3 "
+                                       "rebrand_strings.py --check --verify-locales "
+                                       f"{_CJK_GATE_LOCALES} (roam-284)")
         self.assertLess(check_i, verify_i, "the locale verifier runs after the plain --check gate")
         self.assertLess(verify_i, compile_i, "the locale verifier must pass before the compile")
+
+    def test_locale_verifier_pin_rejects_lookalikes(self):
+        # The pin's negative space (roam-284 review F4): a printed command, a
+        # commented one, a wrong/malformed locale list or a missing --check must NOT
+        # satisfy it — otherwise the pin proves nothing about the release gate.
+        lines = _read("release.yml").splitlines()
+        i = _locale_verifier_line(lines)
+        self.assertIsNotNone(i)
+        good = lines[i]
+        for bad in (
+            good.replace("python3", "echo python3", 1),
+            good.replace("python3", "# python3", 1),
+            good.replace("zh-HK", "zh-HK-TYPO"),
+            good.replace("ko,zh-CN,ja,zh-TW,zh-HK", "ko,zh-CN,ja,zh-TW"),
+            good.replace("--check ", ""),
+            good.replace("--verify-locales ko,zh-CN,ja,zh-TW,zh-HK", "--verify-locales"),
+        ):
+            with self.subTest(bad=bad.strip()[:60]):
+                self.assertNotEqual(bad, good)
+                mutated = lines[:i] + [bad] + lines[i + 1:]
+                self.assertIsNone(_locale_verifier_line(mutated))
 
     def test_release_signed_invocation_passes_input_dir_and_output(self):
         # roam-97: sign_roamux.py signed mode now requires --output (a separate
