@@ -29,7 +29,7 @@ class ReleaseUpdateLegTest(unittest.TestCase):
     def test_draft_before_validate_before_publish_ordering(self):
         i_draft = self.text.index("--draft --prerelease=false")
         i_validate = self.text.index("verify_appcast.py")
-        i_publish = self.text.index("make_latest=true")
+        i_publish = self.text.index('make_latest="$ml"')   # roam-285: conditional latest
         self.assertLess(i_draft, i_validate,
                         "draft must be created before staging validation")
         self.assertLess(i_validate, i_publish,
@@ -37,8 +37,14 @@ class ReleaseUpdateLegTest(unittest.TestCase):
 
     def test_publish_marks_latest(self):
         # roam-124: publish is id-addressed (gh api PATCH), so the K2 latest-feed
-        # contract is expressed as make_latest=true, never edit-by-tag --latest.
-        self.assertIn("make_latest=true", self.text)
+        # contract is expressed through make_latest, never edit-by-tag --latest.
+        # roam-285 (grill M2): the value is CONDITIONAL — true only when the tag's
+        # version is at least the current latest release's (release_version.py
+        # --at-least); an unconditional literal would re-point /releases/latest
+        # (the appcast feed) backwards when an older tag is published.
+        self.assertIn('make_latest="$ml"', self.text)
+        self.assertIn('release_version.py --tag "${TAG}" --at-least', self.text)
+        self.assertNotIn("make_latest=true", self.text)
 
 
 if __name__ == "__main__":
