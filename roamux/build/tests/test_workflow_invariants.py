@@ -158,16 +158,25 @@ def _locale_verifier_line(lines):
     commands and lookalike locale lists do not qualify."""
     import shlex
     for i, line in enumerate(lines):
+        # Shell-aware split: '#' comments are dropped, and the argv ends at the
+        # first command separator (; | || && & ( ) < >) so an echoed or chained
+        # lookalike after the real command cannot satisfy the pin.
         try:
-            argv = shlex.split(line.strip().rstrip("\\"))
+            lex = shlex.shlex(line.strip().rstrip("\\"), posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            lex.commenters = "#"
+            tokens = list(lex)
         except ValueError:
             continue
+        argv = []
+        for tok in tokens:
+            if tok and all(c in ";|&()<>" for c in tok):
+                break
+            argv.append(tok)
         if not argv or argv[0] != "python3" or len(argv) < 2:
             continue
         if not argv[1].endswith("/rebrand_strings.py") and argv[1] != "rebrand_strings.py":
             continue
-        if "||" in argv:
-            argv = argv[:argv.index("||")]
         if "--check" not in argv or "--verify-locales" not in argv:
             continue
         k = argv.index("--verify-locales")
@@ -559,6 +568,13 @@ class WorkflowInvariantsTest(unittest.TestCase):
             good.replace("ko,zh-CN,ja,zh-TW,zh-HK", "ko,zh-CN,ja,zh-TW"),
             good.replace("--check ", ""),
             good.replace("--verify-locales ko,zh-CN,ja,zh-TW,zh-HK", "--verify-locales"),
+            # Shell-structure lookalikes (review iteration 1): the locale argument
+            # must reach python3, not an echo after a separator or a comment.
+            good.replace("--check --verify-locales", "--check ; echo --verify-locales"),
+            good.replace("--check --verify-locales", "--check && echo --verify-locales"),
+            good.replace("--check --verify-locales", "--check | echo --verify-locales"),
+            good.replace("--check --verify-locales", "--check # --verify-locales"),
+            good.replace("--check --verify-locales", "--check; echo --verify-locales"),
         ):
             with self.subTest(bad=bad.strip()[:60]):
                 self.assertNotEqual(bad, good)
