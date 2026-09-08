@@ -1451,10 +1451,19 @@ FAKE_GH = r"""#!/bin/bash
 # NUL-delimited to FAKE_GH_LOG; the call shape is validated; unexpected calls exit 99.
 printf '%s\0' "$@" >> "${FAKE_GH_LOG:?}"; printf '\n' >> "${FAKE_GH_LOG}"
 [ "$1" = "api" ] || exit 99
+# Exact call shapes only. A GET is `api <path>` and NOTHING else — any extra token (a --method or
+# -X override, a field, --jq) is an unexpected call (exit 99), so a script that quietly changes the
+# HTTP verb cannot be answered with the GET fixture. A PATCH is exactly
+# `api -X PATCH repos/<repo>/releases/<id> -F draft=false -F prerelease=false -f make_latest=<v> --jq .html_url`.
 if [ "$2" = "-X" ] && [ "$3" = "PATCH" ]; then
-  case "$4" in repos/*/releases/[0-9]*) printf '{"html_url":"https://example.invalid/r"}\n'; exit 0 ;; esac
-  exit 99
+  [ $# -eq 12 ] || exit 99
+  case "$4" in repos/*/releases/[0-9]*) ;; *) exit 99 ;; esac
+  case "${10}" in make_latest=true|make_latest=false) ;; *) exit 99 ;; esac
+  [ "$5" = "-F" ] && [ "$6" = "draft=false" ] && [ "$7" = "-F" ] && [ "$8" = "prerelease=false" ] \
+    && [ "$9" = "-f" ] && [ "${11}" = "--jq" ] && [ "${12}" = ".html_url" ] || exit 99
+  printf '{"html_url":"https://example.invalid/r"}\n'; exit 0
 fi
+[ $# -eq 2 ] || exit 99
 case "$2" in
   repos/*/releases/tags/*|repos/*/releases/latest) ;;
   *) exit 99 ;;
@@ -1463,6 +1472,7 @@ esac
 err404='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
 case "${FAKE_GH_SCENARIO:?}" in
   published)      printf '{"id": 364984526, "draft": false, "prerelease": false, "tag_name": "v0.0.1-alpha.9"}\n'; exit 0 ;;
+  published_bool_id) printf '{"id": true, "draft": false}\n'; exit 0 ;;
   noisy_published) echo "warning: gh: a stderr diagnostic on success" >&2; printf '{"id": 364984526, "draft": false, "tag_name": "v0.0.1-alpha.9"}\n'; exit 0 ;;
   older_latest)   printf '{"id": 1, "draft": false, "prerelease": false, "tag_name": "v0.0.1-alpha.8"}\n'; exit 0 ;;
   noisy_older_latest) echo "warning: gh: a stderr diagnostic on success" >&2; printf '{"id": 1, "tag_name": "v0.0.1-alpha.8"}\n'; exit 0 ;;
@@ -1511,6 +1521,18 @@ class _ReleaseStepHarness(unittest.TestCase):
             return []
         return [c.split("\0")[:-1] for c in self.log.read_text().split("\n") if c]
 
+    @staticmethod
+    def is_patch(call):
+        """A PATCH in any argument order (`-X PATCH`, `--method PATCH`, `--method=PATCH`)."""
+        return "PATCH" in call or "--method=PATCH" in call
+
+    def gh(self, *args, **env):
+        """Invoke the fake directly (probing the fake itself)."""
+        e = {"PATH": f"{self.bin}:/usr/bin:/bin", "FAKE_GH_LOG": str(self.log),
+             "FAKE_GH_SCENARIO": "published"}
+        e.update(env)
+        return subprocess.run(["gh", *args], capture_output=True, text=True, env=e, timeout=30)
+
 
 class ReleaseRecutGateBehaviourTest(_ReleaseStepHarness):
     STEP = RECUT_GATE_NAME
@@ -1539,13 +1561,32 @@ class ReleaseRecutGateBehaviourTest(_ReleaseStepHarness):
         self.assertEqual([], self.calls(), "the forced check must fire before any API call")
 
     def test_lookup_errors_fail_closed(self):
-        for scenario in ("unauthorized", "forbidden", "server", "server_mentions_404", "transport", "malformed", "malformed_array"):
+        for scenario in ("unauthorized", "forbidden", "server", "server_mentions_404", "transport",
+                         "malformed", "malformed_array", "published_bool_id"):
             with self.subTest(scenario=scenario):
                 self.log.unlink(missing_ok=True)
                 r = self.run_gate(scenario)
                 self.assertEqual(1, r.returncode, scenario + ": " + r.stdout + r.stderr)
                 self.assertIn("::error::", r.stdout, scenario)
                 self.assertIn("could not verify", r.stdout, scenario)
+                self.assertNotIn("already PUBLISHED", r.stdout, scenario)
+                self.assertEqual([["api", "repos/xinquan568/roamux/releases/tags/v0.0.1-alpha.9"]],
+                                 self.calls(), scenario + ": exactly one GET, nothing else")
+
+    def test_fake_gh_rejects_method_overrides_and_shape_drift(self):
+        # The fake is part of the oracle: a GET with any extra token (a verb override, a field, a
+        # --jq) must be an unexpected call, not answered with the GET fixture.
+        for extra in (["--method", "DELETE"], ["-X", "DELETE"], ["--method", "PATCH"], ["--jq", ".id"]):
+            with self.subTest(extra=extra):
+                r = self.gh("api", "repos/xinquan568/roamux/releases/tags/v0.0.1-alpha.9", *extra)
+                self.assertEqual(99, r.returncode, r.stdout + r.stderr)
+        r = self.gh("api", "repos/xinquan568/roamux/releases/tags/v0.0.1-alpha.9")
+        self.assertEqual(0, r.returncode)
+        r = self.gh("api", "-X", "PATCH", "repos/xinquan568/roamux/releases/123", "-F", "draft=false",
+                    "-F", "prerelease=false", "-f", "make_latest=true", "--jq", ".html_url")
+        self.assertEqual(0, r.returncode)
+        r = self.gh("api", "-X", "PATCH", "repos/xinquan568/roamux/releases/123", "-f", "make_latest=true")
+        self.assertEqual(99, r.returncode, "a PATCH with a different shape is unexpected")
 
     def test_stderr_noise_on_success_does_not_hide_a_published_release(self):
         r = self.run_gate("noisy_published")
@@ -1561,7 +1602,13 @@ class ReleasePublishLatestBehaviourTest(_ReleaseStepHarness):
                              FAKE_GH_EXPECT_PATH="repos/xinquan568/roamux/releases/latest")
 
     def patch_calls(self):
-        return [c for c in self.calls() if len(c) > 3 and c[1] == "-X" and c[2] == "PATCH"]
+        return [c for c in self.calls() if self.is_patch(c)]
+
+    def test_patch_detection_covers_every_argument_order(self):
+        for call in (["api", "-X", "PATCH", "repos/x/releases/1"], ["api", "repos/x/releases/1", "--method", "PATCH"],
+                     ["api", "repos/x/releases/1", "--method=PATCH"], ["api", "--method", "PATCH", "repos/x/releases/1"]):
+            self.assertTrue(self.is_patch(call), call)
+        self.assertFalse(self.is_patch(["api", "repos/x/releases/latest"]))
 
     def assert_patched_with(self, ml):
         patches = self.patch_calls()
@@ -1594,7 +1641,8 @@ class ReleasePublishLatestBehaviourTest(_ReleaseStepHarness):
                 r = self.run_publish(scenario)
                 self.assertEqual(1, r.returncode, scenario + ": " + r.stdout + r.stderr)
                 self.assertIn("::error::", r.stdout, scenario)
-                self.assertEqual([], self.patch_calls(), scenario + ": no PATCH may be issued")
+                self.assertEqual([["api", "repos/xinquan568/roamux/releases/latest"]], self.calls(),
+                                 scenario + ": exactly the latest GET and nothing else — no PATCH")
 
     def test_stderr_noise_on_success_keeps_the_verdict(self):
         r = self.run_publish("noisy_older_latest")

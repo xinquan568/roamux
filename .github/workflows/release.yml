@@ -133,7 +133,7 @@ jobs:
           if not isinstance(d, dict):
               print("error non-object response"); sys.exit(0)
           if rc == 0:
-              print("published " + str(d["id"]) if isinstance(d.get("id"), int) else "error release object without an integer id")
+              print("published " + str(d["id"]) if type(d.get("id")) is int else "error release object without an integer id")
           elif d.get("status") == "404":
               print("absent")
           else:
