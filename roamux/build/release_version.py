@@ -52,6 +52,23 @@ def bundle_version(tag):
     return f"{core}.{stage}.{n}"
 
 
+def version_key(bundle):
+    """The bundle encoding as an integer tuple — the order Sparkle's numeric comparator applies
+    (roam-285). `bundle_version()` output only; anything else raises ValueError."""
+    try:
+        return tuple(int(part) for part in bundle.split("."))
+    except ValueError as e:
+        raise ValueError(f"not a numeric bundle version: {bundle!r}") from e
+
+
+def at_least(tag, other_tag):
+    """True when `tag` orders at or above `other_tag` on the bundle encoding (roam-285, grill M2:
+    publish marks `latest` only when the new release is at least the current latest — an older
+    tag published later must not re-point the appcast feed backwards). Raises ValueError for an
+    unparseable tag on either side; the caller must treat that as an error, not as 'older'."""
+    return version_key(bundle_version(tag)) >= version_key(bundle_version(other_tag))
+
+
 def short_version(tag):
     """Human display string (sparkle:shortVersionString / dialog title)."""
     return tag[1:] if tag.startswith("v") else tag
@@ -120,7 +137,25 @@ def main():
     parser.add_argument(
         "--check-tag", metavar="TAG",
         help="exit non-zero unless TAG matches roamux/build/VERSION (roam-156)")
+    parser.add_argument(
+        "--at-least", metavar="OTHER_TAG",
+        help="with --tag: exit 0 when --tag orders at or above OTHER_TAG on the bundle "
+             "encoding, 1 when it is older, 2 when either tag is unparseable (roam-285)")
     args = parser.parse_args()
+
+    if args.at_least is not None:
+        # The publish step maps 0/1 to make_latest=true/false and treats ANY other exit as an
+        # error (no PATCH), so unparseable input must never look like "older".
+        if args.tag is None:
+            print("--at-least requires --tag", file=sys.stderr)
+            return 2
+        try:
+            ok = at_least(args.tag, args.at_least)
+        except ValueError as e:
+            print(f"cannot order {args.tag!r} against {args.at_least!r}: {e}", file=sys.stderr)
+            return 2
+        print(f"{args.tag} is {'at least' if ok else 'older than'} {args.at_least}")
+        return 0 if ok else 1
 
     if args.check_tag:
         source = read_source_version()

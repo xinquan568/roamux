@@ -98,6 +98,58 @@ jobs:
       - name: Assert tag matches roamux/build/VERSION
         run: python3 roamux/build/release_version.py --check-tag "${GITHUB_REF_NAME}"
 
+      # roam-285 (grill H4): a PUBLISHED version is immutable. CFBundleVersion is a pure function
+      # of the tag, so re-cutting an already-published tag (a workflow_dispatch on it, or a
+      # force-moved tag if the release-tags ruleset were ever disabled) would re-stamp the SAME
+      # version onto a different binary — Sparkle only offers strictly greater versions, so every
+      # user already on the first build would be stranded on it. The recovery is always a new
+      # VERSION + a new tag. Decided here, before Sparkle/build/any release object, so a refused
+      # re-cut costs seconds. GET /releases/tags/{tag} returns published releases only (a draft left
+      # by an interrupted cut does not block the retry). Absence is decided ONLY by GitHub's error
+      # body carrying status "404"; every other lookup failure fails closed.
+      - name: Refuse a same-version re-cut (roam-285)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          EVENT_FORCED: ${{ github.event_name == 'push' && github.event.forced == true }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_FORCED:-false}" = "true" ]; then
+            echo "::error::tag ${TAG} was force-moved (ref update with roamux/build/VERSION unchanged) — a re-cut re-stamps the same CFBundleVersion and strands existing users (roam-285/H4). Bump roamux/build/VERSION and cut a new tag."
+            exit 1
+          fi
+          err="${RUNNER_TEMP:-/tmp}/gh-prior-release.err"
+          set +e
+          body=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" 2>"$err")
+          rc=$?
+          set -e
+          verdict=$(printf '%s' "$body" | python3 -c '
+          import json, sys
+          rc = int(sys.argv[1])
+          try:
+              d = json.loads(sys.stdin.read())
+          except ValueError:
+              print("error non-JSON response"); sys.exit(0)
+          if not isinstance(d, dict):
+              print("error non-object response"); sys.exit(0)
+          if rc == 0:
+              print("published " + str(d["id"]) if isinstance(d.get("id"), int) else "error release object without an integer id")
+          elif d.get("status") == "404":
+              print("absent")
+          else:
+              print("error HTTP status " + str(d.get("status")) + ": " + str(d.get("message")))
+          ' "$rc")
+          case "$verdict" in
+            published\ *)
+              echo "::error::a release for ${TAG} is already PUBLISHED (release id ${verdict#published }) — re-cutting the same version re-stamps the same CFBundleVersion and strands existing users (roam-285/H4). Bump roamux/build/VERSION and cut a new tag."
+              exit 1 ;;
+            absent)
+              echo "no published release for ${TAG}; proceeding" ;;
+            *)
+              echo "::error::could not verify prior releases for ${TAG}: ${verdict#error } — $(head -1 "$err" 2>/dev/null || true)"
+              exit 1 ;;
+          esac
+
       - name: Vendor Sparkle (pinned + hash-verified)
         run: python3 roamux/build/fetch_sparkle.py
 
@@ -349,11 +401,59 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          # make_latest so the production /releases/latest/download/appcast.xml
-          # feed (SUFeedURL) resolves to this release (K2, roam-32). PATCH by id —
-          # edit-by-tag can hit a different release on a re-cut (roam-124).
+          set -euo pipefail
+          # make_latest so the production /releases/latest/download/appcast.xml feed (SUFeedURL)
+          # resolves to this release (K2, roam-32) — but ONLY when this tag orders at or above the
+          # current latest (roam-285, grill M2): publishing an older tag with make_latest would
+          # re-point the whole fleet's feed backwards. `latest` is GitHub's newest published,
+          # non-prerelease release (Roamux alphas qualify: prerelease=false); a 404 body means none
+          # exists yet; any other lookup failure, a malformed body or an unorderable tag stops the
+          # job before the PATCH. PATCH by id — edit-by-tag can hit a different release (roam-124).
+          err="${RUNNER_TEMP:-/tmp}/gh-latest-release.err"
+          set +e
+          body=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" 2>"$err")
+          rc=$?
+          set -e
+          verdict=$(printf '%s' "$body" | python3 -c '
+          import json, sys
+          rc = int(sys.argv[1])
+          try:
+              d = json.loads(sys.stdin.read())
+          except ValueError:
+              print("error non-JSON response"); sys.exit(0)
+          if not isinstance(d, dict):
+              print("error non-object response"); sys.exit(0)
+          if rc == 0:
+              t = d.get("tag_name")
+              print("latest " + t if isinstance(t, str) and t else "error latest release without a tag_name")
+          elif d.get("status") == "404":
+              print("absent")
+          else:
+              print("error HTTP status " + str(d.get("status")) + ": " + str(d.get("message")))
+          ' "$rc")
+          case "$verdict" in
+            absent)
+              ml=true
+              echo "no published non-prerelease release yet — ${TAG} becomes latest" ;;
+            latest\ *)
+              latest="${verdict#latest }"
+              set +e
+              python3 roamux/build/release_version.py --tag "${TAG}" --at-least "${latest}"
+              cmp=$?
+              set -e
+              case "$cmp" in
+                0) ml=true ;;
+                1) ml=false
+                   echo "::warning::${TAG} is older than the current latest ${latest} — publishing without make_latest (roam-285/M2)" ;;
+                *) echo "::error::cannot order ${TAG} against the current latest ${latest} (release_version.py exit ${cmp})"
+                   exit 1 ;;
+              esac ;;
+            *)
+              echo "::error::could not read the current latest release: ${verdict#error } — $(head -1 "$err" 2>/dev/null || true)"
+              exit 1 ;;
+          esac
           gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            -F draft=false -F prerelease=false -f make_latest=true --jq .html_url
+            -F draft=false -F prerelease=false -f make_latest="$ml" --jq .html_url
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

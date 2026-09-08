@@ -424,8 +424,10 @@ class WorkflowInvariantsTest(unittest.TestCase):
                         "a prior release for the tag must be deleted before drafting")
         self.assertTrue(any("RELEASE_ID" in l and "GITHUB_ENV" in l for l in lines),
                         "the draft id must be captured for the publish step")
-        self.assertTrue(any("make_latest=true" in l for l in lines),
-                        "publish must mark latest (K2 feed contract)")
+        # roam-285 (M2): the latest mark is CONDITIONAL (release_version.py --at-least);
+        # the K2 feed contract is still expressed through make_latest on the by-id PATCH.
+        self.assertTrue(any('make_latest="$ml"' in l for l in lines),
+                        "publish must mark latest conditionally (K2 feed contract, roam-285)")
         # roam-126: gh api prints the 404 error BODY to stdout (--jq unapplied) while
         # exiting nonzero — the prior-release capture must be exit-code-gated and the
         # id numerically guarded, or fresh tags DELETE a garbage URL and fail.
@@ -1392,3 +1394,209 @@ class Tier2ArtifactsTest(unittest.TestCase):
         self.assertTrue(any("order" in p for p in tier2_artifact_problems(steps)))
         steps = _job_steps(g); steps[1], steps[2] = steps[2], steps[1]
         self.assertTrue(any("order" in p for p in tier2_artifact_problems(steps)))
+
+
+
+# ---------------------------------------------------------------------------------------------
+# roam-285 (grill H4 / M2): a published version is immutable, and `latest` follows version order.
+#  - A gate step right after the tag==VERSION check refuses the job when a release for the tag is
+#    already PUBLISHED (the by-tag endpoint returns published releases only) or the tag push was
+#    forced; every lookup failure other than an authoritative 404 body fails closed.
+#  - The publish step derives make_latest from release_version.py --at-least against the current
+#    latest published non-prerelease release (404 → true); every error path issues no PATCH.
+# The invariants are pinned structurally AND by executing the extracted step scripts against a
+# fake `gh` (the ReleaseOverlayRestoreBehaviourTest pattern).
+RECUT_GATE_NAME = "same-version re-cut"
+PUBLISH_STEP_NAME = "Publish (only after staging validation)"
+REPO_ROOT = WORKFLOWS.parents[1]
+
+
+def _release_step_index(steps, needle):
+    hits = [i for i, s in enumerate(steps) if needle in s]
+    return hits[0] if len(hits) == 1 else None
+
+
+class ReleaseRecutGateStructureTest(unittest.TestCase):
+    def test_release_refuses_same_version_recut_before_sparkle(self):
+        steps = _release_steps()
+        gate = _release_step_index(steps, RECUT_GATE_NAME)
+        self.assertIsNotNone(gate, f"release.yml has no step named with {RECUT_GATE_NAME!r}")
+        check = _release_step_index(steps, "--check-tag")
+        sparkle = _release_step_index(steps, "fetch_sparkle.py")
+        self.assertIsNotNone(check); self.assertIsNotNone(sparkle)
+        self.assertLess(check, gate, "the gate must follow the tag==VERSION check")
+        self.assertLess(gate, sparkle, "the gate must precede Sparkle vendoring (and the build)")
+        step = steps[gate]
+        self.assertIn("GH_TOKEN: ${{ github.token }}", step)
+        self.assertIn("TAG: ${{ github.ref_name }}", step)
+        self.assertRegex(step, r"EVENT_FORCED: \$\{\{ .*github\.event\.forced.*\}\}")
+        script = _step_run_script(step) or ""
+        self.assertIn('releases/tags/${TAG}', script)
+        self.assertIn('"404"', script, "absence must be decided by the error body's status field")
+
+    def test_release_publish_make_latest_is_conditional(self):
+        text = _read("release.yml")
+        self.assertNotIn("make_latest=true", text, "no unconditional latest anywhere in release.yml")
+        steps = _release_steps()
+        publish = _release_step_index(steps, PUBLISH_STEP_NAME)
+        self.assertIsNotNone(publish)
+        script = _step_run_script(steps[publish]) or ""
+        for needle in ('make_latest="$ml"', "releases/latest",
+                       'release_version.py --tag "${TAG}" --at-least', '"404"'):
+            self.assertIn(needle, script, needle)
+
+
+FAKE_GH = r"""#!/bin/bash
+# Fake `gh` for the roam-285 behavioural tests. Driven by FAKE_GH_SCENARIO; every argv is appended
+# NUL-delimited to FAKE_GH_LOG; the call shape is validated; unexpected calls exit 99.
+printf '%s\0' "$@" >> "${FAKE_GH_LOG:?}"; printf '\n' >> "${FAKE_GH_LOG}"
+[ "$1" = "api" ] || exit 99
+if [ "$2" = "-X" ] && [ "$3" = "PATCH" ]; then
+  case "$4" in repos/*/releases/[0-9]*) printf '{"html_url":"https://example.invalid/r"}\n'; exit 0 ;; esac
+  exit 99
+fi
+case "$2" in
+  repos/*/releases/tags/*|repos/*/releases/latest) ;;
+  *) exit 99 ;;
+esac
+[ -z "${FAKE_GH_EXPECT_PATH:-}" ] || [ "$2" = "$FAKE_GH_EXPECT_PATH" ] || exit 99
+err404='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
+case "${FAKE_GH_SCENARIO:?}" in
+  published)      printf '{"id": 364984526, "draft": false, "prerelease": false, "tag_name": "v0.0.1-alpha.9"}\n'; exit 0 ;;
+  noisy_published) echo "warning: gh: a stderr diagnostic on success" >&2; printf '{"id": 364984526, "draft": false, "tag_name": "v0.0.1-alpha.9"}\n'; exit 0 ;;
+  older_latest)   printf '{"id": 1, "draft": false, "prerelease": false, "tag_name": "v0.0.1-alpha.8"}\n'; exit 0 ;;
+  noisy_older_latest) echo "warning: gh: a stderr diagnostic on success" >&2; printf '{"id": 1, "tag_name": "v0.0.1-alpha.8"}\n'; exit 0 ;;
+  newer_latest)   printf '{"id": 2, "draft": false, "prerelease": false, "tag_name": "v0.0.1-alpha.10"}\n'; exit 0 ;;
+  unparseable_latest) printf '{"id": 3, "tag_name": "v9.9.9-gamma.1"}\n'; exit 0 ;;
+  absent)         printf '%s\n' "$err404"; echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  unauthorized)   printf '{"message":"Bad credentials","status":"401"}\n'; echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
+  forbidden)      printf '{"message":"Resource not accessible by integration","status":"403"}\n'; echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1 ;;
+  server)         printf '{"message":"Server Error","status":"502"}\n'; echo "gh: Server Error (HTTP 502)" >&2; exit 1 ;;
+  server_mentions_404) printf '{"message":"upstream HTTP 404 from cache","status":"500"}\n'; echo "gh: HTTP 500" >&2; exit 1 ;;
+  transport)      echo "error connecting to api.github.com" >&2; exit 1 ;;
+  malformed)      printf 'not json\n'; exit 0 ;;
+  malformed_object_no_tag)   printf '{"id": 1}\n'; exit 0 ;;
+  malformed_object_empty_tag) printf '{"id": 1, "tag_name": ""}\n'; exit 0 ;;
+  malformed_object_null_tag)  printf '{"id": 1, "tag_name": null}\n'; exit 0 ;;
+  malformed_array) printf '[1, 2]\n'; exit 0 ;;
+  *) echo "fake gh: unknown scenario ${FAKE_GH_SCENARIO}" >&2; exit 98 ;;
+esac
+"""
+
+
+class _ReleaseStepHarness(unittest.TestCase):
+    STEP = None
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-rel-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.bin = self.tmp / "bin"; self.bin.mkdir()
+        gh = self.bin / "gh"; gh.write_text(FAKE_GH); gh.chmod(0o755)
+        self.log = self.tmp / "gh.log"
+        steps = _release_steps()
+        i = _release_step_index(steps, self.STEP)
+        self.script = _step_run_script(steps[i]) if i is not None else None
+
+    def run_step(self, scenario, **env):
+        self.assertIsNotNone(self.script, f"release.yml has no extractable step {self.STEP!r}")
+        e = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.tmp), "RUNNER_TEMP": str(self.tmp),
+             "GITHUB_REPOSITORY": "xinquan568/roamux", "TAG": "v0.0.1-alpha.9", "GH_TOKEN": "x",
+             "FAKE_GH_SCENARIO": scenario, "FAKE_GH_LOG": str(self.log)}
+        e.update(env)
+        return subprocess.run(["/bin/bash", "-c", self.script], capture_output=True, text=True,
+                              env=e, cwd=str(REPO_ROOT), timeout=60)
+
+    def calls(self):
+        if not self.log.exists():
+            return []
+        return [c.split("\0")[:-1] for c in self.log.read_text().split("\n") if c]
+
+
+class ReleaseRecutGateBehaviourTest(_ReleaseStepHarness):
+    STEP = RECUT_GATE_NAME
+
+    def run_gate(self, scenario, forced="false"):
+        return self.run_step(scenario, EVENT_FORCED=forced,
+                             FAKE_GH_EXPECT_PATH="repos/xinquan568/roamux/releases/tags/v0.0.1-alpha.9")
+
+    def test_published_release_refuses(self):
+        r = self.run_gate("published")
+        self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+        self.assertIn("::error::", r.stdout)
+        self.assertIn("already PUBLISHED", r.stdout)
+        self.assertIn("364984526", r.stdout)
+
+    def test_absent_release_proceeds(self):
+        r = self.run_gate("absent")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("proceeding", r.stdout)
+        self.assertNotIn("::error::", r.stdout)
+
+    def test_forced_tag_push_refuses_without_calling_gh(self):
+        r = self.run_gate("published", forced="true")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("::error::", r.stdout)
+        self.assertEqual([], self.calls(), "the forced check must fire before any API call")
+
+    def test_lookup_errors_fail_closed(self):
+        for scenario in ("unauthorized", "forbidden", "server", "server_mentions_404", "transport", "malformed", "malformed_array"):
+            with self.subTest(scenario=scenario):
+                self.log.unlink(missing_ok=True)
+                r = self.run_gate(scenario)
+                self.assertEqual(1, r.returncode, scenario + ": " + r.stdout + r.stderr)
+                self.assertIn("::error::", r.stdout, scenario)
+                self.assertIn("could not verify", r.stdout, scenario)
+
+    def test_stderr_noise_on_success_does_not_hide_a_published_release(self):
+        r = self.run_gate("noisy_published")
+        self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+        self.assertIn("already PUBLISHED", r.stdout)
+
+
+class ReleasePublishLatestBehaviourTest(_ReleaseStepHarness):
+    STEP = PUBLISH_STEP_NAME
+
+    def run_publish(self, scenario):
+        return self.run_step(scenario, RELEASE_ID="123",
+                             FAKE_GH_EXPECT_PATH="repos/xinquan568/roamux/releases/latest")
+
+    def patch_calls(self):
+        return [c for c in self.calls() if len(c) > 3 and c[1] == "-X" and c[2] == "PATCH"]
+
+    def assert_patched_with(self, ml):
+        patches = self.patch_calls()
+        self.assertEqual(1, len(patches), self.calls())
+        self.assertIn("repos/xinquan568/roamux/releases/123", patches[0])
+        self.assertIn(f"make_latest={ml}", patches[0])
+
+    def test_older_latest_marks_latest(self):          # a guard: passes before and after roam-285
+        r = self.run_publish("older_latest")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assert_patched_with("true")
+
+    def test_absent_latest_marks_latest(self):         # a guard: passes before and after roam-285
+        r = self.run_publish("absent")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assert_patched_with("true")
+
+    def test_newer_latest_publishes_without_latest_and_warns(self):
+        r = self.run_publish("newer_latest")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assert_patched_with("false")
+        self.assertIn("::warning::", r.stdout)
+
+    def test_errors_issue_no_patch(self):
+        for scenario in ("unauthorized", "forbidden", "server", "transport", "malformed",
+                         "malformed_object_no_tag", "malformed_object_empty_tag",
+                         "malformed_object_null_tag", "malformed_array", "unparseable_latest"):
+            with self.subTest(scenario=scenario):
+                self.log.unlink(missing_ok=True)
+                r = self.run_publish(scenario)
+                self.assertEqual(1, r.returncode, scenario + ": " + r.stdout + r.stderr)
+                self.assertIn("::error::", r.stdout, scenario)
+                self.assertEqual([], self.patch_calls(), scenario + ": no PATCH may be issued")
+
+    def test_stderr_noise_on_success_keeps_the_verdict(self):
+        r = self.run_publish("noisy_older_latest")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assert_patched_with("true")

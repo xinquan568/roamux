@@ -7,6 +7,7 @@ understands numeric dotted versions.
 """
 
 import pathlib
+import subprocess
 import sys
 import unittest
 
@@ -40,6 +41,60 @@ class BundleVersionTest(unittest.TestCase):
 
 def _key(bundle):
     return [int(p) for p in bundle.split(".")]
+
+
+class AtLeastTest(unittest.TestCase):
+    """roam-285 (grill M2): publish marks a release `latest` only when its version is at least the
+    current latest release's — compared on the numeric bundle encoding Sparkle itself orders by,
+    never on the tag string."""
+
+    def test_version_key_is_the_numeric_tuple(self):
+        self.assertEqual((0, 0, 1, 1, 9), rv.version_key("0.0.1.1.9"))
+
+    def test_version_key_is_strictly_increasing_over_the_release_ladder(self):
+        keys = [rv.version_key(rv.bundle_version(t)) for t in OrderingPropertyTest.ASCENDING]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_at_least(self):
+        self.assertTrue(rv.at_least("v0.0.1-alpha.9", "v0.0.1-alpha.9"))
+        self.assertFalse(rv.at_least("v0.0.1-alpha.9", "v0.0.1-alpha.10"))
+        self.assertTrue(rv.at_least("v0.0.1-alpha.10", "v0.0.1-alpha.9"))
+        self.assertTrue(rv.at_least("v0.0.1", "v0.0.1-rc.1"))
+        self.assertFalse(rv.at_least("v0.0.1-rc.1", "v0.0.1"))
+        self.assertTrue(rv.at_least("v0.0.2-alpha.1", "v0.0.1"))
+
+    def test_at_least_rejects_unparseable_tags(self):
+        with self.assertRaises(ValueError):
+            rv.at_least("v9.9.9-gamma.1", "v0.0.1")
+        with self.assertRaises(ValueError):
+            rv.at_least("v0.0.1", "nonsense")
+
+    # The CLI is what release.yml calls; pin its exit codes AND its diagnostics (the workflow's
+    # publish step turns 0/1 into make_latest and treats anything else as an error).
+    def _cli(self, *args):
+        r = subprocess.run([sys.executable, rv.__file__, *args], capture_output=True, text=True)
+        return r.returncode, r.stdout, r.stderr
+
+    def test_cli_at_least_exit_0_with_verdict(self):
+        rc, out, _ = self._cli("--tag", "v0.0.1-alpha.10", "--at-least", "v0.0.1-alpha.9")
+        self.assertEqual(0, rc)
+        self.assertIn("v0.0.1-alpha.10 is at least v0.0.1-alpha.9", out)
+
+    def test_cli_older_exit_1_with_verdict(self):
+        rc, out, _ = self._cli("--tag", "v0.0.1-alpha.9", "--at-least", "v0.0.1-alpha.10")
+        self.assertEqual(1, rc)
+        self.assertIn("v0.0.1-alpha.9 is older than v0.0.1-alpha.10", out)
+
+    def test_cli_unparseable_exit_2_with_diagnostic(self):
+        rc, _, err = self._cli("--tag", "v0.0.1-alpha.9", "--at-least", "v9.9.9-gamma.1")
+        self.assertEqual(2, rc)
+        self.assertIn("unknown pre-release stage", err)
+
+    def test_cli_at_least_requires_tag(self):
+        rc, _, err = self._cli("--at-least", "v0.0.1-alpha.9")
+        self.assertEqual(2, rc)
+        self.assertIn("requires --tag", err)
 
 
 class OrderingPropertyTest(unittest.TestCase):
