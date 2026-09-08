@@ -505,6 +505,16 @@ class WorkflowInvariantsTest(unittest.TestCase):
                         "the gate must assert legal attribution stays 'Chromium'")
         self.assertTrue(any("::error::rebrand gate" in l for l in lines),
                         "the rebrand gate must fail the release loudly (::error::)")
+        # roam-284: the CJK locale verifier — an EXECUTABLE line (not a comment)
+        # that passes --check together with the exact five-locale argument, after
+        # the plain --check gate and before the compile.
+        five = "--verify-locales ko,zh-CN,ja,zh-TW,zh-HK"
+        verify_i = _first(lambda l: not l.strip().startswith("#")
+                          and "rebrand_strings.py" in l and "--check" in l and five in l)
+        self.assertIsNotNone(verify_i, "release.yml must run the locale verifier: "
+                                       f"rebrand_strings.py --check {five} (roam-284)")
+        self.assertLess(check_i, verify_i, "the locale verifier runs after the plain --check gate")
+        self.assertLess(verify_i, compile_i, "the locale verifier must pass before the compile")
 
     def test_release_signed_invocation_passes_input_dir_and_output(self):
         # roam-97: sign_roamux.py signed mode now requires --output (a separate

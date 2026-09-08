@@ -26,7 +26,12 @@ import re
 
 # v2 (roam-132 review): added the components_chromium_strings.grd About/version
 # license-attribution message names (IDS_VERSION_UI_LICENSE*).
-VERSION = 2
+# v3 (roam-284): ASCII word classes at both ends of the token — Python's Unicode
+# \w/\b treated Hangul/Han/kana (and Ethiopic, Cyrillic, ...) as word characters,
+# so agglutinated mentions ("Chromium을", "从Chromium中", "ለChromium", "Chromiumда")
+# never matched and shipped as "Chromium" in those locales; "ChromiumOS" stays
+# excluded because "O" is ASCII; the " OS" / " Authors" vetoes widened the same way.
+VERSION = 3
 
 # Layer 1: message names that must never rebrand — they carry legal/attribution
 # text about the upstream Chromium PROJECT (not the Roamux product), so the whole
@@ -46,17 +51,21 @@ EXCLUDED_MESSAGE_NAMES = frozenset({
     "IDS_VERSION_UI_LICENSE_OTHER",     # "... also made possible by other open source software."
 })
 
-# Layer 2a: the rebrandable token. A leading guard keeps the match off dotted /
-# slashed / @'d / scheme'd identifiers (org.chromium.foo, //chromium, a@chromium,
-# chrome://...). The trailing ``\b`` naturally excludes "ChromiumOS" (no word
-# boundary before the "OS"), so only "Chromium OS" (with a space) needs a veto.
-_TOKEN = re.compile(r'(?<![\w./@:])(?P<w>Chromium|chromium)\b')
+# Layer 2a: the rebrandable token. Both boundaries are ASCII word classes, NOT
+# ``\w``/``\b`` (roam-284): the strings this channel rewrites are translations,
+# and in agglutinative / space-free scripts the product name is glued to a
+# particle or neighbouring word ("Chromium을", "从Chromium中"), which Unicode-aware
+# ``\b`` reads as the middle of a word. A leading guard keeps the match off
+# dotted / slashed / @'d / scheme'd identifiers (org.chromium.foo, //chromium,
+# a@chromium, chrome://...); the trailing class still excludes "ChromiumOS" and
+# code identifiers ("O", "_" are ASCII), so only the spaced forms need a veto.
+_TOKEN = re.compile(r'(?<![A-Za-z0-9_./@:])(?P<w>Chromium|chromium)(?![A-Za-z0-9_])')
 
 # Layer 2b: text immediately AFTER a matched token that means "keep Chromium".
 _VETO_AFTER = re.compile(
     r'''^(?:
-          \ OS\b                 # "Chromium OS" — the ChromeOS product name
-        | \ Authors\b            # "The Chromium Authors" — attribution
+          \ OS(?![A-Za-z0-9_])      # "Chromium OS" — the ChromeOS product name
+        | \ Authors(?![A-Za-z0-9_]) # "The Chromium Authors" — attribution
         | \ open\ source         # "Chromium open source project" — attribution
         | \.[A-Za-z0-9]          # chromium.org / Chromium.Histogram / dotted id
         | ://                    # scheme boundary (defensive)

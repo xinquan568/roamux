@@ -20,6 +20,10 @@ Run:
 
 import os
 import pathlib
+import posixpath
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -112,6 +116,37 @@ class GuardedSubstitutionTest(unittest.TestCase):
         self.assertEqual(once, twice)
         self.assertNotIn("Roamuxium", once)
         self.assertNotIn("Chromium", once.replace("Chromium open source", ""))
+
+    def test_agglutinated_product_mentions_rebrand(self):
+        # roam-284: Python's Unicode \b treats Hangul/Han/Ethiopic/Cyrillic letters
+        # as word characters, so a product mention glued to a suffix/prefix (the
+        # normal shape in agglutinative and space-free scripts) never matched.
+        for src, want in (
+            ("Chromium을 정보", "Roamux을 정보"),                 # ko object particle
+            ("Chromium에서는 지원됩니다", "Roamux에서는 지원됩니다"),  # ko locative
+            ("Chromium과 동기화", "Roamux과 동기화"),             # ko conjunction
+            ("从Chromium中导入", "从Roamux中导入"),              # zh-CN, no spaces
+            ("ለChromium ይመዝገቡ", "ለRoamux ይመዝገቡ"),             # am, prefixing
+            ("Chromiumда кирүү", "Roamuxда кирүү"),             # ky, Cyrillic suffix
+            ("从chromium中导入", "从roamux中导入"),              # lowercase mention
+            ("Chromium，欢迎", "Roamux，欢迎"),                  # guard: fullwidth comma
+        ):
+            with self.subTest(src=src):
+                self.assertEqual(self.sub(src), want)
+
+    def test_agglutinated_exclusions_stay(self):
+        # The vetoes must hold with the SAME boundaries: "Chromium OS" / "Chromium
+        # Authors" glued to a CJK suffix keep "Chromium" byte-identically.
+        for kept in (
+            "ChromiumOS를 사용",
+            "从ChromiumOS中导入",
+            "Chromium OS를 사용",
+            "从Chromium OS中导入",
+            "Chromium Authors를 참조",
+        ):
+            with self.subTest(kept=kept):
+                self.assertEqual(self.sub(kept), kept,
+                                 f"exclusion not honoured: {kept!r} -> {self.sub(kept)!r}")
 
     def test_change_flag(self):
         self.assertTrue(rb.rebrand_text("About Chromium")[1])
@@ -243,10 +278,134 @@ class XtbIntegrityTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Pure: the CJK-adjacent locale scan (roam-284) — the verifier behind the
+# release gate's --verify-locales. It mirrors the channel's boundary model:
+# a brand token glued to a CJK code point is a miss UNLESS it is one of the
+# protected forms (ChromiumOS / Chromium OS / Chromium Authors / Chromium open
+# source, either casing) or glued to an ASCII identifier character.
+# ---------------------------------------------------------------------------
+class LocaleScanTest(unittest.TestCase):
+    def test_hits(self):
+        for text in (
+            "Chromium을 정보",
+            "从Chromium中导入",
+            "从chromium中导入",
+            "从Chromium AuthorsExtra中",   # near-miss: the veto's ASCII suffix boundary fails on "E"
+        ):
+            with self.subTest(text=text):
+                hits = rb.scan_cjk_adjacent(text)
+                self.assertEqual(len(hits), 1, f"{text!r} -> {hits!r}")
+                self.assertIn("hromium", hits[0])
+
+    def test_non_hits(self):
+        for text in (
+            "ChromiumOS를 사용",
+            "从ChromiumOS中导入",
+            "从ChromiumOSX中导入",          # ASCII-suffixed identifier: the channel leaves it too
+            "从chromiumOS中导入",
+            "从Chromium OS中导入",
+            "从chromium OS中导入",
+            "Chromium Authors를 참조",
+            "Chromium open source를 참조",
+            "Chromium，欢迎",               # fullwidth comma is not a CJK letter
+            "About Chromium",
+            "Roamux을 정보",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(rb.scan_cjk_adjacent(text), [], text)
+
+    def test_verify_xtb_text_scans_compiled_ids_only(self):
+        xtb = ('<?xml version="1.0" ?>\n<!DOCTYPE translationbundle>\n'
+               '<translationbundle lang="ko">\n'
+               '<translation id="1001">Chromium을 정보</translation>\n'
+               '<translation id="1002">Chromium을 정보</translation>\n'
+               '<translation id="1003">Chromium &amp; <ph name="X"/>을</translation>\n'
+               '</translationbundle>\n')
+        hits = rb.verify_xtb_text(xtb, {"1001", "1003"})
+        # 1001 compiled + miss -> reported; 1002 not compiled -> silent; 1003:
+        # text nodes are scanned separately ("Chromium &amp; " | "을"), so the
+        # placeholder split is not an adjacency (the channel's own boundary).
+        self.assertEqual([h[0] for h in hits], ["1001"])
+        self.assertIn("Chromium을", hits[0][1])
+        self.assertEqual(rb.verify_xtb_text(xtb, set()), [])
+
+
+# ---------------------------------------------------------------------------
 # GRIT-bound: id re-keying keeps translations bound (the load-bearing tests).
 # ---------------------------------------------------------------------------
 def _write(path, text):
     path.write_text(text, encoding="utf-8")
+
+
+BINDING_GRD = '''<?xml version="1.0" encoding="UTF-8"?>
+<grit base_dir="." latest_public_release="0" current_release="1" source_lang_id="en">
+  <translations>
+    <file path="fx_de.xtb" lang="de" />
+    <file path="fx_ko.xtb" lang="ko" />
+  </translations>
+  <release seq="1">
+    <messages>
+      <message name="IDS_ABOUT" desc="about">About Chromium</message>
+      <message name="IDS_UMA" desc="uma">Help make Chromium better by sending <ph name="UMA_LINK">$1<ex>stats</ex></ph></message>
+      <message name="IDS_MANAGE" desc="manage" use_name_for_id="true">Manage Chromium extensions</message>
+      <message name="IDS_ABOUT_VERSION_COMPANY_NAME" desc="company">The Chromium Authors</message>
+      <message name="IDS_SIGNIN" desc="signin">sign in to Chromium<ph name="END_LINK">&lt;/a&gt;</ph>.</message>
+      <message name="IDS_MIXED" desc="mixed">Use Chromium to sign in to Chromium<ph name="END_LINK">&lt;/a&gt;</ph>.</message>
+      <part file="inc.grdp" />
+    </messages>
+  </release>
+</grit>
+'''
+
+BINDING_GRDP = '''<?xml version="1.0" encoding="utf-8"?>
+<grit-part>
+  <message name="IDS_RESET" desc="reset">Reset Chromium settings</message>
+</grit-part>
+'''
+
+
+def _binding_old_ids(tclib):
+    """Pre-rebrand xtb ids of the BINDING_GRD messages (GRIT's own hash path)."""
+    gid = tclib.GenerateMessageId
+    return {
+        "about": gid("About Chromium", ""),
+        "uma": gid("Help make Chromium better by sending UMA_LINK", ""),
+        "reset": gid("Reset Chromium settings", ""),
+        "legal": gid("The Chromium Authors", ""),
+        # roam-284: placeholder-adjacent mentions (omitted-map / wrong-hash cases).
+        "signin": gid("sign in to ChromiumEND_LINK.", ""),
+        "mixed": gid("Use Chromium to sign in to ChromiumEND_LINK.", ""),
+    }
+
+
+def _write_binding_fixture(d, tclib):
+    """Materialise BINDING_GRD + inc.grdp + fx_de.xtb + fx_ko.xtb under ``d``."""
+    d = pathlib.Path(d)
+    old = _binding_old_ids(tclib)
+    _write(d / "fx.grd", BINDING_GRD)
+    _write(d / "inc.grdp", BINDING_GRDP)
+    _write(d / "fx_de.xtb", '''<?xml version="1.0" ?>
+<!DOCTYPE translationbundle>
+<translationbundle lang="de">
+<translation id="%s">Über Chromium</translation>
+<translation id="%s">Hilf Chromium mit <ph name="UMA_LINK"/></translation>
+<translation id="IDS_MANAGE">Chromium-Erweiterungen verwalten</translation>
+<translation id="%s">Chromium-Einstellungen zurücksetzen</translation>
+<translation id="%s">Die Chromium-Autoren</translation>
+<translation id="%s">bei Chromium anmelden<ph name="END_LINK"/>.</translation>
+<translation id="%s">Mit Chromium bei Chromium anmelden<ph name="END_LINK"/>.</translation>
+</translationbundle>
+''' % (old["about"], old["uma"], old["reset"], old["legal"], old["signin"], old["mixed"]))
+    _write(d / "fx_ko.xtb", '''<?xml version="1.0" ?>
+<!DOCTYPE translationbundle>
+<translationbundle lang="ko">
+<translation id="%s">Chromium을 정보</translation>
+<translation id="IDS_MANAGE">Chromium 확장 프로그램 관리</translation>
+<translation id="%s">Chromium에 로그인<ph name="END_LINK"/>.</translation>
+<translation id="%s">Chromium으로 Chromium에 로그인<ph name="END_LINK"/>.</translation>
+</translationbundle>
+''' % (old["about"], old["signin"], old["mixed"]))
+    return old
 
 
 @unittest.skipIf(_SKIP_BINDING, GRIT_SKIP or "")
@@ -257,55 +416,29 @@ class XtbBindingTest(unittest.TestCase):
         self.tclib, self.grd_reader = rb._import_grit(CHROMIUM_SRC)
 
         self.grd = self.tmp / "fx.grd"
-        _write(self.grd, '''<?xml version="1.0" encoding="UTF-8"?>
-<grit base_dir="." latest_public_release="0" current_release="1" source_lang_id="en">
-  <translations>
-    <file path="fx_de.xtb" lang="de" />
-  </translations>
-  <release seq="1">
-    <messages>
-      <message name="IDS_ABOUT" desc="about">About Chromium</message>
-      <message name="IDS_UMA" desc="uma">Help make Chromium better by sending <ph name="UMA_LINK">$1<ex>stats</ex></ph></message>
-      <message name="IDS_MANAGE" desc="manage" use_name_for_id="true">Manage Chromium extensions</message>
-      <message name="IDS_ABOUT_VERSION_COMPANY_NAME" desc="company">The Chromium Authors</message>
-      <part file="inc.grdp" />
-    </messages>
-  </release>
-</grit>
-''')
-        _write(self.tmp / "inc.grdp", '''<?xml version="1.0" encoding="utf-8"?>
-<grit-part>
-  <message name="IDS_RESET" desc="reset">Reset Chromium settings</message>
-</grit-part>
-''')
-        gid = self.tclib.GenerateMessageId
-        self.about_old = gid("About Chromium", "")
-        self.uma_old = gid("Help make Chromium better by sending UMA_LINK", "")
-        self.reset_old = gid("Reset Chromium settings", "")
-        self.legal_old = gid("The Chromium Authors", "")
-        _write(self.tmp / "fx_de.xtb", '''<?xml version="1.0" ?>
-<!DOCTYPE translationbundle>
-<translationbundle lang="de">
-<translation id="%s">Über Chromium</translation>
-<translation id="%s">Hilf Chromium mit <ph name="UMA_LINK"/></translation>
-<translation id="IDS_MANAGE">Chromium-Erweiterungen verwalten</translation>
-<translation id="%s">Chromium-Einstellungen zurücksetzen</translation>
-<translation id="%s">Die Chromium-Autoren</translation>
-</translationbundle>
-''' % (self.about_old, self.uma_old, self.reset_old, self.legal_old))
+        old = _write_binding_fixture(self.tmp, self.tclib)
+        self.about_old = old["about"]
+        self.uma_old = old["uma"]
+        self.reset_old = old["reset"]
+        self.legal_old = old["legal"]
+        self.signin_old = old["signin"]
+        self.mixed_old = old["mixed"]
 
     def _run(self, check=False):
         return rb.run_on_grd_unit(self.grd, CHROMIUM_SRC, check=check)
 
-    def _resolve_de(self):
+    def _resolve(self, lang):
         root = self.grd_reader.Parse(str(self.grd), dir=str(self.tmp))
-        root.SetOutputLanguage("de")
+        root.SetOutputLanguage(lang)
         root.RunGatherers()
         out = {}
         for node in root.ActiveDescendants():
             if node.name == "message":
-                out[node.attrs.get("name")] = node.Translate("de", None)
+                out[node.attrs.get("name")] = node.Translate(lang, None)
         return out
+
+    def _resolve_de(self):
+        return self._resolve("de")
 
     def test_id_map_computed_through_grit(self):
         id_map = rb.compute_id_map(self.grd, CHROMIUM_SRC)
@@ -354,6 +487,44 @@ class XtbBindingTest(unittest.TestCase):
         # Excluded legal message stays Chromium AND stays bound to its de text.
         self.assertEqual(de["IDS_ABOUT_VERSION_COMPANY_NAME"], "Die Chromium-Autoren")
 
+    def test_placeholder_adjacent_messages_map_to_fully_substituted_ids(self):
+        # roam-284: the id map must decide AND hash with the same boundaries as
+        # rewrite_grd_text (which skips <ph> subtrees). The flattened presentable
+        # "…ChromiumEND_LINK." hid the token behind \b (omitted map) or hashed a
+        # half-substituted string (wrong hash) — either way the translation unbinds.
+        id_map = rb.compute_id_map(self.grd, CHROMIUM_SRC)
+        gid = self.tclib.GenerateMessageId
+        with self.subTest(case="signin"):
+            self.assertIn(self.signin_old, id_map)
+            self.assertEqual(id_map[self.signin_old], gid("sign in to RoamuxEND_LINK.", ""))
+        with self.subTest(case="mixed"):
+            self.assertIn(self.mixed_old, id_map)
+            self.assertEqual(id_map[self.mixed_old],
+                             gid("Use Roamux to sign in to RoamuxEND_LINK.", ""))
+
+    def test_placeholder_adjacent_translations_bind(self):
+        # GRIT resolves an unbound translation to pseudolocalised text in this
+        # fixture, so an exact-prefix assertion cannot pass vacuously.
+        self._run()
+        de = self._resolve("de")
+        ko = self._resolve("ko")
+        cases = (
+            ("de/IDS_SIGNIN", de["IDS_SIGNIN"], "bei Roamux anmelden"),
+            ("de/IDS_MIXED", de["IDS_MIXED"], "Mit Roamux bei Roamux anmelden"),
+            ("ko/IDS_ABOUT", ko["IDS_ABOUT"], "Roamux을 정보"),
+            ("ko/IDS_SIGNIN", ko["IDS_SIGNIN"], "Roamux에 로그인"),
+            ("ko/IDS_MIXED", ko["IDS_MIXED"], "Roamux으로 Roamux에 로그인"),
+        )
+        for case, got, prefix in cases:
+            with self.subTest(case=case):
+                self.assertTrue(got.startswith(prefix), f"{case}: {got!r}")
+        with self.subTest(case="ko/IDS_ABOUT exact"):
+            self.assertEqual(ko["IDS_ABOUT"], "Roamux을 정보")
+
+    def test_verify_locales_clean_after_channel(self):
+        self._run()
+        self.assertEqual(rb.verify_locales(self.grd, CHROMIUM_SRC, ["ko", "de"]), [])
+
     def test_idempotent_second_run_noop(self):
         self._run()
         after_first = _snapshot(self.tmp)
@@ -395,6 +566,177 @@ class CliTest(unittest.TestCase):
             r = self._main("--chromium-src", d)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("target grd missing", r.stdout + r.stderr)
+
+
+# ---------------------------------------------------------------------------
+# roam-284: the CLI locale verifier end-to-end (GRIT-bound) — a temp "src" whose
+# tools/grit is the checkout's GRIT and whose TARGET_GRDS are minimal fixtures.
+# ---------------------------------------------------------------------------
+_MINI_UNIT = '''<?xml version="1.0" encoding="UTF-8"?>
+<grit base_dir="." latest_public_release="0" current_release="1" source_lang_id="en">
+  <release seq="1">
+    <messages>
+      <message name="IDS_%s" desc="d">Welcome to Chromium %s</message>
+    </messages>
+  </release>
+</grit>
+'''
+
+
+@unittest.skipIf(_SKIP_BINDING, GRIT_SKIP or "")
+class VerifyLocalesCliTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-rebrand-cli-"))
+        self.addCleanup(_rmtree, self.tmp)
+        tclib, _ = rb._import_grit(CHROMIUM_SRC)
+        (self.tmp / "tools").mkdir()
+        os.symlink(CHROMIUM_SRC / "tools" / "grit", self.tmp / "tools" / "grit")
+        # Unit 1 carries the binding fixture (+ fx_ko.xtb); the others are one-message units.
+        first = self.tmp / rb.TARGET_GRDS[0]
+        first.parent.mkdir(parents=True)
+        _write_binding_fixture(first.parent, tclib)
+        (first.parent / "fx.grd").rename(first)
+        for i, rel in enumerate(rb.TARGET_GRDS[1:], 1):
+            p = self.tmp / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _write(p, _MINI_UNIT % (i, i))
+        self.ko = first.parent / "fx_ko.xtb"
+
+    def _main(self, *args):
+        script = pathlib.Path(rb.__file__).resolve()
+        return subprocess.run([sys.executable, str(script), "--chromium-src", str(self.tmp), *args],
+                              capture_output=True, text=True)
+
+    def _seed(self, text):
+        raw = self.ko.read_text(encoding="utf-8")
+        new = re.sub(r'(<translation id="IDS_MANAGE">)[^<]*', r"\g<1>" + text, raw)
+        self.assertNotEqual(new, raw)
+        _write(self.ko, new)
+
+    def test_verify_locales_seeded_miss_is_red(self):
+        r = self._main()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        r = self._main("--check", "--verify-locales", "ko")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("[ok] locale scan", r.stdout)
+        # A CJK-adjacent survivor in a COMPILED ko translation fails the gate, naming file + id.
+        self._seed("Chromium을 관리")
+        r = self._main("--check", "--verify-locales", "ko")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("FAIL:", out)
+        self.assertIn("fx_ko.xtb", out)
+        self.assertIn("id=IDS_MANAGE", out)
+        # A protected form glued to a suffix is not a miss.
+        self._seed("ChromiumOS를 관리")
+        r = self._main("--check", "--verify-locales", "ko")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+# ---------------------------------------------------------------------------
+# roam-284: the live scan — the real TARGET_GRDS units, five CJK locales, on a
+# PRISTINE snapshot (git show HEAD:<path>) materialised read-only into a temp
+# tree; the checkout's working tree is never read for content, never written.
+# ---------------------------------------------------------------------------
+CJK_LOCALES = ("ko", "zh-CN", "ja", "zh-TW", "zh-HK")
+
+
+def _git_show(src, rel):
+    r = subprocess.run(["git", "-C", str(src), "show", f"HEAD:{rel}"],
+                       capture_output=True)
+    return r.stdout.decode("utf-8") if r.returncode == 0 else None
+
+
+@unittest.skipIf(_SKIP_BINDING, GRIT_SKIP or "")
+class LiveLocaleScanTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="roamux-rebrand-live-"))
+        cls.units = []                         # (rel_grd, [rel_xtb...])
+        for rel in rb.TARGET_GRDS:
+            grd = _git_show(CHROMIUM_SRC, rel)
+            if grd is None:
+                _rmtree(cls.tmp)
+                raise unittest.SkipTest(f"git show HEAD:{rel} failed in {CHROMIUM_SRC}")
+            cls._put(rel, grd)
+            stack = [(rel, grd)]
+            seen = set()
+            while stack:
+                frel, fraw = stack.pop()
+                for part in rb._PART_RE.findall(fraw):
+                    prel = posixpath.normpath(posixpath.join(posixpath.dirname(frel), part))
+                    if not prel.endswith(".grdp") or prel in seen:
+                        continue
+                    seen.add(prel)
+                    praw = _git_show(CHROMIUM_SRC, prel)
+                    if praw is None:
+                        continue               # mirrors discover_grdp_files (skips non-files)
+                    cls._put(prel, praw)
+                    stack.append((prel, praw))
+            xtbs = []
+            for xrel in rb._XTB_FILE_RE.findall(grd):
+                if not any(xrel.endswith(f"_{loc}.xtb") for loc in CJK_LOCALES):
+                    continue
+                arel = posixpath.normpath(posixpath.join(posixpath.dirname(rel), xrel))
+                xraw = _git_show(CHROMIUM_SRC, arel)
+                if xraw is not None:
+                    cls._put(arel, xraw)
+                    xtbs.append(arel)
+            cls.units.append((rel, xtbs))
+
+    @classmethod
+    def tearDownClass(cls):
+        _rmtree(cls.tmp)
+
+    @classmethod
+    def _put(cls, rel, text):
+        p = cls.tmp / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _write(p, text)
+
+    @staticmethod
+    def _locale_of(rel):
+        return next(loc for loc in CJK_LOCALES if rel.endswith(f"_{loc}.xtb"))
+
+    def test_channel_leaves_zero_cjk_adjacent_survivors(self):
+        before = {loc: 0 for loc in CJK_LOCALES}
+        after = {loc: 0 for loc in CJK_LOCALES}
+        n_xtb = 0
+        probe_done = False
+        for rel, xtbs in self.units:
+            grd = self.tmp / rel
+            compiled = rb.compute_compiled_ids(grd, self.tmp)
+            id_map = rb.compute_id_map(grd, self.tmp)
+            post_ids = {id_map.get(i, i) for i in compiled}
+            for xrel in xtbs:
+                loc = self._locale_of(xrel)
+                raw = (self.tmp / xrel).read_text(encoding="utf-8")
+                before[loc] += len(rb.verify_xtb_text(raw, compiled))
+                new = rb.rewrite_xtb_text(raw, id_map)[0]
+                survivors = rb.verify_xtb_text(new, post_ids)
+                after[loc] += len(survivors)
+                n_xtb += 1
+                with self.subTest(unit=rel, xtb=xrel):
+                    self.assertEqual(survivors, [], f"{xrel}: {survivors[:5]}")
+                if not probe_done and loc == "ko":
+                    # Non-vacuity: seed one transformed ko translation (under its
+                    # RESULTING id) and the scan must name exactly that id.
+                    ids = [i for i in rb._TRANS_ID_RE.findall(new) if i in post_ids]
+                    self.assertTrue(ids, f"{xrel}: no compiled translation to probe")
+                    target = ids[0]
+                    seeded = re.sub(r'(<translation id="%s"[^>]*>)(.*?)(</translation>)' % re.escape(target),
+                                    r"\g<1>Chromium을 테스트\g<3>", new, count=1, flags=re.DOTALL)
+                    self.assertNotEqual(seeded, new)
+                    self.assertEqual([h[0] for h in rb.verify_xtb_text(seeded, post_ids)], [target])
+                    probe_done = True
+        self.assertGreater(n_xtb, 0, "no CJK xtb materialised")
+        self.assertTrue(probe_done, "non-vacuity probe did not run")
+        print("\n[roam-284 live scan] CJK-adjacent brand tokens before -> after the channel:")
+        for loc in CJK_LOCALES:
+            print(f"  {loc}: {before[loc]} -> {after[loc]}")
+        for loc in CJK_LOCALES:
+            with self.subTest(locale=loc):
+                self.assertEqual(after[loc], 0)
 
 
 # ---------------------------------------------------------------------------
@@ -441,8 +783,9 @@ class BrandedGrdExclusionTest(unittest.TestCase):
         self.assertIn("Roamux didn't shut down correctly.", out)
 
     def test_exclusion_version_bumped(self):
-        # The set changed for the two new branded grds — VERSION must have advanced.
-        self.assertGreaterEqual(excl.VERSION, 2)
+        # v2: the two new branded grds; v3 (roam-284): ASCII token boundaries at
+        # both ends + widened " OS"/" Authors" vetoes — VERSION must have advanced.
+        self.assertGreaterEqual(excl.VERSION, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +807,6 @@ class GritRequirementGateTest(unittest.TestCase):
 
 
 def _rmtree(path):
-    import shutil
     shutil.rmtree(path, ignore_errors=True)
 
 

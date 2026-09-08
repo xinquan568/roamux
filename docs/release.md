@@ -88,3 +88,27 @@ strict `KEY=value` data and never sourced (format contract in `docs/ci/self-host
 `test_workflow_invariants.py` (invariant 22) pins all of this; the first live observation of the
 public-key-only staging step is the `v0.0.1-alpha.10` cut (roam-294). Still open: the draft-id lookup
 interpolates the tag into a `jq` program (grill L11, tracked under roam-295).
+
+## Locale rebrand gate (roam-284)
+
+The rebrand channel (`roamux/build/rebrand_strings.py`) rewrites user-visible
+"Chromium" to "Roamux" in the GRIT string sources and their locale `.xtb`
+translations. Until roam-284 its token used Python's Unicode `\b`, which treats
+Hangul, Han and kana as word characters, so a product mention glued to a particle
+or a neighbouring word (`Chromium을`, `从Chromium中`, the normal shape in Korean and
+Chinese) never matched and shipped as "Chromium" in those locales. The token now
+uses ASCII word classes at both ends, and the release workflow runs a second gate
+after the idempotency `--check`:
+
+```
+rebrand_strings.py --chromium-src "$CHROMIUM_SRC" --check --verify-locales ko,zh-CN,ja,zh-TW,zh-HK
+```
+
+It scans the compiled translations of the five CJK locales for a brand token
+immediately adjacent to a CJK code point. Protected forms are exempt because the
+channel must leave them alone: `ChromiumOS` / `Chromium OS`, `Chromium Authors`,
+`Chromium open source`, and tokens glued to an ASCII identifier character. A hit
+fails the cut naming the `.xtb` file and the message id. Tier-2 proves the same
+"0 survivors" on every push: `test_rebrand_strings.py` runs the channel in memory
+over a pristine `git show` snapshot of the real string units and asserts zero
+CJK-adjacent survivors per locale (nothing under the checkout is written).

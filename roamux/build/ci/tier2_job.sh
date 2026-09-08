@@ -131,7 +131,9 @@ python3 "${GITHUB_WORKSPACE}/roamux/build/fetch_sparkle.py"
 # roam-132: the rebrand-channel's XTB-binding tests are GRIT-dependent, so tier-1 CI (no
 # checkout) SKIPS them — yet that is where the load-bearing "translation still binds after
 # re-key" assertions live. This runner HAS the checkout, so run them fail-not-skip
-# (REQUIRE_GRIT=1 turns a skip into a failure). Hermetic (tmp fixtures) — runs before the
+# (REQUIRE_GRIT=1 turns a skip into a failure). Hermetic (tmp fixtures) — and, since
+# roam-284, one read-only in-memory pass over a pristine `git show` snapshot of the
+# checkout's CJK locale files (nothing under ${SRC} is written) — runs before the
 # hours-long build so a regression fails fast. Uses ${SRC} only to import GRIT read-only.
 phase rebrand-gate
 ( cd "${GITHUB_WORKSPACE}" && REQUIRE_GRIT=1 ROAMUX_CHROMIUM_SRC="${SRC}" \
