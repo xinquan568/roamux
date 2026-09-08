@@ -305,12 +305,18 @@ TEST(EdgeDetectionTest, PresentWithFourNonSecretBitsWhenDirExists) {
   ASSERT_TRUE(profile.has_value());
   EXPECT_EQ(user_data_importer::TYPE_EDGE_CHROMIUM, profile->importer_type);
   EXPECT_EQ(edge_default, profile->source_path);
+  // roam-288 (grill H8, decision b): only the NON-SECRET items are advertised.
+  // The browser-side secret importer exists but has no production entry point
+  // (roam-299 wires the importer-host seam); an advertised PASSWORDS bit put a
+  // "Saved passwords" checkbox in the picker that imported nothing. Re-adding
+  // PASSWORDS/COOKIES here without the seam re-creates that dead checkbox.
   const uint16_t expected =
       user_data_importer::HISTORY | user_data_importer::FAVORITES |
-      user_data_importer::SEARCH_ENGINES |
-      user_data_importer::AUTOFILL_FORM_DATA | user_data_importer::PASSWORDS |
-      user_data_importer::COOKIES;
+      user_data_importer::SEARCH_ENGINES | user_data_importer::AUTOFILL_FORM_DATA;
   EXPECT_EQ(expected, profile->services_supported);
+  EXPECT_FALSE(profile->services_supported &
+               (user_data_importer::PASSWORDS | user_data_importer::COOKIES))
+      << "secret items must not be advertised until roam-299 lands the seam";
 }
 
 TEST(EdgeDetectionTest, AbsentWhenDirMissing) {

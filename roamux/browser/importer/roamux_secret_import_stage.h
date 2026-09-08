@@ -50,8 +50,9 @@ class RoamuxSecretImportStage {
 
   // The browser-side orchestration entry (roam-16 finding 1): given the
   // user-selected `items` mask, imports the requested secret items and reports
-  // the Result. Invoked by the import flow (roam-20's first-run UI) alongside
-  // the utility-process non-secret importer.
+  // the Result. Invoked by the roam-19 coordinator; the production import flow
+  // does not reach it until roam-299 wires the importer-host seam (roam-288:
+  // until then detection does not advertise PASSWORDS/COOKIES).
   void Run(uint16_t items, base::OnceCallback<void(Result)> done);
 
   // Decrypts and imports Edge passwords. Returns the number imported; a

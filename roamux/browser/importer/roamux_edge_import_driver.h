@@ -51,9 +51,10 @@ struct EdgeImportItemsPlan {
 EdgeImportItemsPlan MakeEdgeImportItemsPlan(uint16_t items);
 
 // The utility-import mask with secrets removed (==
-// MakeEdgeImportItemsPlan(items) .utility_items). The host hook calls the
-// SourceProfile overload, which masks ONLY for a Chromium-Edge source with the
-// kEdgeImport feature enabled; any other source (or the feature off) is
+// MakeEdgeImportItemsPlan(items) .utility_items). No production caller today —
+// exercised directly by tests; roam-299's host hook is the intended caller of
+// the SourceProfile overload, which masks ONLY for a Chromium-Edge source with
+// the kEdgeImport feature enabled; any other source (or the feature off) is
 // returned unchanged.
 uint16_t MaskEdgeSecretItemsForUtility(uint16_t items);
 uint16_t MaskEdgeSecretItemsForUtility(
@@ -69,13 +70,14 @@ uint16_t MaskEdgeSecretItemsForUtility(
 base::FilePath AppDataRootFromEdgeProfilePath(
     const base::FilePath& source_path);
 
-// The production browser-side Edge import driver (roam-20 / I-3.6). It is the
-// production caller the roam-19 coordinator + roam-16 secret stage were built
-// for: given the destination Profile, the Edge User-Data root, and the
-// user-selected import items, it runs the browser-side carriers (secrets = the
-// roam-16 carry-forward, plus origin storage) and reports. Flag-gated on
-// kEdgeImport. Runs on the UI thread; the caller keeps it alive until `done`
-// runs (the host hook keeps it alive via the completion callback).
+// The browser-side Edge import driver (roam-20 / I-3.6), built as the caller
+// of the roam-19 coordinator + roam-16 secret stage: given the destination
+// Profile, the Edge User-Data root, and the user-selected import items, it
+// runs the browser-side carriers (secrets = the roam-16 carry-forward, plus
+// origin storage) and reports. Flag-gated on kEdgeImport. Runs on the UI
+// thread; the caller keeps it alive until `done` runs. NOT wired into
+// production: nothing outside tests constructs it until roam-299 lands the
+// importer-host seam (roam-288 stopped advertising the secret items meanwhile).
 class RoamuxEdgeImportDriver {
  public:
   RoamuxEdgeImportDriver(Profile* profile,
@@ -106,14 +108,18 @@ class RoamuxEdgeImportDriver {
   base::WeakPtrFactory<RoamuxEdgeImportDriver> weak_factory_{this};
 };
 
-// The host hook (patch 0015). If `source_profile` is a Chromium-Edge source and
-// kEdgeImport is enabled, starts a self-owned RoamuxEdgeImportDriver for the
-// user-SELECTED `items` (the driver builds its own ProfileWriter for
-// `target_profile`), runs `on_done` when the browser-side half finishes, and
-// returns true. Otherwise makes no change and returns false. Called from the
-// patched ExternalProcessImporterHost::NotifyImportEnded (once), so the utility
-// import and the browser-side carriers land in the same profile and completion
-// waits for both.
+// The intended importer-host hook — NOT CALLED FROM ANYWHERE YET (roam-288 /
+// grill H8: no patch touches ExternalProcessImporterHost; patch 0015 is the
+// unrelated tab-visit journal). roam-299 is the seam: a patch on
+// external_process_importer_host.cc that masks secrets via
+// MaskEdgeSecretItemsForUtility at StartImportSettings and calls this from
+// NotifyImportEnded (once), so the utility import and the browser-side
+// carriers land in the same profile and completion waits for both. Contract
+// when wired: if `source_profile` is a Chromium-Edge source and kEdgeImport is
+// enabled, starts a self-owned RoamuxEdgeImportDriver for the user-SELECTED
+// `items` (the driver builds its own ProfileWriter for `target_profile`), runs
+// `on_done` when the browser-side half finishes, and returns true; otherwise
+// makes no change and returns false.
 bool MaybeStartEdgeBrowserSideImport(
     const user_data_importer::SourceProfile& source_profile,
     Profile* target_profile,
