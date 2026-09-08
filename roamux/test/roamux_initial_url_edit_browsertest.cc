@@ -509,4 +509,62 @@ IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlRefreshAllFlagOffTest,
             menu->GetCommandIdAt(1));
 }
 
+
+// roam-289 (grill M18): the dialog is the one place a user can type an
+// arbitrary string, and a persisted javascript: value would execute in the
+// tab's CURRENT document on every replay (a stored self-XSS). Only http(s)
+// navigation targets and exactly about:blank are accepted; everything else
+// is a no-op that leaves the previous value and lock intact.
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest, EditRejectsDisallowedSchemes) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+  ASSERT_TRUE(tabs::SubmitEditInitialUrlForTesting(active_contents(),
+                                                   "https://edited.test/"));
+  const char* const kRejected[] = {
+      "javascript:alert(1)",       "data:text/html,x",
+      "file:///etc/hosts",         "chrome://settings",
+      "about:srcdoc",              "view-source:https://x.test/",
+      "javascript: alert(1)",
+  };
+  for (const char* text : kRejected) {
+    SCOPED_TRACE(text);
+    EXPECT_FALSE(tabs::SubmitEditInitialUrlForTesting(active_contents(), text));
+    EXPECT_EQ(GURL("https://edited.test/"), helper()->initial_url());
+    EXPECT_TRUE(helper()->is_user_locked());
+  }
+}
+
+// The whitespace gate on its own: an otherwise ALLOWED https URL with ASCII
+// whitespace inside is refused before fix-up could percent-escape it (free
+// text must never be rescued into a URL).
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest, EditRejectsInternalWhitespace) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+  ASSERT_TRUE(tabs::SubmitEditInitialUrlForTesting(active_contents(),
+                                                   "https://edited.test/"));
+  const std::string kWithSpace = "https://x.test/a b";
+  const std::string kWithFormFeed = std::string("https://x.test/a") + '\f' + "b";
+  for (const std::string& text : {kWithSpace, kWithFormFeed}) {
+    SCOPED_TRACE(text);
+    EXPECT_FALSE(tabs::SubmitEditInitialUrlForTesting(active_contents(), text));
+    EXPECT_EQ(GURL("https://edited.test/"), helper()->initial_url());
+  }
+}
+
+// User text is fixed up the way the omnibox does it (bare host -> http://),
+// surrounding whitespace is trimmed, and about:blank is allowed as-is.
+IN_PROC_BROWSER_TEST_F(RoamuxInitialUrlEditTest, EditFixesUpBareHostAndTrims) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+  ASSERT_TRUE(
+      tabs::SubmitEditInitialUrlForTesting(active_contents(), "example.com/path"));
+  EXPECT_EQ(GURL("http://example.com/path"), helper()->initial_url());
+  ASSERT_TRUE(tabs::SubmitEditInitialUrlForTesting(active_contents(),
+                                                   "  https://spaced.test/  "));
+  EXPECT_EQ(GURL("https://spaced.test/"), helper()->initial_url());
+  ASSERT_TRUE(tabs::SubmitEditInitialUrlForTesting(active_contents(), "about:blank"));
+  EXPECT_EQ(GURL("about:blank"), helper()->initial_url());
+  EXPECT_TRUE(helper()->is_user_locked());
+}
+
 }  // namespace roamux

@@ -177,6 +177,8 @@ class InitialUrlMenuModel : public ui::SimpleMenuModel,
         break;
       case kSetInitialUrlToCurrentPageCommandId:
         if (CanSetToCurrentPage(contents)) {
+          // roam-289: a current page outside the allowlist (e.g. a file: tab)
+          // is a silent no-op by design — the write is refused, nothing locks.
           helper->SetUserInitialUrl(contents->GetLastCommittedURL());
         }
         break;

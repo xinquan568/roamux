@@ -335,7 +335,9 @@ IN_PROC_BROWSER_TEST_F(RoamuxRefreshAllInitialUrlsTest,
   // Make it ineligible while it waits its turn. Enqueue-time filtering would
   // have already accepted it and would navigate it anyway; dequeue-time
   // evaluation skips it.
-  HelperAt(queued)->SetUserInitialUrl(GURL());
+  // roam-289: user writes are allowlisted (an empty URL is refused, no
+  // write); the restore overload is the seam for synthetic invalid state.
+  HelperAt(queued)->SetRestoredInitialUrl(GURL(), /*locked=*/true);
   ASSERT_FALSE(
       tabs::CanReloadInitialUrlForContents(model->GetWebContentsAt(queued)));
 

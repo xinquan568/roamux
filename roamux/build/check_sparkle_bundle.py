@@ -45,6 +45,11 @@ def main():
     if not plist["SUFeedURL"].endswith("/releases/latest/download/appcast.xml"):
         return fail(f"SUFeedURL is not the production /latest/ feed: "
                     f"{plist['SUFeedURL']}")
+    # roam-289 (grill M17): archives must be EdDSA-verified BEFORE extraction.
+    # Sparkle reads a plist BOOLEAN; a <string>YES</string> is silently ignored.
+    if plist.get("SUVerifyUpdateBeforeExtraction") is not True:
+        return fail("Info.plist must set SUVerifyUpdateBeforeExtraction to the "
+                    "boolean true (roam-289)")
 
     # The linking image resolves Sparkle via @rpath.
     exe = os.path.join(app, "Contents", "MacOS",

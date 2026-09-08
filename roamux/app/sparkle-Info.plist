@@ -5,13 +5,20 @@
      roamux_enable_sparkle=true. SUPublicEDKey is the real production Sparkle
      EdDSA public key (minted in roam-34). The matching PRIVATE key lives only
      in the protected release Environment as SPARKLE_ED_PRIVATE_KEY and is
-     never committed. Sparkle supports key rotation, never removal. -->
+     never committed. Sparkle supports key rotation, never removal.
+     roam-289 (grill M17): SUVerifyUpdateBeforeExtraction — the archive is
+     EdDSA-verified BEFORE extraction (Sparkle 2 defaults to NO and would run
+     the zip/dmg parsers on unauthenticated bytes). Requires EdDSA-signed
+     enclosures (K3) and Sparkle >= 2.7.3 (vendored 2.9.4); effective in the
+     updater of the build that ships it. A plist BOOLEAN, not a string. -->
 <plist version="1.0">
 <dict>
   <key>SUFeedURL</key>
   <string>https://github.com/xinquan568/roamux/releases/latest/download/appcast.xml</string>
   <key>SUPublicEDKey</key>
   <string>VhHW37r/RYqzm5WITbR9sUN9a8PJjqs3p4Gx0bQ8zz4=</string>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
   <key>SUEnableAutomaticChecks</key>
   <true/>
   <key>SUScheduledCheckInterval</key>

@@ -6,8 +6,10 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/constrained_window/constrained_window_views.h"
+#include "components/url_formatter/url_fixer.h"
 #include "content/public/browser/web_contents.h"
 #include "roamux/browser/tabs/tab_initial_url_helper.h"
 #include "ui/base/interaction/element_identifier.h"
@@ -20,10 +22,21 @@ namespace {
 
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kRoamuxInitialUrlField);
 
-// Validates + writes. Shared by the dialog accept and the testing seam. An
-// invalid GURL is a no-op (the dialog is v1-simple: no inline error state).
+// Validates + writes. Shared by the dialog accept and the testing seam. The
+// dialog is v1-simple (no inline error state): anything refused is a no-op.
+// roam-289 (grill M18): (1) trim ASCII whitespace and refuse any left INSIDE —
+// free text such as "not a url" must never reach fix-up, which would rescue
+// it as http://not%20a%20url/; (2) fix the text up the way the omnibox does
+// (bare host -> http://); (3) the helper's allowlist (http/https/about:blank)
+// decides — a javascript:/data:/file:/chrome: value is refused there.
 bool CommitEdit(content::WebContents* contents, const std::string& text) {
-  GURL url(text);
+  std::string trimmed;
+  base::TrimWhitespaceASCII(text, base::TRIM_ALL, &trimmed);
+  if (trimmed.empty() ||
+      trimmed.find_first_of(base::kWhitespaceASCII) != std::string::npos) {
+    return false;
+  }
+  const GURL url = url_formatter::FixupURL(trimmed, std::string());
   if (!url.is_valid()) {
     return false;
   }
@@ -32,8 +45,7 @@ bool CommitEdit(content::WebContents* contents, const std::string& text) {
   if (!helper) {
     return false;
   }
-  helper->SetUserInitialUrl(url);
-  return true;
+  return helper->SetUserInitialUrl(url);
 }
 
 class EditInitialUrlDelegate : public ui::DialogModelDelegate {
