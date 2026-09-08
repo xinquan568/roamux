@@ -194,7 +194,7 @@ index aa3f435d83..9570776046 100644
    declare private currentUpdateStatusEvent_: UpdateStatusChangedEvent|null;
    declare private isManaged_: boolean;
    declare private managedByIcon_: string;
-@@ -215,13 +256,65 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
+@@ -215,13 +256,70 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
    }
  
    private onHelpClick_() {
@@ -234,9 +234,14 @@ index aa3f435d83..9570776046 100644
 +    this.showRoamuxSkip_ = this.showRoamuxDownload_;
 +    const message = this.currentUpdateStatusEvent_!.message || '';
 +    const plainCopy = message.split('\n')[0];
-+    // Signature-verification failures deliberately offer no retry.
++    // Signature-verification failures deliberately offer no retry; neither
++    // does a dead updater (roam-287/H10 — a retry cannot succeed).
++    const noRetryCopies = [
++      loadTimeData.getString('roamuxUpdateErrSignature'),
++      loadTimeData.getString('roamuxUpdateErrUnavailable'),
++    ];
 +    this.showRoamuxTryAgain_ = branded && status === UpdateStatus.FAILED &&
-+        plainCopy !== loadTimeData.getString('roamuxUpdateErrSignature');
++        !noRetryCopies.includes(plainCopy);
 +    this.roamuxUpdateDetail_ =
 +        branded ? message.split('\n').slice(1).join(' ') : '';
 +  }
@@ -260,7 +265,7 @@ index aa3f435d83..9570776046 100644
    // <if expr="not is_chromeos">
    private updateShowUpdateStatus_() {
      if (this.obsoleteSystemInfo_.endOfLine) {
-@@ -237,7 +330,11 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
+@@ -237,7 +335,11 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
     * container displays an unwanted border (see separator class).
     */
    private updateShowButtonContainer_() {
@@ -273,7 +278,7 @@ index aa3f435d83..9570776046 100644
    }
  
    private updateShowRelaunch_() {
-@@ -245,13 +342,25 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
+@@ -245,13 +347,25 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
    }
  
    private shouldShowLearnMoreLink_(): boolean {
@@ -301,7 +306,7 @@ index aa3f435d83..9570776046 100644
          return this.i18nAdvanced('aboutUpgradeCheckStarted');
        case UpdateStatus.NEARLY_UPDATED:
          return this.i18nAdvanced('aboutUpgradeRelaunch');
-@@ -276,7 +385,9 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
+@@ -276,7 +390,9 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
          let result = '';
          const message = this.currentUpdateStatusEvent_!.message;
          if (message) {
@@ -421,7 +426,7 @@ index 46209f6de1..857b0d2b9f 100644
  #if BUILDFLAG(IS_MAC)
  #include "roamux/browser/ui/webui/roamux_shortcuts_handler.h"
  #endif
-@@ -499,6 +513,79 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
+@@ -499,6 +513,83 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
    AddLocalizedStrings(html_source, profile, web_ui->GetWebContents());
    AddSecurityData(html_source);
  
@@ -445,6 +450,10 @@ index 46209f6de1..857b0d2b9f 100644
 +  html_source->AddString("roamuxUpdateErrSignature",
 +                         "The update couldn't be verified and wasn't"
 +                         " installed.");
++  // roam-287 (grill H10): the dead-updater copy — a Sparkle updater that
++  // failed to start; the page hides "Try again" for it as well.
++  html_source->AddString("roamuxUpdateErrUnavailable",
++                         "Updates aren't available in this build.");
 +#if BUILDFLAG(ROAMUX_ENABLE_SPARKLE)
 +  // roam-160 (step-8): the obsolete-system deprecation link must not point at
 +  // support.google.com on the branded page either — repoint at the repo docs.

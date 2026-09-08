@@ -190,6 +190,36 @@ TEST(MapSnapshotTest, CheckFailureOffersRetry) {
   EXPECT_TRUE(m.offer_retry);
 }
 
+// roam-287 (grill H10): a Sparkle updater that failed to START is dead for the
+// life of the process. The owner tags that event with
+// kUpdaterUnavailableErrorPrefix; the tag wins over every text heuristic (a
+// key-configuration error's prose can mention "signed"/"verified"), maps to
+// FAILED with its own copy, and offers no retry — retrying a dead updater is
+// a lie.
+TEST(ClassifyUpdateErrorTest, UnavailablePrefixClassifiesFirst) {
+  EXPECT_EQ(UpdateErrorClass::kUpdaterUnavailable,
+            ClassifyUpdateError(std::string(kUpdaterUnavailableErrorPrefix) +
+                                "[SUSparkleErrorDomain 1] the update key is"
+                                " not properly signed and cannot be verified"));
+  // Without the tag the same prose still classifies as a signature failure.
+  EXPECT_EQ(UpdateErrorClass::kSignatureFailed,
+            ClassifyUpdateError("the update key is not properly signed and"
+                                " cannot be verified"));
+}
+
+TEST(MapSnapshotTest, UnavailableMapsToFailedNoRetryWithCopy) {
+  const std::string raw = "[SUSparkleErrorDomain 4] The feed URL is invalid";
+  const MappedStatus m = MapSnapshot(
+      Snap(UpdateStatus::kError, "",
+           std::string(kUpdaterUnavailableErrorPrefix) + raw));
+  EXPECT_EQ(VersionUpdater::FAILED, m.status);
+  EXPECT_FALSE(m.offer_retry) << "a dead updater must not offer a retry";
+  EXPECT_EQ(u"Updates aren't available in this build.",
+            m.message.substr(0, m.message.find(u'\n')));
+  EXPECT_NE(std::u16string::npos, m.message.find(u"The feed URL is invalid"))
+      << "the raw Sparkle line still rides as the dimmed detail";
+}
+
 // --- the adapter shell ---
 
 TEST_F(RoamuxVersionUpdaterTest, CheckForUpdateDispatchesCheck) {

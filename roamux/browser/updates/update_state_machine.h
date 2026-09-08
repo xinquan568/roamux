@@ -10,6 +10,13 @@
 // logic exhaustively unit-testable.
 namespace roamux::updates {
 
+// roam-287 (grill H10): the SparkleOwner tags the kError it retains when
+// -[SPUUpdater startUpdater:] fails with this prefix. The About-row adapter
+// classifies by the tag FIRST (Sparkle's own prose for a key-configuration
+// failure can mention "signed"/"verified" and would otherwise be routed to
+// the signature class) and renders a non-retryable "updates unavailable" row.
+inline constexpr char kUpdaterUnavailableErrorPrefix[] = "updater-unavailable: ";
+
 enum class UpdateStatus {
   kIdle,
   kChecking,
@@ -68,7 +75,9 @@ class UpdateStateMachine {
   void SetSkippedVersion(const std::string& version);
 
   // Applies one event and returns the resulting snapshot. Illegal transitions
-  // are no-ops (the snapshot is unchanged).
+  // are no-ops (the snapshot is unchanged). roam-287/H11: kUpdateFound is
+  // accepted from every state except a download in flight — Sparkle delivers
+  // a SCHEDULED check's find with no preceding kCheckStarted.
   UpdateSnapshot OnEvent(const UpdateEvent& event);
 
   const UpdateSnapshot& snapshot() const { return snapshot_; }

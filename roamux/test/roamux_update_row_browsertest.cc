@@ -15,8 +15,11 @@
 
 #include <string>
 
+#include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/run_until.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "content/public/browser/browser_context.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -273,6 +276,82 @@ IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest,
 // roam-161: the "Get help with Roamux" row must open the Roamux help doc in a
 // NEW tab (pending-entry assert — no dependence on a real GitHub load), not
 // Google's Chrome support site.
+// roam-287: fixtures whose profile service is bound to an owner-for-testing
+// (real driver, PRODUCTION start-result handling on an injected outcome, NO
+// SPUUpdater — so the page's auto-check dispatches to an inert command and
+// the machine's initial state is deterministic). The testing factory is
+// installed BEFORE the first GetForProfile (the service is created lazily).
+class RoamuxUpdateRowOwnerBrowserTestBase : public RoamuxUpdateRowBrowserTest {
+ protected:
+  explicit RoamuxUpdateRowOwnerBrowserTestBase(InjectedSparkleStart start)
+      : start_(start) {}
+
+  void SetUpOnMainThread() override {
+    owner_ = CreateSparkleOwnerForTesting(start_);
+    RoamuxUpdateServiceFactory::GetInstance()->SetTestingFactory(
+        browser()->profile(),
+        base::BindRepeating(
+            [](SparkleOwner* owner, content::BrowserContext*)
+                -> std::unique_ptr<KeyedService> {
+              return std::make_unique<RoamuxUpdateService>(owner);
+            },
+            owner_.get()));
+    RoamuxUpdateRowBrowserTest::SetUpOnMainThread();
+  }
+
+  // Declared before start_ so it is destroyed AFTER everything the fixture
+  // body created; the profile (and its service) is torn down by the harness
+  // before fixture destruction, so the facade never outlives the owner.
+  std::unique_ptr<SparkleOwner, SparkleOwnerDeleter> owner_;
+  InjectedSparkleStart start_;
+};
+
+class RoamuxUpdateRowStartedOwnerBrowserTest
+    : public RoamuxUpdateRowOwnerBrowserTestBase {
+ public:
+  RoamuxUpdateRowStartedOwnerBrowserTest()
+      : RoamuxUpdateRowOwnerBrowserTestBase(
+            InjectedSparkleStart{/*started=*/true, "", 0, ""}) {}
+};
+
+class RoamuxUpdateRowDeadOwnerBrowserTest
+    : public RoamuxUpdateRowOwnerBrowserTestBase {
+ public:
+  RoamuxUpdateRowDeadOwnerBrowserTest()
+      : RoamuxUpdateRowOwnerBrowserTestBase(InjectedSparkleStart{
+            /*started=*/false, "SUSparkleErrorDomain", 4,
+            "The feed URL is invalid"}) {}
+};
+
+// H11: a background find with NO preceding kCheckStarted must render the
+// offer. The precondition is asserted: after the page's auto-check the
+// machine is still idle (the owner's command is inert).
+IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowStartedOwnerBrowserTest,
+                       BackgroundFindRendersOfferFromIdle) {
+  ASSERT_EQ(UpdateStatus::kIdle, service_->snapshot_for_testing().status);
+  Fire(UpdateEventType::kUpdateFound, "9.9.9-test");
+  EXPECT_EQ(UpdateStatus::kAvailable, service_->snapshot_for_testing().status);
+  EXPECT_TRUE(Reached("statusText().includes('9.9.9-test is available')"));
+  EXPECT_TRUE(Reached("visible(inAbout('#roamuxDownload'))"));
+}
+
+// H10: a dead updater renders FAILED with the unavailable copy and NO retry
+// (the page hides Try again for the registered no-retry copies); the raw
+// Sparkle line rides as the dimmed detail.
+IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowDeadOwnerBrowserTest,
+                       DeadUpdaterRendersFailedWithoutRetry) {
+  EXPECT_EQ(UpdateStatus::kError, service_->snapshot_for_testing().status);
+  EXPECT_TRUE(
+      Reached("statusText().includes(\"Updates aren't available in this build.\")"));
+  EXPECT_TRUE(Reached("!visible(inAbout('#roamuxTryAgain'))"));
+  EXPECT_TRUE(Reached("inAbout('#roamuxUpdateDetail') &&"
+                      " inAbout('#roamuxUpdateDetail').textContent"
+                      ".includes('The feed URL is invalid')"));
+  EXPECT_TRUE(Reached("inAbout('.icon-container cr-icon') &&"
+                      " inAbout('.icon-container cr-icon').getAttribute('icon')"
+                      " === 'cr:error'"));
+}
+
 IN_PROC_BROWSER_TEST_F(RoamuxUpdateRowBrowserTest, HelpRowOpensRoamuxDocs) {
   ui_test_utils::TabAddedWaiter tab_added(browser());
   ASSERT_TRUE(content::ExecJs(

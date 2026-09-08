@@ -87,15 +87,80 @@ TEST(UpdateStateMachineTest, IllegalTransitionsAreNoOps) {
   p.received = 10;
   p.total = 100;
   EXPECT_EQ(sm.OnEvent(p).status, UpdateStatus::kIdle);
-  // kUpToDate / kUpdateFound are only outcomes of a check — ignored from idle.
+  // kUpToDate is only the outcome of a check — ignored from idle. (kUpdateFound
+  // from idle is a POSITIVE case since roam-287/H11 — see
+  // ScheduledFindSurfacesFromIdle below.)
   EXPECT_EQ(sm.OnEvent({UpdateEventType::kUpToDate}).status,
             UpdateStatus::kIdle);
-  EXPECT_EQ(sm.OnEvent(Found("2.0.0")).status, UpdateStatus::kIdle);
   // kUpdateFound does not overwrite a download in flight.
   sm.OnEvent({UpdateEventType::kCheckStarted});
   sm.OnEvent(Found("2.0.0"));
   sm.OnEvent({UpdateEventType::kDownloadStarted});
   EXPECT_EQ(sm.OnEvent(Found("3.0.0")).status, UpdateStatus::kDownloading);
+}
+
+// roam-287 (grill H11): Sparkle delivers a SCHEDULED check's find straight to
+// showUpdateFoundWithAppcastItem: — there is no kCheckStarted for background
+// checks. The old rule ("only the outcome of a check surfaces an update")
+// dropped every background-found update on the floor, so users never saw
+// them and the pending reply leaked. An update found is an update available,
+// whoever asked — the only states a find must not disturb are a download in
+// flight (kDownloading / kReadyToInstall).
+TEST(UpdateStateMachineTest, ScheduledFindSurfacesFromIdle) {
+  UpdateStateMachine sm;
+  UpdateSnapshot s = sm.OnEvent(Found("2.0.0"));
+  EXPECT_EQ(s.status, UpdateStatus::kAvailable);
+  EXPECT_EQ(s.version, "2.0.0");
+  EXPECT_EQ(s.date, "2026-01-01");
+  EXPECT_EQ(s.notes, "notes for 2.0.0");
+}
+
+TEST(UpdateStateMachineTest, FindRefreshesFromUpToDateAndError) {
+  UpdateStateMachine sm;
+  sm.OnEvent({UpdateEventType::kCheckStarted});
+  sm.OnEvent({UpdateEventType::kUpToDate});
+  EXPECT_EQ(sm.OnEvent(Found("2.0.0")).status, UpdateStatus::kAvailable);
+
+  UpdateStateMachine sm2;
+  UpdateEvent e{UpdateEventType::kError};
+  e.error = "network down";
+  sm2.OnEvent(e);
+  UpdateSnapshot s = sm2.OnEvent(Found("2.0.0"));
+  EXPECT_EQ(s.status, UpdateStatus::kAvailable);
+  EXPECT_EQ(s.error, "") << "a fresh offer clears the stale error";
+}
+
+TEST(UpdateStateMachineTest, FindRefreshesAvailableMetadata) {
+  UpdateStateMachine sm;
+  sm.OnEvent(Found("2.0.0"));
+  UpdateSnapshot s = sm.OnEvent(Found("3.0.0"));
+  EXPECT_EQ(s.status, UpdateStatus::kAvailable);
+  EXPECT_EQ(s.version, "3.0.0");
+  EXPECT_EQ(s.notes, "notes for 3.0.0");
+}
+
+TEST(UpdateStateMachineTest, SkippedFindOutsideCheckStaysPut) {
+  UpdateStateMachine sm;
+  sm.SetSkippedVersion("2.0.0");
+  // From idle a skipped version is not surfaced AND does not render "up to
+  // date" unprompted (that mapping is reserved for a user-initiated check).
+  EXPECT_EQ(sm.OnEvent(Found("2.0.0")).status, UpdateStatus::kIdle);
+  // An existing offer is not disturbed by a skipped find either.
+  sm.OnEvent(Found("2.0.1"));
+  UpdateSnapshot s = sm.OnEvent(Found("2.0.0"));
+  EXPECT_EQ(s.status, UpdateStatus::kAvailable);
+  EXPECT_EQ(s.version, "2.0.1");
+}
+
+TEST(UpdateStateMachineTest, FindNeverOverwritesDownloadInFlight) {
+  UpdateStateMachine sm;
+  sm.OnEvent(Found("2.0.0"));
+  sm.OnEvent({UpdateEventType::kDownloadStarted});
+  EXPECT_EQ(sm.OnEvent(Found("3.0.0")).status, UpdateStatus::kDownloading);
+  sm.OnEvent({UpdateEventType::kReadyToInstall});
+  UpdateSnapshot s = sm.OnEvent(Found("3.0.0"));
+  EXPECT_EQ(s.status, UpdateStatus::kReadyToInstall);
+  EXPECT_EQ(s.version, "2.0.0");
 }
 
 TEST(UpdateStateMachineTest, ProgressIsClampedToUnitRange) {
