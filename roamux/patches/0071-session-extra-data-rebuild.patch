@@ -1,0 +1,102 @@
+# roam-320: make the per-tab session "extra data" survive a session-log REBUILD.
+#
+# SessionService periodically re-derives the whole session file from live browser
+# state (every 250 commands, when a navigation index leaves the archived range,
+# when history entries are deleted, on a write error, at service construction).
+# Its builders emit no extra-data command of any kind, while the only producers
+# of tab extra data in this tree are Roamux's — so a rebuild ERASES the initial
+# URL (roam-11/14), that value's lock bit, and the durable tab uid (roam-10).
+# On the next launch nothing is restored, the helper stays uncaptured, and the
+# restored tab's first commit is captured as its initial URL: the user sees the
+# page they happened to be on become the tab's "initial" URL, permanently.
+#
+# THREE files, one statement of behaviour:
+#  (1) chrome/browser/sessions/session_service.cc — one include at its
+#      alphabetical slot (upstream-only context on both sides) and ONE statement
+#      in SessionService::BuildCommandsForTab, right after the base-class call
+#      has resolved `session_id`. That single site covers every rebuild trigger
+#      (all funnel through BuildCommandsFromBrowsers -> BuildCommandsForBrowser
+#      -> this builder) AND the TabRestored path, which reaches the same builder
+#      with index_in_window == -1 after the contents are already inserted.
+#      Appending here also bypasses the ShouldTrackChangesToWindow guard, which
+#      drops writes mid-rebuild because ScheduleResetCommands() clears
+#      windows_tracking() and BuildCommandsForBrowser only repopulates it after
+#      that browser's tabs are built.
+#  (2) chrome/browser/sessions/BUILD.gn — the dep that owns the new header.
+#      `gn path //chrome/browser/ui/tabs:impl //chrome/browser/sessions:impl`
+#      reports no non-data paths, so this edge does not cycle.
+#  (3) chrome/browser/ui/tabs/BUILD.gn — the new roamux-owned files join the
+#      block patch 0009 already added, next to the helpers they read.
+#      ORDERING DEPENDENCY: this patch must apply AFTER 0009 (name order does
+#      that); a rebase failure here usually means 0009 moved.
+#
+# All policy is additive and lives in //roamux: roamux::tabs::BuildTabExtraDataCommands
+# (roamux/browser/tabs/session_tab_extra_data.{h,cc}) looks the two helpers up on
+# the WebContents being serialized, emits only the Roamux keys, and returns an
+# empty vector when a helper is absent — so with kInitialUrl and kTabVisitNav off
+# it is inert, and it never creates a helper, mints an identity or starts a
+# persist. It READS rather than replaying what the producers wrote, which is the
+# whole point: a restored tab defers its session write to the first committed
+# navigation (so a restored, never-loaded tab has state nothing announced), and a
+# discard gives the tab NEW contents with a NEW SessionID while copying the
+# helper state across unpersisted. Only the live helpers are right in both cases.
+#
+# Regression: roamux_browsertests RebuildKeepsCapturedInitialUrl,
+# RebuildKeepsEditedLockedValue, RestoredButUnloadedTabSurvivesRebuild (a
+# three-process chain whose subject can never commit — its page is a
+# ControllableHttpResponse the middle process never completes),
+# RebuildAfterReplacementDiscardKeepsValue (kWebContentsDiscard disabled so the
+# discard really replaces the contents) and RebuildKeepsTabUid — all five RED
+# before this patch — plus SessionTabExtraData* in roamux_browser_unittests.
+diff --git a/chrome/browser/sessions/session_service.cc b/chrome/browser/sessions/session_service.cc
+--- a/chrome/browser/sessions/session_service.cc
++++ b/chrome/browser/sessions/session_service.cc
+@@ -61,6 +61,7 @@
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/session_storage_namespace.h"
+ #include "content/public/browser/web_contents.h"
++#include "roamux/browser/tabs/session_tab_extra_data.h"
+ 
+ #if BUILDFLAG(IS_CHROMEOS)
+ #include "chrome/browser/ash/crostini/crostini_util.h"
+@@ -612,6 +613,17 @@
+   sessions::SessionTabHelper* session_tab_helper =
+       sessions::SessionTabHelper::FromWebContents(tab);
+   SessionID session_id(session_tab_helper->session_id());
++
++  // Roamux (roam-320): a rebuild re-derives this file from live browser state
++  // and upstream emits no extra-data command, so the tab's Roamux extra data —
++  // its initial URL, that value's lock bit and the durable tab uid — would be
++  // erased and re-captured from the wrong page on the next launch. Read it from
++  // the live helpers here and append it. Reading rather than replaying what the
++  // producers wrote is what makes this correct for a restored-but-unloaded tab
++  // (its write is deferred) and for the replacement contents of a discard (a
++  // new SessionID). Empty when the helpers are absent, so flag-off is inert.
++  command_storage_manager()->AppendRebuildCommands(
++      roamux::tabs::BuildTabExtraDataCommands(tab, session_id));
+ 
+   const blink::UserAgentOverride& ua_override = tab->GetUserAgentOverride();
+ 
+diff --git a/chrome/browser/sessions/BUILD.gn b/chrome/browser/sessions/BUILD.gn
+--- a/chrome/browser/sessions/BUILD.gn
++++ b/chrome/browser/sessions/BUILD.gn
+@@ -131,6 +131,7 @@
+       "//chrome/browser/tab_group_sync:factories",
+       "//chrome/browser/ui:ui_features",
+       "//chrome/browser/ui/startup",
++      "//chrome/browser/ui/tabs:impl",
+       "//chrome/browser/ui/tabs:tab_strip",
+       "//chrome/browser/ui/tabs/saved_tab_groups",
+       "//chrome/browser/ui/waap:window_metrics_manager",
+diff --git a/chrome/browser/ui/tabs/BUILD.gn b/chrome/browser/ui/tabs/BUILD.gn
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -622,6 +622,8 @@
+     # separate roamux target would create a GN cycle). The pure registry lives
+     # in //roamux/browser/tabs.
+     sources += [
++      "//roamux/browser/tabs/session_tab_extra_data.cc",
++      "//roamux/browser/tabs/session_tab_extra_data.h",
+       "//roamux/browser/tabs/tab_initial_url_helper.cc",
+       "//roamux/browser/tabs/tab_initial_url_helper.h",
+       "//roamux/browser/tabs/tab_uid_service_factory.cc",

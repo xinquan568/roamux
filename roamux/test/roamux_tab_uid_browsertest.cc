@@ -7,9 +7,15 @@
 #include <map>
 #include <string>
 
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sessions/session_service.h"
+#include "chrome/browser/sessions/session_service_factory.h"
 #include "chrome/browser/tab_list/tab_list_interface.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -17,9 +23,12 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/sessions/core/session_id.h"
+#include "net/dns/mock_host_resolver.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "roamux/browser/tabs/tab_uid_service.h"
 #include "roamux/browser/tabs/tab_uid_service_factory.h"
@@ -177,6 +186,115 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabUidFlagOffTest, NoHelperNoUidWhenFlagOff) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetWebContentsAt(0);
   EXPECT_EQ(nullptr, tabs::TabUidTabHelper::FromWebContents(web_contents));
+}
+
+
+void ForceSessionRebuildForUidTest(Profile* profile) {
+  SessionService* session_service = SessionServiceFactory::GetForProfile(profile);
+  ASSERT_TRUE(session_service);
+  session_service->ResetFromCurrentBrowsers();
+}
+
+// ---------------------------------------------------------------------------
+// roam-320: a session-log rebuild must not re-mint the durable uid.
+//
+// The uid rides the same append-only "extra data" command as the initial URL,
+// and the rebuild emits none, so on relaunch AdoptOrRestamp() sees no restored
+// value and mints a FRESH uid — breaking the identity E4's tab-visit navigation
+// keys are built on.
+//
+// Two hazards this fixture is shaped around. First, the uid helper stamps from
+// its CONSTRUCTOR, when the tab's window id is still invalid, so that write is
+// dropped by SessionService's tracking guard: a naive "the uid changed" failure
+// could therefore mean the uid was never persisted rather than that the rebuild
+// erased it. So the test first establishes that a uid command exists under the
+// ATTACHED tab's id, by re-persisting through the normal producer path and only
+// then forcing the rebuild. Second, the expected value must cross processes
+// durably: it is written under the PRE_-shared user-data directory, not a
+// per-process temp dir and not a member.
+// ---------------------------------------------------------------------------
+class RoamuxTabUidRebuildTest : public roamux::test::RoamuxBrowserTest {
+ public:
+  RoamuxTabUidRebuildTest() {
+    features_.InitAndEnableFeature(features::kInitialUrl);
+  }
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+    ASSERT_TRUE(embedded_test_server()->Start());
+    SessionStartupPref::SetStartupPref(
+        browser()->profile(), SessionStartupPref(SessionStartupPref::LAST));
+    InProcessBrowserTest::SetUpOnMainThread();
+  }
+
+ protected:
+  // The profile directory survives between a PRE_ test and its twin; a process
+  // temp dir does not.
+  base::FilePath ExpectedUidPath() {
+    return browser()->profile()->GetPath().AppendASCII("roam320-expected-uid");
+  }
+
+  void WriteExpectedUid(const std::string& uid) {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    ASSERT_TRUE(base::WriteFile(ExpectedUidPath(), uid));
+  }
+
+  std::string ReadExpectedUid() {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    std::string uid;
+    EXPECT_TRUE(base::ReadFileToString(ExpectedUidPath(), &uid));
+    return uid;
+  }
+
+  base::test::ScopedFeatureList features_;
+};
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabUidRebuildTest, PRE_RebuildKeepsTabUid) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+  content::WebContents* contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  tabs::TabUidTabHelper* helper =
+      tabs::TabUidTabHelper::FromWebContents(contents);
+  ASSERT_NE(nullptr, helper);
+  const std::string uid = helper->uid();
+  ASSERT_FALSE(uid.empty());
+  WriteExpectedUid(uid);
+
+  // Establish a uid command under the ATTACHED tab's id: the constructor stamp
+  // ran while the window id was invalid and was dropped by the tracking guard,
+  // so without this the post-restart assertion would not be about the rebuild.
+  SessionService* session_service =
+      SessionServiceFactory::GetForProfile(browser()->profile());
+  ASSERT_TRUE(session_service);
+  const SessionID window_id =
+      sessions::SessionTabHelper::IdForWindowContainingTab(contents);
+  const SessionID tab_id = sessions::SessionTabHelper::IdForTab(contents);
+  ASSERT_TRUE(window_id.is_valid());
+  ASSERT_TRUE(tab_id.is_valid());
+  session_service->AddTabExtraData(
+      window_id, tab_id, tabs::TabUidTabHelper::kExtraDataKey, uid);
+
+  ForceSessionRebuildForUidTest(browser()->profile());
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxTabUidRebuildTest, RebuildKeepsTabUid) {
+  TabStripModel* tab_strip = browser()->tab_strip_model();
+  const std::string expected = ReadExpectedUid();
+  ASSERT_FALSE(expected.empty());
+
+  bool found = false;
+  for (int i = 0; i < tab_strip->count(); ++i) {
+    ASSERT_TRUE(content::WaitForLoadStop(tab_strip->GetWebContentsAt(i)));
+    tabs::TabUidTabHelper* helper =
+        tabs::TabUidTabHelper::FromWebContents(tab_strip->GetWebContentsAt(i));
+    if (helper && helper->uid() == expected) {
+      found = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found)
+      << "the rebuild erased the uid; the restored tab was re-minted";
 }
 
 }  // namespace
