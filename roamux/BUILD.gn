@@ -296,6 +296,8 @@ test("roamux_browsertests") {
     "test/roamux_vertical_tabs_telemetry_browsertest.cc",
     "test/support/roamux_browser_test.cc",
     "test/support/roamux_browser_test.h",
+    "test/support/storage_flush_barrier.cc",
+    "test/support/storage_flush_barrier.h",
     "test/support/sso_test_server.cc",
     "test/support/sso_test_server.h",
   ]
