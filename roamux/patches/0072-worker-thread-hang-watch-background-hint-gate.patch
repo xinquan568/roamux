@@ -1,0 +1,73 @@
+# roam-332: never hang-watch a BACKGROUND thread-pool worker, even during shutdown.
+#
+# Backport of ONE line from upstream ebcfffbb36aca8c977ecc3355786eda8a0315a72
+# (M152). WorkerThread::RunWorker decides whether to register the new thread with
+# the HangWatcher; at this pin it asks GetDesiredThreadType(), which is NOT the
+# thread's immutable hint:
+#
+#   ThreadType WorkerThread::GetDesiredThreadType() const {
+#     // To avoid shutdown hangs, disallow a type below kNormal during shutdown
+#     if (task_tracker_->HasShutdownStarted())
+#       return ThreadType::kDefault;
+#     return thread_type_hint_;
+#   }
+#
+# So once shutdown has started, a BACKGROUND worker reports kDefault and is
+# treated as watchable — losing the exemption the comment above the gate says it
+# should have. HangWatcher::RegisterThreadInternal then runs
+# CHECK(base::FeatureList::GetInstance()) (base/threading/hang_watcher.cc:784),
+# and in a browser test the framework has torn the FeatureList down by then
+# (ScopedFeatureList::Reset clears unconditionally before restoring, and
+# FeatureListScopedToEachTest resets after the fixture is destroyed). The worker
+# aborts the process AFTER the test body passed, which the launcher records as
+# FAILURE_ON_EXIT — the roam-332 flake family (two observations, 2026-09-08,
+# RoamuxRefreshAllInitialUrlsTest and RoamuxNewTabPositionTest; the crash stack
+# is RunBackgroundSharedWorker -> RunWorker -> RegisterThreadInternal).
+#
+# Upstream's fix is to read the immutable hint. That closes the observed path
+# exactly: RunBackgroundSharedWorker is only reachable under
+# `if (thread_type_hint_ == ThreadType::kBackground)` (worker_thread.cc:315), so
+# the hint gate excludes precisely those workers, no matter which FeatureList
+# reset is the operative one — which this change therefore does not need to
+# determine.
+#
+# WHAT THIS DOES NOT FIX: a NON-background worker registering while the
+# FeatureList is null. The CHECK outlives the state it guards —
+# IsThreadPoolHangWatchingEnabled() reads a cached atomic stored once at init
+# (hang_watcher.cc:515-517, :573-576) — so the general lifetime hazard remains,
+# upstream and here. Nothing observed has hit it.
+#
+# RETIREMENT (roam-293 / roam-291): at every uprev, check whether the pinned
+# worker_thread.cc already gates on thread_type_hint_. When it does, DELETE this
+# patch — it is upstream's own change, carried early. apply_patches failing on
+# changed context here is that signal arriving on its own.
+#
+# The code change is byte-identical to upstream's so retirement is unambiguous;
+# all Roamux reasoning lives in this preamble, not in the diff.
+#
+# NO REGRESSION TEST — an accepted trade-off, not an impossibility. The
+# registration decision itself is observable
+# (HangWatchState::GetHangWatchStateForCurrentThread(), and base's worker-test
+# delegates allow controlled shutdown ordering with a live FeatureList);
+# reproducing the original crash additionally needs a null FeatureList in a live
+# process and produces an abort rather than a failing assertion. Testing the
+# decision would take base internals or a patch-carried test (roam-282 moved this
+# repo away from those), so acceptance here is the verified mechanism plus green
+# suites. SHIPPED-BUILD EFFECT: this is production base/ code, not test-only —
+# background-hinted workers reaching the gate after shutdown starts no longer
+# register or take hang-watch scopes. Scheduling priority promotion is unchanged
+# and non-background monitoring is untouched; the change restores the exemption
+# the comment directly above the gate already states, and matches upstream.
+diff --git a/base/task/thread_pool/worker_thread.cc b/base/task/thread_pool/worker_thread.cc
+index fef42104f6..47b22b8448 100644
+--- a/base/task/thread_pool/worker_thread.cc
++++ b/base/task/thread_pool/worker_thread.cc
+@@ -422,7 +422,7 @@ void WorkerThread::RunWorker() {
+   // watch them for hangs. Ignore priority boosting for now.
+   const bool watch_for_hangs =
+       base::HangWatcher::IsThreadPoolHangWatchingEnabled() &&
+-      GetDesiredThreadType() != ThreadType::kBackground;
++      thread_type_hint_ != ThreadType::kBackground;
+ 
+   // If this process has a HangWatcher register this thread for watching.
+   base::ScopedClosureRunner unregister_for_hang_watching;
