@@ -131,6 +131,15 @@ TEST_F(SettledVisitJournalServiceTest, RegularJournalPersistsAcrossReopen) {
     service.RecordVisit("u", GURL("https://persist.test/y"));
     ASSERT_EQ(1u, GetVisitsSync(&service).size());  // barrier: commit lands
     service.Shutdown();
+    // roam-315: Shutdown() only POSTS the store's destruction, so without a
+    // drain the SQLite connection may still be open when the replacement
+    // service below opens the same path. sql::Database locks exclusively by
+    // default, so that overlapping open can fail -- and VisitsStore::Open
+    // treats any failed open as corruption and DELETES the file
+    // (visits_store.cc:42-52), wiping the very row this test asserts. Draining
+    // the pool here closes it first. Must be the task-environment form:
+    // base::RunLoop() only pumps the main thread and would leave the race.
+    task_environment_.RunUntilIdle();
   }
   // A fresh service on the SAME path reads the persisted row back.
   SettledVisitJournalService reopened(/*in_memory=*/false, path);
@@ -151,6 +160,10 @@ TEST_F(SettledVisitJournalServiceTest,
     service.SetTabState({"k", /*closed=*/true, /*window_id=*/4, "https://x/"});
     GetTabStateSync(&service, "k");  // barrier: the upsert lands
     service.Shutdown();
+    // roam-315: let the store's posted close land before the reopen below --
+    // see RegularJournalPersistsAcrossReopen for why an overlapping Open() can
+    // delete the database instead of reading it.
+    task_environment_.RunUntilIdle();
   }
   // A fresh service on the SAME path reads the persisted subset back, with no
   // live-session id (volatile state does not survive a new process).
@@ -177,6 +190,10 @@ TEST_F(SettledVisitJournalServiceTest, LiveSessionIdIsVolatileNeverPersisted) {
     ASSERT_TRUE(live.has_value());
     EXPECT_EQ("sid-123", *live);  // volatile id available in this session
     service.Shutdown();
+    // roam-315: let the store's posted close land before the reopen below --
+    // see RegularJournalPersistsAcrossReopen for why an overlapping Open() can
+    // delete the database instead of reading it.
+    task_environment_.RunUntilIdle();
   }
   // A fresh service: the persisted subset is there, the volatile id is gone.
   SettledVisitJournalService reopened(/*in_memory=*/false, path);
