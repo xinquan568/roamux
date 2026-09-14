@@ -27,8 +27,10 @@ re-checked when the pin moves.
   cd /abs/path/to/codes/roamux    # the Roamux checkout, uprev branch
   ```
 
-  `$SRC/roamux` must be the symlink to *this* checkout's `roamux/`. CI re-points the shared base's link to
-  whichever job ran last, so check `readlink "$SRC/roamux"`. A fresh scratch checkout has no link, no
+  `$SRC/roamux` must be the symlink to *this* checkout's `roamux/`. On the shared base it usually is not: a
+  CI job links the base to its own checkout while it runs, and its exit trap restores the runner's
+  `ROAMUX_CANONICAL_OVERLAY` — the operator checkout, on whatever branch that checkout has (an interrupted
+  job can leave its own link behind). Check `readlink "$SRC/roamux"` before validating locally. A fresh scratch checkout has no link, no
   Sparkle and no build directory: set it up with `BOOTSTRAP.md` §2 (fetch), §3 (the overlay link and
   `fetch_sparkle.py`; its patch and rebrand commands are steps 3 and 6 here) and §4 (args and build).
 - **Serialize with CI.** `~/chromium/src` is shared with the self-hosted runner. Tier-2, nightly and release
@@ -162,8 +164,11 @@ resuming the runner for the uprev PR:
 2. run step 2's equality check there, against the PR branch's `CHROMIUM_PIN`;
 3. record that checkout's `git rev-parse HEAD` in the PR alongside the tier-2 result.
 
-Once the shared base is on the new pin, every other open PR's tier-2 run applies an old-pin stack to it, so
-land the uprev before resuming normal CI traffic.
+A tier-2 run applies the patch stack of the revision **it** checked out (the PR's merge commit), and a re-run
+keeps that original revision. So once the shared base is on the new pin, any run whose revision predates the
+uprev — a queued run, a re-run, or a PR not yet updated past the uprev merge — applies an old-pin stack to a
+new-pin base and fails. Landing the uprev does not fix those runs by itself: before resuming normal traffic,
+cancel stale queued runs and start fresh ones from revisions that include the uprev.
 
 Then follow
 `docs/release.md` §Rehearsal obligation before the next release is cut from the new pin.
