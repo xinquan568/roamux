@@ -101,24 +101,28 @@ echo "== tier-2 warm-base job: base=${SRC} out=${OUT} workspace=${GITHUB_WORKSPA
 FLIPPED_TO="${GITHUB_WORKSPACE}/roamux"
 ln -sfn "${GITHUB_WORKSPACE}/roamux" "${SRC}/roamux"
 
-# Channel 2 precondition (roam-175, roam-160 postmortem): reconcile the base's tracked
-# state to pristine. The runhook's stack simulator matches the tree only against
-# prefixes of THIS checkout's stack — after a patch-rewriting/deleting PR the base
-# still carries the PREVIOUS stack, which matches no prefix and fails the job in
-# seconds. reset --hard, not `checkout -- .` (that restores from a possibly-staged
-# index); clean drops files a superseded stack ADDED, sparing the overlay symlink
-# (-e /roamux, untracked by design) and all ignored paths (no -x: out/CI and the
-# warm caches live there); single -f never descends into nested git repos (the
-# DEPS-managed submodules). Consequence, documented in docs/ci/self-hosted-runner.md:
-# the base's tracked state is CI-owned — uncommitted local edits do not survive a run.
+# Channel 2 precondition (roam-175, roam-160 postmortem): reconcile the base's tracked state
+# before building. The runhook's stack simulator matches the tree only against prefixes of THIS
+# checkout's stack — after a patch-rewriting/deleting PR the base still carries the PREVIOUS
+# stack, which matches no prefix and fails the job in seconds. Since roam-341 the runhook's
+# --reconcile mode performs that reconcile itself, through git: read-tree --reset -u to the tree
+# "HEAD + the simulated stack" (every guarantee of the former `reset --hard HEAD`: dirty tracked
+# files, staged junk, superseded-stack additions), then clean -fd -e /roamux (drops files a
+# superseded stack ADDED, sparing the overlay symlink — -e /roamux, untracked by design — and
+# all ignored paths: no -x, so out/CI and the warm caches live; single -f never descends into the
+# DEPS-managed submodules), then the index back to HEAD; HEAD itself is never written. What
+# changed with roam-341: a patched file whose bytes already equal the stack's target is left
+# untouched, so its mtime survives and the retained out/CI no longer re-invalidates every
+# dependent of every patched header on a stack-identical run. Consequence, documented in
+# docs/ci/self-hosted-runner.md: the base's tracked state is CI-owned — uncommitted local edits
+# do not survive a run.
 phase reconcile
-echo "reconciling base to pristine (drops any superseded stack state)"
-git -C "${SRC}" reset --hard HEAD
-git -C "${SRC}" clean -fd -e /roamux
+echo "reconciling base to HEAD + the current stack (roam-341: byte-identical patched files keep their mtimes)"
 
-# Declared channel 2: the runhook (idempotent; fails loudly on conflict — the rebase signal).
+# Declared channel 2: the runhook, in --reconcile mode (idempotent; fails loudly on conflict — the
+# rebase signal — before mutating anything).
 phase runhook
-python3 "${GITHUB_WORKSPACE}/roamux/build/apply_patches.py" --chromium-src "${SRC}"
+python3 "${GITHUB_WORKSPACE}/roamux/build/apply_patches.py" --chromium-src "${SRC}" --reconcile
 
 # roam-147: vendor Sparkle into this job's overlay before building. out/Default carries
 # roamux_enable_sparkle=true, and since roam-140 the tier-2 targets (roamux_browsertests)

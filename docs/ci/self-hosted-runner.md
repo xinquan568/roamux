@@ -25,9 +25,16 @@ the link path and the trap reports a restore it cannot perform instead of linkin
 structurally and behaviourally by `test_tier2_job.py` and `test_workflow_invariants.py`).
 
 **The base's tracked state is CI-owned (roam-175).** Every tier-2/release run first reconciles
-`~/chromium/src` to pristine (`git reset --hard HEAD` + `git clean -fd -e /roamux` — never `-x`,
-so `out/*` and all ignored caches survive; `-e /roamux` spares the overlay symlink; single `-f`
-never enters the DEPS submodules) before re-applying the job's own patch stack. Rationale: the
+`~/chromium/src` to HEAD plus the job's own patch stack, through the runhook's `--reconcile` mode
+(roam-341; formerly `git reset --hard HEAD` + `git clean -fd -e /roamux` + apply). The runhook
+lets git do it — `read-tree --reset -u` to the tree "HEAD + the simulated stack", then
+`clean -fd -e /roamux` (never `-x`, so `out/*` and all ignored caches survive; `-e /roamux` spares
+the overlay symlink; single `-f` never enters the DEPS submodules), then the index back to HEAD;
+HEAD is never written — with one deliberate difference from the old sequence: a patched file whose
+bytes already equal the stack's target is left untouched, so its mtime survives and the retained
+`out/CI` no longer re-invalidates every dependent of every patched header on a stack-identical run
+(measured before the change: ~1,100 Siso timestamp invalidations and a ~24-minute build phase on a
+PR that changed no C++). Rationale for reconciling at all: the
 runhook's stack simulator (roam-77) matches the tree only against prefixes of the *current*
 stack, so a base left at a superseded stack — any patch-rewriting or patch-deleting change, first
 hit by roam-160/PR #173 — matches no prefix and fails the job; a prior release's

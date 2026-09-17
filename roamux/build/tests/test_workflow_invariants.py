@@ -42,8 +42,8 @@ These encode the tier-1 + release posture structurally, so every future workflow
       and BEFORE the grit/resource compile (autoninja), followed by a post-substitution
       validation gate — a representative product string is rebranded, legal attribution stays
       "Chromium", and the channel is idempotent (--check clean) — or the release fails.
-  16. release.yml reconciles the shared warm base to pristine (reset --hard HEAD +
-      clean -fd -e /roamux) BEFORE its apply_patches.py runhook (roam-175) — the stack
+  16. release.yml reconciles the shared warm base through the runhook's --reconcile mode
+      (roam-341; formerly reset --hard HEAD + clean -fd -e /roamux, roam-175) — the stack
       simulator matches only prefixes of the current stack, so a base left at a superseded
       stack (any patch-rewriting/deleting change since the last release) or carrying a prior
       release's rebrand mutations would otherwise fail — or silently contaminate — the build.
@@ -329,22 +329,22 @@ class WorkflowInvariantsTest(unittest.TestCase):
 
     def test_release_reconciles_base_before_runhook(self):
         # roam-175 (invariant 16): the runhook's stack simulator matches only prefixes
-        # of the CURRENT stack, so release must reconcile the shared base first —
-        # reset --hard HEAD (not `checkout -- .`: that restores from a possibly-staged
-        # index) + clean -fd -e /roamux (drops files a superseded stack added; spares
-        # the overlay symlink; no -x, so out dirs and ignored caches survive; single
-        # -f never descends into nested git repos/submodules). A base left at a
-        # superseded stack — or carrying a prior release's rebrand mutations — would
-        # otherwise fail, or silently contaminate, a tag-time build.
+        # of the CURRENT stack, so release must reconcile the shared base first. Since
+        # roam-341 that reconcile is the runhook's own --reconcile mode (git read-tree
+        # --reset -u to "HEAD + the stack", clean -fd -e /roamux, index back to HEAD),
+        # which leaves byte-identical patched files untouched; the workflow must NOT
+        # reset or clean the base itself any more — a `reset --hard` reintroduced here
+        # would rewrite every patched file and restore the wholesale re-invalidation.
         text = _read("release.yml")
         self.assertIsNotNone(text, "release.yml missing")
-        reset = text.find("reset --hard HEAD")
-        clean = text.find("clean -fd -e /roamux")
-        runhook = text.find("apply_patches.py")
-        self.assertNotEqual(reset, -1, "release.yml: no reset --hard reconcile")
-        self.assertNotEqual(clean, -1, "release.yml: no clean reconcile")
-        self.assertLess(reset, runhook, "reconcile must precede the runhook")
-        self.assertLess(clean, runhook, "reconcile must precede the runhook")
+        code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+        runhook = [l for l in code.splitlines() if "apply_patches.py" in l]
+        self.assertEqual(len(runhook), 1, "release.yml: exactly one runhook invocation")
+        self.assertIn("--reconcile", runhook[0], "release.yml: the runhook must run in --reconcile mode")
+        self.assertLess(code.find("apply_patches.py"), code.find("rebrand_strings.py"),
+                        "reconcile + runhook must precede the rebrand")
+        self.assertNotIn("reset --hard", code, "release.yml: the shell must not reset the base (roam-341)")
+        self.assertNotIn("clean -fd", code, "release.yml: the shell must not clean the base (roam-341)")
         self.assertNotIn("clean -fdx", text, "clean -x would nuke the warm out dirs")
         self.assertNotIn("clean -ffd", text, "clean -ff would enter submodules")
 

@@ -68,29 +68,33 @@ class Tier2JobScriptTest(unittest.TestCase):
         self.assertIn('ln -sfn "${GITHUB_WORKSPACE}/roamux"', self.code)  # channel 1: symlink flip
         self.assertIn("apply_patches.py", self.code)                       # channel 2: the runhook
 
-    def test_base_reconciled_to_pristine_before_runhook(self):
-        # roam-175 (roam-160 postmortem): the runhook's stack simulator matches the
-        # tree only against prefixes of THIS checkout's stack, so after a
-        # patch-rewriting/deleting PR the base still carries the PREVIOUS stack —
-        # which matches no prefix and fails the job in seconds. The job must
-        # reconcile the base's tracked state to pristine first: reset --hard (NOT
-        # `checkout -- .`, which restores from a possibly-staged index), then a
-        # clean that drops files a superseded stack ADDED while sparing the overlay
-        # symlink (-e /roamux — untracked by design) and every ignored path (no -x:
-        # out/CI and the warm caches live there). Single -f only: clean must never
-        # descend into nested git repos (Chromium's DEPS-managed submodules).
+    def test_base_reconciled_by_the_runhook_before_building(self):
+        # roam-175 (roam-160 postmortem): the runhook's stack simulator matches the tree only
+        # against prefixes of THIS checkout's stack, so after a patch-rewriting/deleting PR the
+        # base still carries the PREVIOUS stack — which matches no prefix and fails the job in
+        # seconds. The job must reconcile the base's tracked state first. Since roam-341 that
+        # reconcile is the runhook's own --reconcile mode (git read-tree --reset -u to "HEAD +
+        # the stack", clean -fd -e /roamux, index back to HEAD — see apply_patches.py and
+        # test_apply_patches.py::ReconcileModeTest), which leaves byte-identical patched files
+        # untouched so their mtimes survive. The shell must therefore NOT reset or clean the base
+        # itself any more: a `reset --hard` reintroduced here would rewrite every patched file
+        # and silently restore the per-run re-invalidation roam-341 removed.
         lines = self.code.splitlines()
-        reset = next((i for i, l in enumerate(lines) if "reset --hard HEAD" in l),
-                     None)
-        clean = next((i for i, l in enumerate(lines) if "clean -fd -e /roamux" in l),
-                     None)
-        runhook = next(i for i, l in enumerate(lines) if "apply_patches.py" in l)
-        self.assertIsNotNone(reset, "no `reset --hard HEAD` reconcile in the job")
-        self.assertIsNotNone(clean, "no `clean -fd -e /roamux` reconcile in the job")
-        self.assertLess(reset, runhook, "reconcile must precede the runhook")
-        self.assertLess(clean, runhook, "reconcile must precede the runhook")
-        self.assertNotIn("-x", lines[clean], "clean -x would nuke out/CI")
-        self.assertNotIn("-ff", lines[clean], "clean -ff would enter submodules")
+        code_lines = [l for l in lines if not l.lstrip().startswith("#")]
+        runhook = [i for i, l in enumerate(lines)
+                   if "apply_patches.py" in l and not l.lstrip().startswith("#")]
+        self.assertEqual(len(runhook), 1, "exactly one runhook invocation")
+        self.assertIn("--reconcile", lines[runhook[0]], "the runhook must run in --reconcile mode")
+        self.assertIn('--chromium-src "${SRC}"', lines[runhook[0]])
+        reconcile = next(i for i, l in enumerate(lines) if l == "phase reconcile")
+        runhook_phase = next(i for i, l in enumerate(lines) if l == "phase runhook")
+        self.assertLess(reconcile, runhook_phase)
+        self.assertLess(runhook_phase, runhook[0], "the runhook runs under its checkpoint")
+        for old in ("reset --hard", "clean -fd"):
+            self.assertFalse(any(old in l for l in code_lines),
+                             f"the shell must not `{old}` the base — the runhook reconciles (roam-341)")
+        self.assertNotIn("-fdx", self.code, "clean -x would nuke out/CI")
+        self.assertNotIn("-ffd", self.code, "clean -ff would enter submodules")
 
     def test_staleness_gate_runs(self):
         self.assertIn("check_override_staleness.py", self.code)
@@ -202,13 +206,14 @@ class Tier2JobScriptTest(unittest.TestCase):
     def test_base_writes_only_via_declared_channels(self):
         # Every line that references the base checkout var must be one of the declared channels,
         # a read-only use, or the build-dir path (out/CI lives under the base by design).
-        # "reset --hard" / "clean -fd" (roam-175): the channel-2 reconcile precondition —
-        # exact-command markers, so no other git mutation of the base sneaks past.
+        # roam-341: the channel-2 reconcile (formerly `reset --hard` / `clean -fd` here) now lives
+        # inside the runhook's --reconcile mode; those two markers are deliberately GONE, so a
+        # shell-side git mutation of the base reintroduced here fails this test.
         # "readlink" (roam-280): a READ-ONLY probe — restore_overlay records the previous link
         # target before it decides whether it may re-link. It never mutates the base.
         allowed_markers = ("ln -sfn", "apply_patches.py", "check_override_staleness.py", "--chromium-src",
                            "autoninja", "gn ", "cd ", "cp ", "OUT=", "SRC=", "echo", "test ", "[ ",
-                           "reset --hard HEAD", "clean -fd -e /roamux", "readlink")
+                           "readlink")
         for line in self.code.splitlines():
             if "${SRC}" in line or "$SRC" in line:
                 self.assertTrue(any(m in line for m in allowed_markers),
@@ -633,13 +638,12 @@ class Tier2JobBehaviourTest(unittest.TestCase):
         self.assertEqual(r.returncode, 23, r.stdout + r.stderr)
         self.assertEqual(os.readlink(h.link), str(h.canonical), "the trap must restore the link")
         ev = h.events_list()
-        reset = next(i for i, l in enumerate(ev) if l.startswith("git ") and "reset --hard HEAD" in l)
-        clean = next(i for i, l in enumerate(ev) if l.startswith("git ") and "clean -fd -e /roamux" in l)
-        apply_ = next(i for i, l in enumerate(ev)
-                      if l.startswith("python3 ") and "apply_patches.py" in l
-                      and f"--chromium-src {h.src}" in l)
-        self.assertLess(reset, clean, ev)
-        self.assertLess(clean, apply_, ev)
+        # roam-341: the shell issues no git reset/clean of the base; the runhook reconciles.
+        self.assertFalse([l for l in ev if l.startswith("git ") and ("reset" in l or "clean" in l)], ev)
+        apply_ = [l for l in ev if l.startswith("python3 ") and "apply_patches.py" in l
+                  and f"--chromium-src {h.src}" in l]
+        self.assertEqual(len(apply_), 1, ev)
+        self.assertIn("--reconcile", apply_[0])
         self.assertTrue((h.out() / "build.ninja").exists(), "out/CI must have been cloned")
         self.assertFalse((h.src / "out" / "CI.partial").exists(), "no staging dir may remain")
 
