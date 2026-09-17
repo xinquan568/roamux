@@ -12,7 +12,7 @@
 # IsNewTabAddsToActiveGroupEnabled() block, guarded by
 # `context != NewTabTypes::kNoUserAction && kNewTabPosition`. The stock lines
 # are byte-identical, so flag-OFF (chrome://flags/#roamux-new-tab-position,
-# patch 0069) never reads the pref and is exactly patch-0067 behaviour.
+# the row in patch 0073 since roam-340, historically 0069) never reads the pref and is exactly patch-0067 behaviour.
 # All policy is additive: roamux::GetNewTabPosition (//roamux/common, total
 # over null/unregistered/out-of-range) + roamux::tabs::ComputeNewTabPlacement
 # (//roamux/browser/tabs, pure, no //chrome). No BUILD.gn hunk — the

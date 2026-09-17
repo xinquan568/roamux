@@ -83,7 +83,7 @@ python3 roamux/build/apply_patches.py --chromium-src "$SRC"           # apply
 - **`--check` verifies and does not apply.** It simulates the stack from HEAD, accepts the tree only if it
   matches pristine or an applied prefix, and reports each patch as `[applied]` or `[appliable]`. A green
   `--check` does not by itself mean the stack is applied. **[verified on M149]** — exit 0, all **67** patch
-  files (numbered through `0072`) reported `[applied]`.
+  files (numbered through `0072`) reported `[applied]` — 58 files through `0073` since roam-340 collapsed the flag-entry patches.
 - **Application on a new pin [prospective].** Expect conflicts; that is the rebase signal the runhook is
   designed to raise. Triage in stack order, because later patches may depend on earlier context
   (`roamux/patches/README.md` records ordering dependencies per patch).
@@ -126,7 +126,7 @@ enforces two things any Roamux `chrome://flags` entry must respect:
 launching it has required pointing `DYLD_FRAMEWORK_PATH` at the vendored framework
 (`roamux/third_party/sparkle`). That launch detail is unverified at this pin.
 
-If roam-340 (collapsing the flag-entry patches) has landed, this step becomes more load-bearing, not less.
+Since roam-340 every Roamux flag row lives in one patch, `0073-roamux-flags-entries.patch` (one file to edit, one alphabetical slot to respect), which makes this step more load-bearing, not less; `RoamuxFlagsEntriesTest` (tier-2) checks presence and usability of every row, not their metadata order.
 
 ### 8. Field-trial feature inventory (ADR 0002) [prospective]
 

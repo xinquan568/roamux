@@ -21,7 +21,7 @@ BASE_FEATURE(kTabVisitNav,
              "RoamuxTabVisitNav",
              base::FEATURE_ENABLED_BY_DEFAULT);  // roam-189: shipped default-on
 // roam-266: shipped default-on for v0.0.1-alpha.9
-// (chrome://flags/#roamux-brave-style-profiles lets users opt out — patch 0064
+// (chrome://flags/#roamux-brave-style-profiles lets users opt out — the row landed with roam-266 as patch 0064 and lives in patch 0073 since roam-340
 // adds that entry in the same change; graduating without it would have made
 // this the only default-on flag with no kill-switch). Flag-on suppresses the
 // default sign-in surfaces (sign-in stays inert-with-explanation unless the
@@ -50,7 +50,7 @@ BASE_FEATURE(kTabStripToggleShortcut,
              "RoamuxTabStripToggleShortcut",
              base::FEATURE_ENABLED_BY_DEFAULT);
 // roam-269: ships default-on, like every Roamux flag since roam-226. Its
-// chrome://flags entry (patch 0066) lands in the SAME change and is the
+// chrome://flags entry (landed with roam-269 as patch 0066; in patch 0073 since roam-340) lands in the SAME change and is the
 // kill-switch — the roam-266 precedent: a default-on flag without one would be
 // the only Roamux feature a user cannot turn off. Claims Ctrl+Opt+Cmd+R by
 // default; dispatch is registry-only (no accelerators_cocoa.mm row, per the
@@ -58,7 +58,7 @@ BASE_FEATURE(kTabStripToggleShortcut,
 BASE_FEATURE(kRefreshAllInitialUrls,
              "RoamuxRefreshAllInitialUrls",
              base::FEATURE_ENABLED_BY_DEFAULT);
-// roam-277: ships default-on with its chrome://flags entry (patch 0069) as
+// roam-277: ships default-on with its chrome://flags entry (landed as patch 0069; in patch 0073 since roam-340) as
 // the kill-switch, the roam-266/269 rule. Gates the placement seam in
 // chrome::NewTab() (patch 0068): ON reads prefs::kNewTabPosition (default
 // end_of_active_group == today's roam-275 behaviour); OFF is the untouched

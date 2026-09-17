@@ -35,13 +35,13 @@ BASE_DECLARE_FEATURE(
                               // in the window to its initial URL (SHIPS
                               // ENABLED;
                               // chrome://flags/#roamux-refresh-all-initial-urls
-                              // is the kill-switch, patch 0066)
+                              // is the kill-switch, patch 0073 — historically 0066)
 BASE_DECLARE_FEATURE(
     kNewTabPosition);  // roam-277 — where Cmd+T / "+" / File > New Tab insert
                        // the new tab (prefs::kNewTabPosition: end of strip /
                        // end of active group / after active tab). SHIPS
                        // ENABLED; chrome://flags/#roamux-new-tab-position is
-                       // the kill-switch (patch 0069) — OFF runs the stock
+                       // the kill-switch (patch 0073 — historically 0069) — OFF runs the stock
                        // patch-0067 path and never reads the pref.
 
 // roam-269 pacing knobs (plan §7.3). Read on the chrome-facing side and passed
