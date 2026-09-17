@@ -21,7 +21,7 @@ APFS-cloned copy-on-write from the operator's `out/Default`); **declared-channel
 job touches the base only via the overlay symlink — restored by `tier2_job.sh`'s EXIT trap and, in
 the release workflow, by a final `if: always()` step (roam-279); the flip refuses a real directory at
 the link path and the trap reports a restore it cannot perform instead of linking into it
-(roam-280) — and the pristine-reconcile + idempotent fail-loud runhook; test-enforced
+(roam-280) — and the reconciling (`--reconcile`, roam-341) idempotent fail-loud runhook; test-enforced
 structurally and behaviourally by `test_tier2_job.py` and `test_workflow_invariants.py`).
 
 **The base's tracked state is CI-owned (roam-175).** Every tier-2/release run first reconciles
@@ -30,8 +30,8 @@ structurally and behaviourally by `test_tier2_job.py` and `test_workflow_invaria
 lets git do it — `read-tree --reset -u` to the tree "HEAD + the simulated stack", then
 `clean -fd -e /roamux` (never `-x`, so `out/*` and all ignored caches survive; `-e /roamux` spares
 the overlay symlink; single `-f` never enters the DEPS submodules), then the index back to HEAD;
-HEAD is never written — with one deliberate difference from the old sequence: a patched file whose
-bytes already equal the stack's target is left untouched, so its mtime survives and the retained
+HEAD is never written — with one deliberate difference from the old sequence: a patched path whose
+existing regular-file entry already has the stack's bytes and mode is left untouched, so its mtime survives and the retained
 `out/CI` no longer re-invalidates every dependent of every patched header on a stack-identical run
 (measured before the change: ~1,100 Siso timestamp invalidations and a ~24-minute build phase on a
 PR that changed no C++). Rationale for reconciling at all: the
@@ -150,7 +150,7 @@ never killed by a newcomer; `queue: max` — waiting jobs queue in order, where 
 single pending slot would cancel the older pending job) — declared, so it still holds if a second
 runner is ever added. tier-2 and nightly carry an explicit `timeout-minutes: 720` (release: 1440):
 GitHub's silent 6h default service-cancelled a cold nightly (run 29827734729) mid-compile; a stated
-bound fails such a run honestly instead. Each run reconciles the base to pristine and
+bound fails such a run honestly instead. Each run reconciles the base to HEAD + its stack (byte-identical patched files untouched) and
 re-applies its own stack (roam-175 — so whatever applied set a run leaves behind, the next run
 recovers; before roam-175 a patch-rewriting PR wedged the runhook until a manual reset); avoid
 heavy local builds while a CI job runs — the reconcile will reset a racing local stack mid-build.

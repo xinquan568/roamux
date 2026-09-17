@@ -127,6 +127,16 @@ def _simulate(chromium_src, patches, union):
 _INDEX_CONFLICT = b"appears as both a file and as a directory"
 
 
+def _through_symlink(root, rel_path):
+    """True if any ancestor component of rel_path (below root) is a symlink — never remove through one."""
+    current = pathlib.Path(root)
+    for part in pathlib.PurePosixPath(rel_path).parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
 def _reconcile(chromium_src, union, target):
     """Force the checkout to `target` (the stack's final snapshot over `union`) through git's own
     read-tree --reset -u; see the module docstring (roam-341). Returns a process exit code."""
@@ -201,12 +211,23 @@ def _reconcile(chromium_src, union, target):
             os.unlink(tmp_index)
 
     # Classify what is about to change, for the summary (before the real index is touched).
-    status = g("status", "--porcelain", "-z", "--untracked-files=no")
+    status = g("status", "--porcelain=v1", "-z", "--untracked-files=no")
     if not must(status, "status"):
         return 1
-    restored = sorted({record[3:].decode("utf-8", "replace").split("\0")[0]
-                       for record in status.stdout.split(b"\0") if len(record) > 3}
-                      - set(union))
+    touched = set()
+    fields = status.stdout.split(b"\0")
+    i = 0
+    while i < len(fields):
+        record = fields[i]
+        i += 1
+        if len(record) < 4:
+            continue
+        touched.add(record[3:].decode("utf-8", "replace"))
+        if record[0:1] in (b"R", b"C"):  # a rename/copy record is followed by its source field
+            if i < len(fields):
+                touched.add(fields[i].decode("utf-8", "replace"))
+            i += 1
+    restored = sorted(touched - set(union))
 
     # Seed the real index leniently, then let git decide which union entries are already clean.
     for path in union:
@@ -215,15 +236,21 @@ def _reconcile(chromium_src, union, target):
             if not must(result, f"seeding {path}"):
                 return 1
     g("update-index", "-q", "--refresh")  # rc 1 just means "some entries need update"
+    removed = sorted(p for p in union if target.get(p) is None and os.path.lexists(os.path.join(src, p)))
     for path in union:
+        # A real directory sitting on a union path is the one obstruction git's checkout leaves
+        # behind (it unlinks files and symlinks in the way, not directories), and its ignored
+        # contents would then survive `clean`. Remove it — but ONLY when every ancestor
+        # component is a real directory: through a symlinked ancestor the path may point outside
+        # the checkout, and git will replace that ancestor symlink itself when it checks the
+        # entry out, leaving the link's target untouched.
         obstruction = pathlib.Path(src) / path
-        if obstruction.is_dir() and not obstruction.is_symlink():
+        if obstruction.is_dir() and not obstruction.is_symlink() and not _through_symlink(src, path):
             shutil.rmtree(obstruction)
     dirty = g("diff-files", "--name-only", "-z", "--", *union) if union else None
     needs_update = set(dirty.stdout.decode("utf-8", "replace").split("\0")) if dirty else set()
     rewritten = sorted(p for p in union if target.get(p) is not None
-                       and (p in needs_update or not (pathlib.Path(src) / p).exists()))
-    removed = sorted(p for p in union if target.get(p) is None and (pathlib.Path(src) / p).exists())
+                       and (p in needs_update or not os.path.lexists(os.path.join(src, p))))
     kept = [p for p in union if target.get(p) is not None and p not in rewritten]
 
     if not must(g("read-tree", "--reset", "-u", tree), "read-tree --reset -u"):

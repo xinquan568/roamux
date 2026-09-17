@@ -231,6 +231,13 @@ PATCH_INNER = """--- a/dir/inner.txt
 +INNER-MARKER
 """
 
+PATCH_A1 = """--- a/a1.h
++++ b/a1.h
+@@ -1 +1,2 @@
+ a1
++A1-MARKER
+"""
+
 PATCH_CONFLICT = """--- a/afile.txt
 +++ b/afile.txt
 @@ -1,3 +1,4 @@
@@ -289,6 +296,7 @@ class ReconcileModeTest(unittest.TestCase):
         (path / "keep.txt").write_text("keep\n")
         (path / "dir").mkdir()
         (path / "dir" / "inner.txt").write_text("inner\n")
+        (path / "a1.h").write_text("a1\n")
         (path / ".gitignore").write_text("out/\n")
         git(path, "add", ".")
         git(path, "commit", "-qm", "init")
@@ -372,8 +380,8 @@ class ReconcileModeTest(unittest.TestCase):
         self.assertIn("MARKER\n", self.afile())
         self.assertNotIn("OLD-MARKER", self.afile())
         self.assertNotEqual(self.mtime("afile.txt"), old)
-        self.assertIn("afile.txt", r.stdout)
-        self.assertIn("1 rewritten", r.stdout)
+        self.assertIn("[rewritten] afile.txt", r.stdout)
+        self.assertIn("reconcile: 0 kept, 1 rewritten, 0 removed, 0 restored", r.stdout)
 
     def test_shrunk_stack_restores_dropped_patch_paths(self):
         (self.patches / "0002-delete-del.patch").write_text(PATCH_DELETE_DEL)
@@ -438,6 +446,10 @@ class ReconcileModeTest(unittest.TestCase):
             (src / "a[1].h").write_text("wild\n")
             git(src, "add", "a[1].h")                                     # wildcard-shaped staged addition
             git(src, "mv", "ren-src.txt", "ren-dst.txt")                  # staged rename
+            git(src, "rm", "-q", "--cached", "dir/inner.txt")             # staged rename INTO an
+            (src / "out" / "inner.txt").write_text("inner\n")            # ignored destination
+            git(src, "add", "-f", "out/inner.txt")                        # (dir/inner.txt already
+                                                                          #  deleted in worktree)
             (src / "keep.txt").write_text("staged+unstaged\n")
             git(src, "add", "keep.txt")
             (src / "keep.txt").write_text("unstaged-on-top\n")            # staged + unstaged edit
@@ -445,19 +457,33 @@ class ReconcileModeTest(unittest.TestCase):
             (src / "stray.txt").write_text("stray\n")                     # untracked leftover
         new, old = self.assert_same_outcome(setup)
         self.assertIn("MARKER", self.afile(new))
-        for gone in ("new.txt", "out/ign.txt", "a[1].h", "ren-dst.txt", "stray.txt"):
+        for gone in ("new.txt", "out/ign.txt", "a[1].h", "ren-dst.txt", "out/inner.txt", "stray.txt"):
             self.assertFalse((new / gone).exists(), gone)
         self.assertEqual((new / "keep.txt").read_text(), "keep\n")
         self.assertEqual((new / "ren-src.txt").read_text(), "r\n")
+        self.assertEqual((new / "dir" / "inner.txt").read_text(), "inner\n")
+
+    def test_summary_reports_exact_paths_including_rename_sources(self):
+        git(self.src, "mv", "keep.txt", "moved.txt")                      # staged rename
+        (self.src / "dir" / "inner.txt").write_text("dirty\n")
+        r = self.reconcile()
+        reported = {l.split(None, 1)[1] for l in r.stdout.splitlines() if l.startswith("[restored]")}
+        self.assertEqual(reported, {"keep.txt", "moved.txt", "dir/inner.txt"}, r.stdout)
+        self.assertIn("reconcile: 0 kept, 1 rewritten, 0 removed, 3 restored", r.stdout)
 
     def test_wildcard_named_neighbour_does_not_touch_union_mtime(self):
+        # `a[1].h` as a pathspec would match `a1.h`; with --literal-pathspecs it must not.
+        (self.patches / "0002-a1.patch").write_text(PATCH_A1)
         self.apply_plain()
-        old = self.age("afile.txt")
+        old = self.age("a1.h")
         (self.src / "a[1].h").write_text("wild\n")
         git(self.src, "add", "a[1].h")
-        self.reconcile()
-        self.assertEqual(self.mtime("afile.txt"), old)
+        r = self.reconcile()
+        self.assertEqual(self.mtime("a1.h"), old, "the literal neighbour must keep its mtime")
+        self.assertEqual((self.src / "a1.h").read_text(), "a1\nA1-MARKER\n")
         self.assertFalse((self.src / "a[1].h").exists())
+        self.assertIn("2 kept", r.stdout)
+        self.assertIn("[restored]  a[1].h", r.stdout)
 
     def test_symlink_replacing_non_union_file_and_gitlink_untouched(self):
         def setup(src):
@@ -470,7 +496,10 @@ class ReconcileModeTest(unittest.TestCase):
             git(sub, "config", "user.name", "t")
             (sub / "s.txt").write_text("s\n")
             git(sub, "add", ".")
-            git(sub, "commit", "-qm", "sub")
+            dates = {**_git_env(), "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z",
+                     "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z"}   # identical OID in both twins
+            subprocess.run(["git", "-C", str(sub), "commit", "-qm", "sub"], check=True,
+                           capture_output=True, env=dates)
             sha = _gitout(sub, "rev-parse", "HEAD").strip()
             git(src, "update-index", "--add", "--cacheinfo", f"160000,{sha},sub")   # gitlink
             git(src, "commit", "-qm", "gitlink")
@@ -491,6 +520,15 @@ class ReconcileModeTest(unittest.TestCase):
         self.assertFalse((self.src / "afile.txt").is_symlink())
         self.assertIn("MARKER", self.afile())
         self.assertEqual(target.read_text(), "line1\nMARKER\nline2\nline3\n", "link target untouched")
+        (self.src / "afile.txt").unlink()
+        other = self.tmp / "other.txt"
+        other.write_text("something else\n")                            # DIFFERING-content target
+        os.symlink(other, self.src / "afile.txt")
+        r = self.reconcile()
+        self.assertFalse((self.src / "afile.txt").is_symlink())
+        self.assertIn("MARKER", self.afile())
+        self.assertEqual(other.read_text(), "something else\n", "link target untouched")
+        self.assertIn("[rewritten] afile.txt", r.stdout)
         (self.src / "afile.txt").unlink()
         os.symlink(self.tmp / "missing", self.src / "afile.txt")        # dangling
         self.reconcile()
@@ -523,6 +561,41 @@ class ReconcileModeTest(unittest.TestCase):
         self.assertIn("MARKER", self.afile())
         self.assertEqual((self.src / "out" / "alias.txt").read_text(), "line1\nOLD\nline2\nline3\n",
                          "git must unlink before writing; a hardlink alias is not written through")
+
+    def test_directory_obstruction_through_symlinked_ancestor_never_escapes(self):
+        # BLOCKER (Step-8 review): src/dir -> outside, and outside/inner.txt is a DIRECTORY holding a
+        # sentinel. The union path dir/inner.txt is then a real directory reached THROUGH a symlink;
+        # removing it would delete the external directory. The reconcile must leave the link's
+        # target alone and let git replace the symlinked ancestor — for a surviving union path and
+        # for a stack-DELETED one alike, matching the old sequence.
+        (self.patches / "0002-inner.patch").write_text(PATCH_INNER)
+        for case in ("surviving", "deleted"):
+            with self.subTest(case=case):
+                new = self.make_repo(self.tmp / f"sym-{case}-new")
+                old = self.make_repo(self.tmp / f"sym-{case}-old")
+                patches = self.patches
+                if case == "deleted":
+                    patches = self.tmp / f"patches-{case}"
+                    patches.mkdir()
+                    (patches / "0001-add-marker.patch").write_text(PATCH_ADD_MARKER)
+                    (patches / "0002-delete-inner.patch").write_text(
+                        "--- a/dir/inner.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-inner\n")
+                outside = self.tmp / f"outside-{case}"
+                (outside / "inner.txt").mkdir(parents=True)
+                (outside / "inner.txt" / "sentinel").write_text("keep me\n")
+                for src in (new, old):
+                    shutil.rmtree(src / "dir")
+                    os.symlink(outside, src / "dir")
+                self.reconcile(src=new, patches=patches)
+                self.old_sequence(old, patches)
+                self.assertEqual((outside / "inner.txt" / "sentinel").read_text(), "keep me\n",
+                                 "the reconcile must never remove anything outside the checkout")
+                self.assertEqual(_snapshot(new), _snapshot(old))
+                self.assertFalse((new / "dir").is_symlink(), "git replaces the symlinked ancestor")
+                if case == "surviving":
+                    self.assertEqual((new / "dir" / "inner.txt").read_text(), "inner\nINNER-MARKER\n")
+                else:
+                    self.assertFalse((new / "dir" / "inner.txt").exists())
 
     def test_staged_file_directory_conflicts_both_directions(self):
         (self.patches / "0002-inner.patch").write_text(PATCH_INNER)
@@ -576,10 +649,11 @@ class ReconcileModeTest(unittest.TestCase):
                 old = self.make_repo(self.tmp / f"o{i}")
                 setup(new)
                 setup(old)
-                self.reconcile(src=new)
+                r = self.reconcile(src=new)
                 self.old_sequence(old)
                 self.assertFalse((new / "del.txt").exists(), setup.__name__)
                 self.assertEqual(_snapshot(new), _snapshot(old), setup.__name__)
+                self.assertIn("[removed]   del.txt", r.stdout, setup.__name__)
 
     # 8 -- index, HEAD, ORIG_HEAD, reflogs ---------------------------------------------------------
     def test_head_orig_head_and_reflogs_untouched(self):
@@ -587,11 +661,12 @@ class ReconcileModeTest(unittest.TestCase):
             with self.subTest(detached=detached):
                 src = self.make_repo(self.tmp / ("det" if detached else "att"), detached=detached)
                 head = _gitout(src, "rev-parse", "HEAD")
+                (src / ".git" / "ORIG_HEAD").write_bytes(b"0" * 40 + b"\n")   # a pre-existing ORIG_HEAD
                 logs = {p: p.read_bytes() for p in (src / ".git" / "logs").rglob("*") if p.is_file()}
-                self.assertFalse((src / ".git" / "ORIG_HEAD").exists())
                 self.reconcile(src=src)
                 self.assertEqual(_gitout(src, "rev-parse", "HEAD"), head)
-                self.assertFalse((src / ".git" / "ORIG_HEAD").exists(), "ORIG_HEAD must not be written")
+                self.assertEqual((src / ".git" / "ORIG_HEAD").read_bytes(), b"0" * 40 + b"\n",
+                                 "ORIG_HEAD must not be rewritten")
                 self.assertEqual({p: p.read_bytes() for p in (src / ".git" / "logs").rglob("*") if p.is_file()},
                                  logs, "no reflog may change")
                 self.assertEqual(_gitout(src, "diff", "--cached", "--name-only"), "")

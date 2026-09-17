@@ -3,8 +3,8 @@
 # Roamux tier-2 CI job (roam-36, plan §12.6 personal-machine v1): warm-base incremental build + the
 # Roamux test suites, run on the self-hosted runner. The shared base checkout is touched ONLY via the
 # two declared, restored channels: (1) the overlay symlink (flipped to this job's checkout, restored
-# by the EXIT trap), (2) the pristine-reconcile + idempotent fail-loud patch runhook (roam-175: the
-# base's tracked state is CI-owned). No sudo; no secrets on this tier.
+# by the EXIT trap), (2) the patch runhook in --reconcile mode (roam-175/roam-341: it reconciles the
+# base to HEAD + the stack, keeping byte-identical patched files untouched; the base's tracked state is CI-owned). No sudo; no secrets on this tier.
 
 # roam-258: hold a power assertion for the WHOLE job before anything else runs.
 # The builder idle-sleeps after ONE minute on battery (pmset -b sleep 1); a long
@@ -25,7 +25,7 @@ fi
 set -euo pipefail
 
 # roam-258: refuse a battery start BEFORE any side effect — before the env-contract checks, the
-# overlay symlink flip, the pristine reconcile, the patch runhook, the suites and the build. Path is
+# overlay symlink flip, the reconciling patch runhook, the suites and the build. Path is
 # derived from THIS script's location, not the CWD: the workflows invoke us as
 # `bash roamux/build/ci/tier2_job.sh` from ${GITHUB_WORKSPACE} and we later `cd "${SRC}"`.
 bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/require_ac_power.sh"
