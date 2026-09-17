@@ -62,9 +62,10 @@ CONFIG_REL = "testing/variations/fieldtrial_testing_config.json"
 PATHSPECS = ("*.cc", "*.mm", "*.h")
 BUCKETS = ("effective_flips", "noops", "unresolved")
 
-# Rule step 2: unanchored, literal base::FEATURE_* token, whitespace-only between arguments.
+# Rule step 2: unanchored, literal base::FEATURE_* token (whole identifier — `..._BY_DEFAULT_X` is not
+# the token), whitespace-only between arguments.
 _DEFINITION = re.compile(
-    rb'BASE_FEATURE\(\s*k(\w+)\s*,\s*(?:"([^"]*)"\s*,\s*)?base::FEATURE_(ENABLED|DISABLED)_BY_DEFAULT')
+    rb'BASE_FEATURE\(\s*k(\w+)\s*,\s*(?:"([^"]*)"\s*,\s*)?base::FEATURE_(ENABLED|DISABLED)_BY_DEFAULT(?!\w)')
 
 LIMITATIONS = (
     "a bare `FEATURE_DISABLED_BY_DEFAULT` (inside `namespace base`) or a `base::FeatureState::` spelling "

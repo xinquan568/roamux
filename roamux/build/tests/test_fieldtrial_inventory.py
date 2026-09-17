@@ -80,6 +80,8 @@ FIXTURE_CONFIG = {
     "IfStudy": _study(["mac"], _exp("Enabled", enable=["Iffy"])),
     # no definition anywhere -> unresolved
     "MissingStudy": _study(["mac"], _exp("Enabled", enable=["Missing"])),
+    # the literal token is a whole identifier: base::FEATURE_DISABLED_BY_DEFAULT_SUFFIX is not it
+    "SuffixStudy": _study(["mac"], _exp("Enabled", enable=["Suffix"])),
     # limitation 3: platform-conditional duplicate; the textually-first (non-mac) branch wins
     "DupStudy": _study(["mac"], _exp("Enabled", enable=["Dup"])),
     # limitation 4: a *_browsertest.cc that sorts first supplies the default
@@ -119,6 +121,7 @@ BASE_FEATURE(kCross, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kSecond0, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kSecondIgnored, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kWinOnly, base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kSuffix, base::FEATURE_DISABLED_BY_DEFAULT_SUFFIX);
 }  // namespace features
 """,
     "base/features.cc": """\
@@ -144,14 +147,14 @@ const DohProviderEntry kEntry{
 }
 
 EXPECTED = {
-    "studies": 12,
-    "forced_on_directives": 10,
+    "studies": 13,
+    "forced_on_directives": 11,
     "forced_off_directives": 2,
     "params_vanishing": 1,
     "forced_on": {
         "effective_flips": ["Beta", "Cross", "Doh", "Dup"],
         "noops": ["Alpha", "Second0"],
-        "unresolved": ["Bare", "Iffy", "Missing", "State"],
+        "unresolved": ["Bare", "Iffy", "Missing", "State", "Suffix"],
     },
     "forced_off": {
         "effective_flips": ["Gamma"],
@@ -241,12 +244,22 @@ class ResolverTest(_FixtureRepo):
         self.assertEqual(self.run_tool().returncode, 0)
         md = (self.out / "inventory.md").read_text()
         self.assertIn("1.0.0.0", md)
-        self.assertIn("unresolved", md.lower())
-        self.assertIn("4", md)  # forced-ON unresolved count
+        # The count rows, cell by cell: directives | flips | no-ops | unresolved (bold).
+        self.assertIn("| forced-ON | 11 | 4 | 2 | **5** |", md)
+        self.assertIn("| forced-OFF | 2 | 1 | 1 | **0** |", md)
+        self.assertIn("## Features forced ON — unresolved (5)", md)
+        self.assertIn("## Features forced OFF — unresolved (0)", md)
         for phrase in ("textual-v1", "base::FEATURE_", "#if", "first", "test"):
             self.assertIn(phrase, md, f"inventory.md must document the rule's limitations ({phrase})")
-        for name in ("Beta", "Gamma", "Bare", "Missing"):
+        for name in ("Beta", "Gamma", "Bare", "Missing", "Suffix"):
             self.assertIn(name, md)
+
+    def test_wrong_unresolved_count_in_md_is_detected(self):
+        # Negative control for the row assertion above: a row with the unresolved cell zeroed must
+        # not be present, so the assertion is not satisfiable by a coincidental digit elsewhere.
+        self.assertEqual(self.run_tool().returncode, 0)
+        md = (self.out / "inventory.md").read_text()
+        self.assertNotIn("| forced-ON | 11 | 4 | 2 | **0** |", md)
 
     def test_summary_on_stdout(self):
         r = self.run_tool()
