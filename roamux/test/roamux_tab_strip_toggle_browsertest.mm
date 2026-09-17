@@ -27,6 +27,7 @@
 #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
+#include "chrome/browser/ui/views/tabs/vertical/vertical_tab_view.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
@@ -40,6 +41,8 @@
 #include "roamux/test/support/roamux_browser_test.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/focus/focus_manager.h"
+#include "ui/views/view_utils.h"
+#include "ui/views/widget/widget.h"
 
 namespace roamux {
 namespace {
@@ -327,6 +330,71 @@ IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
   Browser* other = CreateBrowser(browser()->profile());
   other->window()->Activate();
   EXPECT_TRUE(StaysOpen());
+}
+
+// roam-306: depth-first lookup of the strip's ACTIVE VerticalTabView (the
+// view the pin's pane focus lands on).
+VerticalTabView* FindActiveVerticalTabView(views::View* root) {
+  if (auto* tab_view = views::AsViewClass<VerticalTabView>(root)) {
+    return tab_view->IsActive() ? tab_view : nullptr;
+  }
+  for (views::View* child : root->children()) {
+    if (VerticalTabView* hit = FindActiveVerticalTabView(child)) {
+      return hit;
+    }
+  }
+  return nullptr;
+}
+
+// roam-306: closing a window whose keyboard focus rests on a vertical tab
+// view. Closing detaches the tabs: TabCollectionNode::RemoveChild destroys
+// each tab's collection node (VerticalTabView::ResetCollectionNode nulls the
+// view's pointer) and hands the still-alive view to the animating layout
+// manager, which makes it unfocusable; FocusManager::AdvanceFocusIfNecessary
+// then moves focus off it ONLY if the widget is active. On an INACTIVE
+// window focus stays on the node-less view until Widget::CloseWithReason
+// clears the focus manager, which blurs it with nothing focused —
+// VerticalTabView::OnBlur -> UpdateHoverCard -> CHECK(collection_node_)
+// (upstream vertical_tab_view.cc; patch 0074 guards the focus callbacks).
+// macOS stores and clears the focused view when a window loses key status,
+// so focus is established AFTER the window has gone inactive.
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
+                       FocusedStripTabSurvivesInactiveWindowClose) {
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  views::Widget* widget = test_view()->GetWidget();
+  browser()->window()->Activate();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return !widget->IsActive(); }));
+  VerticalTabView* tab_view = FindActiveVerticalTabView(region_view());
+  ASSERT_TRUE(tab_view);
+  tab_view->RequestFocus();
+  views::FocusManager* focus_manager = test_view()->GetFocusManager();
+  ASSERT_EQ(focus_manager->GetFocusedView(), tab_view);
+  ASSERT_FALSE(widget->IsActive());
+  Browser* closing = test_browser_;
+  test_browser_ = nullptr;
+  chrome::CloseWindow(closing);
+  ui_test_utils::WaitForBrowserToClose(closing);
+}
+
+// roam-306 (characterization): the ACTIVE-window close, where focus is
+// advanced off the dying tab view before the focus manager is cleared. Expected
+// to pass before and after patch 0074; it pins the contrast with the case above.
+IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest,
+                       FocusedStripTabSurvivesActiveWindowClose) {
+  Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return IsPeekOpen(); }));
+  views::Widget* widget = test_view()->GetWidget();
+  test_browser_->window()->Activate();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return widget->IsActive(); }));
+  VerticalTabView* tab_view = FindActiveVerticalTabView(region_view());
+  ASSERT_TRUE(tab_view);
+  tab_view->RequestFocus();
+  ASSERT_EQ(test_view()->GetFocusManager()->GetFocusedView(), tab_view);
+  Browser* closing = test_browser_;
+  test_browser_ = nullptr;
+  chrome::CloseWindow(closing);
+  ui_test_utils::WaitForBrowserToClose(closing);
 }
 
 IN_PROC_BROWSER_TEST_F(RoamuxTabStripToggleTest, HoverSettingFlipResets) {
