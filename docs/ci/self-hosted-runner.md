@@ -150,8 +150,8 @@ never killed by a newcomer; `queue: max` — waiting jobs queue in order, where 
 single pending slot would cancel the older pending job) — declared, so it still holds if a second
 runner is ever added. tier-2 and nightly carry an explicit `timeout-minutes: 720` (release: 1440):
 GitHub's silent 6h default service-cancelled a cold nightly (run 29827734729) mid-compile; a stated
-bound fails such a run honestly instead. Each run reconciles the base to HEAD + its stack (byte-identical patched files untouched) and
-re-applies its own stack (roam-175 — so whatever applied set a run leaves behind, the next run
+bound fails such a run honestly instead. Each run reconciles the base to HEAD + its own stack in one step (byte-identical patched files
+untouched; roam-175/roam-341 — so whatever applied set a run leaves behind, the next run
 recovers; before roam-175 a patch-rewriting PR wedged the runhook until a manual reset); avoid
 heavy local builds while a CI job runs — the reconcile will reset a racing local stack mid-build.
 

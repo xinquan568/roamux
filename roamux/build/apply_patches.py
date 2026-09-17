@@ -127,14 +127,14 @@ def _simulate(chromium_src, patches, union):
 _INDEX_CONFLICT = b"appears as both a file and as a directory"
 
 
-def _through_symlink(root, rel_path):
-    """True if any ancestor component of rel_path (below root) is a symlink — never remove through one."""
+def _first_symlinked_ancestor(root, rel_path):
+    """The first ancestor component of rel_path (below root) that is a symlink, or None."""
     current = pathlib.Path(root)
     for part in pathlib.PurePosixPath(rel_path).parts[:-1]:
         current = current / part
         if current.is_symlink():
-            return True
-    return False
+            return current
+    return None
 
 
 def _reconcile(chromium_src, union, target):
@@ -238,14 +238,21 @@ def _reconcile(chromium_src, union, target):
     g("update-index", "-q", "--refresh")  # rc 1 just means "some entries need update"
     removed = sorted(p for p in union if target.get(p) is None and os.path.lexists(os.path.join(src, p)))
     for path in union:
-        # A real directory sitting on a union path is the one obstruction git's checkout leaves
-        # behind (it unlinks files and symlinks in the way, not directories), and its ignored
-        # contents would then survive `clean`. Remove it — but ONLY when every ancestor
-        # component is a real directory: through a symlinked ancestor the path may point outside
-        # the checkout, and git will replace that ancestor symlink itself when it checks the
-        # entry out, leaving the link's target untouched.
+        # Obstructions git's checkout does not clear. (a) A symlinked ANCESTOR of a union path:
+        # the target tree has a real directory there, so the link is wrong whatever it points
+        # at; git replaces it for an entry it checks out but skips an entry it only deletes, and
+        # an ignored link then survives `clean` with the stack-deleted path still reachable
+        # through it. Unlink the link itself — never anything behind it (the old sequence
+        # replaced it with HEAD's directory the same way). (b) A real directory
+        # sitting on the union path itself (git unlinks files and links in the way, not
+        # directories), whose ignored contents would survive `clean`: remove it — only now that
+        # every ancestor is known to be a real directory inside the checkout.
+        ancestor_link = _first_symlinked_ancestor(src, path)
+        if ancestor_link is not None:
+            os.unlink(ancestor_link)
+            continue
         obstruction = pathlib.Path(src) / path
-        if obstruction.is_dir() and not obstruction.is_symlink() and not _through_symlink(src, path):
+        if obstruction.is_dir() and not obstruction.is_symlink():
             shutil.rmtree(obstruction)
     dirty = g("diff-files", "--name-only", "-z", "--", *union) if union else None
     needs_update = set(dirty.stdout.decode("utf-8", "replace").split("\0")) if dirty else set()

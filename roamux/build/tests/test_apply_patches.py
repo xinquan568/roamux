@@ -569,12 +569,12 @@ class ReconcileModeTest(unittest.TestCase):
         # target alone and let git replace the symlinked ancestor — for a surviving union path and
         # for a stack-DELETED one alike, matching the old sequence.
         (self.patches / "0002-inner.patch").write_text(PATCH_INNER)
-        for case in ("surviving", "deleted"):
+        for case in ("surviving", "deleted", "deleted-ignored-link"):
             with self.subTest(case=case):
                 new = self.make_repo(self.tmp / f"sym-{case}-new")
                 old = self.make_repo(self.tmp / f"sym-{case}-old")
                 patches = self.patches
-                if case == "deleted":
+                if case.startswith("deleted"):
                     patches = self.tmp / f"patches-{case}"
                     patches.mkdir()
                     (patches / "0001-add-marker.patch").write_text(PATCH_ADD_MARKER)
@@ -586,16 +586,22 @@ class ReconcileModeTest(unittest.TestCase):
                 for src in (new, old):
                     shutil.rmtree(src / "dir")
                     os.symlink(outside, src / "dir")
+                    if case == "deleted-ignored-link":
+                        # the link itself is ignored: clean would keep it, and git skips an
+                        # entry it only DELETES behind an obstructing ancestor — the stack-
+                        # deleted path would stay reachable through the link (round-2 finding)
+                        (src / ".git" / "info" / "exclude").write_text("/dir\n")
                 self.reconcile(src=new, patches=patches)
                 self.old_sequence(old, patches)
                 self.assertEqual((outside / "inner.txt" / "sentinel").read_text(), "keep me\n",
                                  "the reconcile must never remove anything outside the checkout")
                 self.assertEqual(_snapshot(new), _snapshot(old))
-                self.assertFalse((new / "dir").is_symlink(), "git replaces the symlinked ancestor")
+                self.assertFalse((new / "dir").is_symlink(), "the symlinked ancestor is gone")
                 if case == "surviving":
                     self.assertEqual((new / "dir" / "inner.txt").read_text(), "inner\nINNER-MARKER\n")
                 else:
-                    self.assertFalse((new / "dir" / "inner.txt").exists())
+                    self.assertFalse(os.path.lexists(new / "dir" / "inner.txt"))
+                    self.assertFalse(os.path.lexists(new / "dir"), "nothing may keep the deleted path reachable")
 
     def test_staged_file_directory_conflicts_both_directions(self):
         (self.patches / "0002-inner.patch").write_text(PATCH_INNER)
