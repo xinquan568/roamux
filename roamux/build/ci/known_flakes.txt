@@ -17,6 +17,7 @@
 # ('*' matches within the test name only; '|' separates exactly three fields; '#' starts a comment.)
 mode: warn
 RoamuxTabStripToggleTest.EscInStripUnpinsEscInPageDoesNot | roam-336 | first-attempt focus-wait timeout (RunUntil on the focused view inside the strip) seen 2026-09-13; not the roam-306 CHECK crash, which roam-306 fixed (patch 0074)
+RoamuxTabStripToggleTest.PinFocusesStrip | roam-336 | same focus-wait timeout as the row above (identical RunUntil on the focused view inside the strip after Toggle), first CI observation PR #348 run 35245701444 attempt 1, 2026-09-17; not the roam-306 CHECK
 RoamuxTabStripToggleTest.HoverPromotionToPin | roam-349 | first-attempt timeout waiting for the hover reveal (RunUntil on IsPeekOpen) under launcher load; seen before and after patch 0074 (roam-306), so not the collection_node_ CHECK; PR #348 five-run record attempt 5, 2026-09-17
 RoamuxNewTabPositionVerticalScrollTest.NewTabAfterActiveIsFullyVisible | roam-307 | first attempt FAILED after ~10 s, passes on retry in ~4.7 s (timing)
 RoamuxSparkleFeedTest.TamperedItemRejectedAtSignatureGate | roam-310 | first attempts FAIL with SUSparkleErrorDomain Code=1004 "Failed to resume installing update" before driver_.updateFound is set (roamux_sparkle_feed_test.mm:219); the passing attempt shows the expected Code=4005/10 signature rejection (seen 2026-09-06, PR #309 run 34018213575: FAILURE, FAILURE, SUCCESS)
