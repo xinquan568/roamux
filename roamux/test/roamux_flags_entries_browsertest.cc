@@ -125,12 +125,41 @@ constexpr char kResetThroughButtonJs[] = R"JS(
   })()
 )JS";
 
+// After the reset click, polls the rendered rows (bounded) until the feature
+// row shows Default again and the switch row shows disabled.
+constexpr char kWaitForResetRenderJs[] = R"JS(
+  (async () => {
+    const app = document.querySelector('flags-app');
+    const read = () => {
+      const rows = [...app.shadowRoot.querySelectorAll(
+          '#tab-content-available flags-experiment')];
+      const find = (id) => rows.find(
+          (r) => r.shadowRoot.querySelector('.experiment')?.id === id);
+      const feature = find('roamux-new-tab-position')?.getSelect();
+      const sw = find('roamux-signin-opt-in')?.getSelect();
+      return feature && sw && feature.selectedIndex === 0 &&
+          sw.value === 'disabled';
+    };
+    for (let i = 0; i < 200; ++i) {  // up to ~10 s
+      if (read()) return 'rendered';
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return 'timeout';
+  })()
+)JS";
+
 struct ModelRow {
   bool supported = false;
   bool is_default = true;
   bool enabled = false;
   bool has_enabled = false;
   std::string name;
+  std::string description;
+  // For FEATURE_VALUE_TYPE rows: the internal_name of the option the backend
+  // reports selected ("<row>@1" Enabled, "@2" Disabled). On the default no
+  // option is stored, so none is reported selected (the page shows Default).
+  std::string selected_option;
+  int selected_options = 0;
 };
 
 class RoamuxFlagsEntriesTest : public roamux::test::RoamuxBrowserTest {
@@ -160,6 +189,19 @@ class RoamuxFlagsEntriesTest : public roamux::test::RoamuxBrowserTest {
         }
         if (const std::string* name = dict.FindString("name")) {
           row.name = *name;
+        }
+        if (const std::string* description = dict.FindString("description")) {
+          row.description = *description;
+        }
+        if (const base::ListValue* options = dict.FindList("options")) {
+          for (const base::Value& option : *options) {
+            if (option.GetDict().FindBool("selected").value_or(false)) {
+              ++row.selected_options;
+              if (const std::string* n = option.GetDict().FindString("internal_name")) {
+                row.selected_option = *n;
+              }
+            }
+          }
         }
         rows[*internal_name] = row;
       }
@@ -207,6 +249,11 @@ IN_PROC_BROWSER_TEST_F(RoamuxFlagsEntriesTest, EveryRowIsInTheModel) {
     EXPECT_TRUE(row.supported) << name << " must be supported on this platform";
     EXPECT_TRUE(row.is_default) << name << " must start on its default";
     EXPECT_FALSE(row.name.empty()) << name << " must have a visible name";
+    EXPECT_FALSE(row.description.empty()) << name << " must have a description";
+    if (std::string(name) != kSwitchRow) {
+      EXPECT_EQ(row.selected_options, 0)
+          << name << " on its default must report no stored option (" << row.selected_option << ")";
+    }
   }
   EXPECT_TRUE(rows[kSwitchRow].has_enabled) << "the switch mirror carries `enabled`";
   EXPECT_FALSE(rows[kToggledFeatureRow].has_enabled)
@@ -244,17 +291,35 @@ IN_PROC_BROWSER_TEST_F(RoamuxFlagsEntriesTest, RowsAreUsableAndResetAllRestoresT
     return !rows[kToggledFeatureRow].is_default && rows[kSwitchRow].enabled;
   }));
   {
+    // The backend must have stored the option the UI chose — Disabled (@2) —
+    // and nothing else; storing Enabled (@1) would also be "non-default".
+    std::map<std::string, ModelRow> model = RoamuxModelRows();
+    EXPECT_EQ(model[kToggledFeatureRow].selected_option,
+              std::string(kToggledFeatureRow) + "@2");
+    EXPECT_EQ(model[kToggledFeatureRow].selected_options, 1);
+    EXPECT_TRUE(model[kSwitchRow].enabled);
     base::ListValue rows = PageRows();
     EXPECT_EQ(FindRow(rows, kToggledFeatureRow)->FindInt("selectedIndex"), 2);
     EXPECT_EQ(*FindRow(rows, kSwitchRow)->FindString("value"), "enabled");
   }
 
   ASSERT_EQ(content::EvalJs(contents(), kResetThroughButtonJs), "clicked");
+  // The reset handler re-requests the feature data and awaits re-rendering,
+  // but the app's readiness promise resolved once at load and is never
+  // replaced — so wait on the rendered DOM itself (bounded), not on that promise.
+  ASSERT_EQ(content::EvalJs(contents(), kWaitForResetRenderJs), "rendered");
   ASSERT_TRUE(base::test::RunUntil([&] {
     std::map<std::string, ModelRow> rows = RoamuxModelRows();
     return rows[kToggledFeatureRow].is_default && rows[kSwitchRow].is_default &&
            !rows[kSwitchRow].enabled;
   }));
+  {
+    // Back on the default: no stored option, is_default true.
+    std::map<std::string, ModelRow> model = RoamuxModelRows();
+    EXPECT_EQ(model[kToggledFeatureRow].selected_options, 0)
+        << model[kToggledFeatureRow].selected_option;
+    EXPECT_TRUE(model[kToggledFeatureRow].is_default);
+  }
   base::ListValue rows = PageRows();
   EXPECT_EQ(FindRow(rows, kToggledFeatureRow)->FindInt("selectedIndex"), 0)
       << "Reset all must put the feature row back on Default";
