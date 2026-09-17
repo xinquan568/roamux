@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// roam-214: the tab-strip pin/peek toggle (patches 0053-0055). TDD: this
+// roam-214: the tab-strip pin/peek toggle (patches 0053-0054; its flags row, historically 0055, is in patch 0073 since roam-340). TDD: this
 // suite was written and RED-run BEFORE patch 0054 (the seam/glue patch) was
 // applied — with 0053 alone the command exists but pins nothing, so the
 // Mode-A/B behavioral cases fail; 0054 turns them green.

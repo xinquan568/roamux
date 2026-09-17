@@ -1,0 +1,248 @@
+# roam-340: EVERY Roamux chrome://flags row lives here — one patch for the three
+# generated/flag files, collapsed from patch 0024's two flag-file sections and the
+# ten per-feature *-flags-entry patches (0043, 0044, 0045, 0046, 0048, 0051, 0055,
+# 0064, 0066, 0069; their numbers are retired, not reused). Before this, the same
+# region of about_flags.cc was hunked by eleven patches, each carrying the earlier
+# rows as context, so one upstream change there conflicted with all of them.
+#
+# Content is byte-identical to what the eleven patches produced (roam-340 verified
+# the fully-patched tree, all 126 patched paths, equal before and after).
+#
+# RULES FOR THE NEXT ROW (read before adding a Roamux flag):
+#   * Add it HERE, never in a per-feature patch — test_patch_inventory.py fails the
+#     build if any other patch touches these three files.
+#   * This patch sorts LAST among patches touching these files; keep it so.
+#   * flag-metadata.json is in GLOBAL alphabetical order ("roamux-*" sorts before
+#     "robust-*"/"running-*"), expiry_milestone -1 requires a
+#     flag-never-expire-list.json entry, and names must be unique — enforced only
+#     by AboutFlagsTest (unit_tests; NOT run by any Roamux CI job): run it locally,
+#     DYLD_FRAMEWORK_PATH=roamux/third_party/sparkle out/Default/unit_tests
+#     --gtest_filter='AboutFlagsTest.*'.
+#   * roamux_browsertests' RoamuxFlagsEntriesTest (tier-2) asserts every expected
+#     row is present, rendered and usable on chrome://flags — extend its list.
+#
+# Rows (10 FEATURE_VALUE_TYPE kill-switches + 1 SINGLE_VALUE_TYPE switch mirror):
+#   roamux-bookmark-subfolder-groups, roamux-brave-style-profiles, roamux-edge-import,
+#   roamux-external-open-profile, roamux-initial-url, roamux-new-tab-position,
+#   roamux-refresh-all-initial-urls, roamux-signin-opt-in (switch; hidden by
+#   ShouldSkipConditionalFeatureEntry while kBraveStyleProfiles is off),
+#   roamux-tab-strip-position, roamux-tab-strip-toggle-shortcut, roamux-tab-visit-nav.
+#   kRoamuxSchemeAlias deliberately has no row (unchanged by roam-340).
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -7,6 +7,9 @@
+ 
+ #include "chrome/browser/about_flags.h"
+ 
++#include "roamux/common/roamux_switches.h"
++#include "roamux/common/roamux_features.h"
++
+ #include <iterator>
+ #include <map>
+ #include <memory>
+@@ -4740,6 +4743,105 @@ const FeatureEntry::FeatureVariation kGestureUserEducationVariations[] = {
+ //
+ // When adding a new choice, add it to the end of the list.
+ const FeatureEntry kFeatureEntries[] = {
++    // Roamux (roam-266): the E5 Brave-style profiles feature, graduated to
++    // default-on for v0.0.1-alpha.9. This entry is the kill-switch — every
++    // other Roamux flag already shipped one when it graduated (roam-226), and
++    // without it this would be the only default-on flag a user cannot turn
++    // off. Listed ahead of roamux-signin-opt-in because that row is the child
++    // control: it is hidden entirely while this feature is off.
++    {"roamux-brave-style-profiles", "Roamux: Brave-style profiles",
++     "Suppresses the default Chromium sign-in surfaces and takes profile "
++     "creation down the name-only path. Turn this off to restore stock "
++     "Chromium profile and sign-in behaviour.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kBraveStyleProfiles)},
++    // Roamux (roam-269): the refresh-all-initial-URLs command. Ships default-on
++    // like every Roamux flag since roam-226, so this entry IS the kill-switch
++    // and lands in the same change as the feature (the roam-266 precedent —
++    // without it this would be the only default-on Roamux flag a user cannot
++    // turn off). Turning it off unclaims Ctrl+Opt+Cmd+R entirely: the registry
++    // drops its row and CommandForChord returns -1, so the chord falls through
++    // to stock behaviour.
++    {"roamux-refresh-all-initial-urls", "Roamux: refresh all initial URLs",
++     "Adds Ctrl+Opt+Cmd+R, which reloads every tab in the window to its initial "
++     "URL, started one at a time rather than all at once. Turn this off to "
++     "remove the shortcut and the tab-menu item.",
++     kOsMac,
++     FEATURE_VALUE_TYPE(roamux::features::kRefreshAllInitialUrls)},
++    // Roamux (roam-277): where Cmd+T / "+" / File > New Tab insert the new
++    // tab (Settings > Appearance > "New tab position"). Ships default-on like
++    // every Roamux flag since roam-226, so this entry IS the kill-switch and
++    // lands in the same change as the feature (the roam-266/269 precedent).
++    // Turning it off restores the stock patch-0067 behaviour (end of the
++    // active tab's group) and hides the Settings row; the pref is never read.
++    {"roamux-new-tab-position", "Roamux: new tab position",
++     "Adds a Settings > Appearance option that decides where a new tab "
++     "(Cmd+T, the + button, File > New Tab) is inserted: at the end of the "
++     "tab strip, at the end of the current tab's group, or right after the "
++     "current tab. Turn this off to remove the setting and use the default.",
++     kOsMac, FEATURE_VALUE_TYPE(roamux::features::kNewTabPosition)},
++    // Roamux (roam-31): developer mirror of
++    // roamux.signin.optional_entry_point_enabled (E5). Functional sign-in
++    // additionally requires a keyed-and-authorized build (three-state
++    // honesty, plan §7.3).
++    {"roamux-signin-opt-in", "Roamux: optional sign-in entry point",
++     "Re-exposes the Chromium sign-in/sync surfaces on the next launch, as if "
++     "the Roamux opt-in preference were enabled. Sign-in stays "
++     "inert-with-explanation unless the build is keyed and authorized.",
++     kOsMac | kOsWin | kOsLinux, SINGLE_VALUE_TYPE(roamux::switches::kSigninOptIn)},
++    // Roamux (roam-185): the E1 4-way tab-strip position control, shipped
++    // default-on and user-toggleable here.
++    {"roamux-tab-strip-position", "Roamux: tab strip position",
++     "Enables the Roamux tab strip position control (top / bottom / left / "
++     "right) in Appearance settings and the tab context menu.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kTabStripPosition)},
++    // Roamux (roam-208): bookmark subfolders as tab groups (ships default
++    // OFF; flip-on is a post-verification follow-up).
++    {"roamux-bookmark-subfolder-groups",
++     "Roamux: open bookmark subfolders as tab groups",
++     "Adds a bookmark-folder context menu item that opens each qualifying "
++     "subfolder as its own named tab group in one new window.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kBookmarkSubfolderGroups)},
++    // Roamux (roam-187): the E2 per-tab initial URL, shipped default-on and
++    // user-toggleable here.
++    {"roamux-initial-url", "Roamux: per-tab initial URL",
++     "Enables the Roamux per-tab initial URL: an \"Initial URL\" tab "
++     "context-menu submenu, a dual-reload shortcut, and a Reload-initial-URL "
++     "shortcut row in Appearance settings.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kInitialUrl)},
++    // Roamux (roam-189): E4 tab visit-order navigation, shipped default-on and
++    // user-toggleable here.
++    {"roamux-tab-visit-nav", "Roamux: tab visit-order navigation",
++     "Enables Roamux tab visit-order navigation: settled tab visits are "
++     "recorded per profile, and the tab-visit back / forward shortcuts walk "
++     "them in most-recently-used order.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kTabVisitNav)},
++    // Roamux (roam-190): E3 Microsoft Edge import, shipped default-on and
++    // user-toggleable here. macOS-only: the importer reads macOS Edge
++    // profiles and Keychain secrets.
++    {"roamux-edge-import", "Roamux: import from Microsoft Edge",
++     "Adds Microsoft Edge as a source in the import-data dialog on macOS.",
++     kOsMac, FEATURE_VALUE_TYPE(roamux::features::kEdgeImport)},
++    // Roamux (roam-214): vertical-tab-strip pin/peek toggle shortcut.
++    {"roamux-tab-strip-toggle-shortcut",
++     "Roamux: tab strip toggle shortcut",
++     "Adds a rebindable keyboard shortcut (default Ctrl+Cmd+T) that pins the "
++     "auto-hide vertical tab strip open (\"peek\") and toggles collapse when "
++     "auto-hide is off. Disabled for top/bottom tab strip placement.",
++     kOsMac,
++     FEATURE_VALUE_TYPE(roamux::features::kTabStripToggleShortcut)},
++    // Roamux (roam-213): designated profile for external opens.
++    {"roamux-external-open-profile",
++     "Roamux: default profile for external links and files",
++     "Files and links opened from other apps (Finder, Mail, ...) open in the "
++     "profile designated in that profile's settings, instead of the "
++     "last-active profile. External opens made while an Incognito window is "
++     "active land in the designated profile's regular window.",
++     kOsMac, FEATURE_VALUE_TYPE(roamux::features::kRoamuxExternalOpenProfile)},
+ // Include generated flags for flag unexpiry; see //docs/flag_expiry.md and
+ // //tools/flags/generate_unexpire_flags.py.
+ #include "build/chromeos_buildflags.h"
+@@ -13376,6 +13478,12 @@ void GetStorage(Profile* profile, GetStorageCallback callback) {
+ bool ShouldSkipConditionalFeatureEntry(const flags_ui::FlagsStorage* storage,
+                                        const FeatureEntry& entry) {
+   version_info::Channel channel = chrome::GetChannel();
++  // Roamux (roam-31): the sign-in opt-in mirror exists only while the E5
++  // epic flag is on — flag-off builds show no Roamux flags row.
++  if (std::string_view("roamux-signin-opt-in") == entry.internal_name &&
++      !base::FeatureList::IsEnabled(roamux::features::kBraveStyleProfiles)) {
++    return true;
++  }
+ #if BUILDFLAG(IS_CHROMEOS)
+   // enable-ui-devtools is only available on for non Stable channels.
+   if (std::string_view(ui_devtools::switches::kEnableUiDevTools) ==
+diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
+--- a/chrome/browser/flag-metadata.json
++++ b/chrome/browser/flag-metadata.json
+@@ -8395,6 +8395,61 @@
+     "owners": [ "eleanorlee@google.com", "lazzzis@google.com", "twellington@chromium.org" ],
+     "expiry_milestone": 150
+   },
++  {
++    "name": "roamux-bookmark-subfolder-groups",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-brave-style-profiles",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-edge-import",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-external-open-profile",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-initial-url",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-new-tab-position",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-refresh-all-initial-urls",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-signin-opt-in",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-tab-strip-position",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-tab-strip-toggle-shortcut",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
++    "name": "roamux-tab-visit-nav",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
+   {
+     "name": "robust-window-management-experimental",
+     "owners": [ "aishwaryarj@google.com", "rathomas@google.com", "clank-large-form-factors@google.com" ],
+diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-never-expire-list.json
+--- a/chrome/browser/flag-never-expire-list.json
++++ b/chrome/browser/flag-never-expire-list.json
+@@ -115,6 +115,17 @@
+   "related-website-sets-permission-grants",
+   "release-notes-notification-all-channels",
+   "release-notes-notification-always-eligible",
++  "roamux-bookmark-subfolder-groups",
++  "roamux-brave-style-profiles",
++  "roamux-edge-import",
++  "roamux-external-open-profile",
++  "roamux-initial-url",
++  "roamux-new-tab-position",
++  "roamux-refresh-all-initial-urls",
++  "roamux-signin-opt-in",
++  "roamux-tab-strip-position",
++  "roamux-tab-strip-toggle-shortcut",
++  "roamux-tab-visit-nav",
+   "scheduler-configuration",
+   "set-market-url-for-testing",
+   "show-autofill-type-predictions",

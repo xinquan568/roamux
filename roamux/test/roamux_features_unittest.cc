@@ -39,7 +39,7 @@ TEST(RoamuxFeaturesTest, ScopedOverrideLeavesUnnamedFeaturesAtTheirDefault) {
 TEST(RoamuxFeaturesTest, BraveStyleProfilesEnabledByDefault) {
   // roam-266: the E5 Brave-style profiles feature ships enabled by default in
   // v0.0.1-alpha.9 (chrome://flags/#roamux-brave-style-profiles lets users opt
-  // out — added by patch 0064 in the same change, since graduating without a
+  // out — added with the feature as patch 0064 (its row is in patch 0073 since roam-340), since graduating without a
   // kill-switch would have made this the only default-on flag with no
   // off-switch).
   EXPECT_TRUE(
@@ -96,7 +96,7 @@ TEST(RoamuxFeaturesTest, ExternalOpenProfileEnabledByDefault) {
 }
 
 // roam-269: the refresh-all-initial-URLs feature ships DEFAULT-ON (its
-// chrome://flags entry, patch 0066, is the kill-switch), and its two tunable
+// chrome://flags entry — landed as patch 0066, in patch 0073 since roam-340 — is the kill-switch), and its two tunable
 // params carry the §7.3 defaults when unset.
 TEST(RoamuxFeaturesTest, RefreshAllInitialUrlsShipsDefaultOn) {
   EXPECT_TRUE(
@@ -109,7 +109,7 @@ TEST(RoamuxFeaturesTest, RefreshAllInitialUrlsParamDefaults) {
 }
 
 // roam-277: the new-tab position setting ships DEFAULT-ON (its chrome://flags
-// entry, patch 0069, is the kill-switch — the roam-266/269 rule).
+// entry — landed as patch 0069, in patch 0073 since roam-340 — is the kill-switch; the roam-266/269 rule).
 TEST(RoamuxFeaturesTest, NewTabPositionShipsDefaultOn) {
   EXPECT_TRUE(base::FeatureList::IsEnabled(roamux::features::kNewTabPosition));
 }
