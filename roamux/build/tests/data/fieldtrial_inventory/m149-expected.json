@@ -1,0 +1,19 @@
+{
+  "pin": "149.0.7827.201",
+  "platform": "mac",
+  "studies": 653,
+  "forced_on_directives": 747,
+  "forced_off_directives": 47,
+  "params_vanishing": 197,
+  "forced_on": {
+    "effective_flips": 518,
+    "noops": 113,
+    "unresolved": 116
+  },
+  "forced_off": {
+    "effective_flips": 13,
+    "noops": 21,
+    "unresolved": 13
+  },
+  "source": "issue #241 inventory-refinement comment (2026-07-30T14:08Z) and ADR 0002; lists in m149-effective-diff.json"
+}

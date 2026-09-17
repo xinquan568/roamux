@@ -132,14 +132,35 @@ If roam-340 (collapsing the flag-entry patches) has landed, this step becomes mo
 "regenerate the inventory (one script over the config JSON + a `BASE_FEATURE` harvest) … and attach it to
 the uprev record."
 
-Classify every feature named in a study's `enable_features` or `disable_features`, separately for forced-ON
-and forced-OFF directives, into **effective flips** (the compiled default differs from the directive),
-**no-ops** (it equals the compiled default), and **unresolved** (conditional or macro-defined defaults a
-textual scan cannot resolve — treat as potential flips). Also count studies whose field-trial params vanish.
+The generator is `roamux/build/fieldtrial_inventory.py` (roam-342). It classifies every feature named in a
+mac study's first-listed experiment's `enable_features` or `disable_features`, separately for forced-ON and
+forced-OFF directives, into **effective flips**, **no-ops** and **unresolved**, and counts the activated
+experiments whose field-trial params vanish. Those buckets are the generator's `textual-v1` harvest
+classifications of the pristine tag — **not verified macOS compiled behaviour** (ADR 0002 §Consequences,
+"Methodology note": a non-mac `#if` branch or a test source can supply the default, and some literal
+defaults are spelled in a form the rule does not match). Treat *unresolved* as potential flips, and read a
+jump in that count as "new spelling the rule missed", not as a config change. The historical M149 numbers
+stand.
 
-**The generator does not exist.** It was never committed, and only its M149 outputs survive. **roam-342**
-recreates it; its acceptance test is reproducing issue #241's M149 counts (forced-ON 518 / 113 / 116,
-forced-OFF 13 / 21 / 13, 197 param sets). Until it lands, this step cannot be completed as ADR 0002 requires.
+```sh
+python3 roamux/build/fieldtrial_inventory.py --chromium-src "$SRC" --out-dir docs/uprev-records/<TAG>/
+```
+
+It reads the pin from `roamux/build/CHROMIUM_PIN` (or `--tag <TAG>`), resolves `refs/tags/<pin>` strictly
+like the staleness gate, and writes `effective-diff.json` and `inventory.md` in about five seconds. **Attach
+both**: commit them under `docs/uprev-records/<TAG>/` in the uprev PR and link them from its body — that
+directory is the "uprev record" ADR 0002 refers to. The inventory reads upstream's pristine defaults; the
+overlay's own default flips (today patch `0067`, `NewTabAddsToActiveGroup`) are a separate, known delta.
+
+**[verified on M149]** — the generator reproduces issue #241's inventory exactly: 653 studies; forced-ON
+747 → 518 / 113 / 116; forced-OFF 47 → 13 / 21 / 13; 197 param sets (`REQUIRE_FIELDTRIAL_ORACLE=1
+ROAMUX_CHROMIUM_SRC=$SRC python3 -m unittest roamux.build.tests.test_fieldtrial_inventory`; tier-2 runs it
+fail-not-skip). Running it on a *new* pin is what stays [prospective].
+
+**Standing prerequisite, independent of the pin:** that acceptance test always needs tag `149.0.7827.201`
+resolvable in the runner's checkout, at every future pin. A fresh or shallow checkout must fetch it —
+`git -C "$SRC" fetch origin +refs/tags/149.0.7827.201:refs/tags/149.0.7827.201` — and the tier-2 gate fails,
+not skips, when it is absent.
 
 Separately, `roamux/build/tests/test_gn_args.py` checks that `disable_fieldtrial_testing_config = true` is
 present in both args templates. **[verified on M149]** — 3 tests pass. It validates **template text only**,
@@ -194,7 +215,8 @@ These fail silently if skipped. Perform each one.
 | roam-240 guard's probe feature | `roamux/test/roamux_test_env_browsertest.cc` — `FieldTrialTestingConfigIsOffInOverlayTests` | Confirm the probe `tabs::kVerticalTabs` is still default-off **and** enabled by the testing config at the new pin. If not, choose a new probe — otherwise the guard passes vacuously. |
 | mac deployment target vs `Assets.car` | `roamux/app/resources/icons/mac/README.md` — "re-check at uprev" | If `mac_deployment_target` in `build/config/mac/mac_sdk.gni` changed, recompile `Assets.car` with a matching `--minimum-deployment-target` using that README's recipe, then verify with `roamux/build/check_app_icon.py`. |
 | mac app icon on conflict | `roamux/patches/README.md` — patch `0029` row | Upstream is mid-migration on mac iconography: re-point the icon bundle-data targets at the Roamux payloads on **both** channels. |
-| Field-trial feature inventory | ADR 0002 | Regenerate and attach — see protocol step 8. Blocked on roam-342. |
+| Field-trial feature inventory | ADR 0002 — "regenerate the inventory" | Run protocol step 8 and commit both outputs under `docs/uprev-records/<TAG>/`. Its oracle test guards the *tool*, not the pin: it cannot tell you what flipped. |
+| Oracle tag `149.0.7827.201` reachable in the runner's checkout | `roamux/build/tests/test_fieldtrial_inventory.py` — "PERSISTENT prerequisite" | Independent of the pin: before resuming tier-2 on a fresh or shallow checkout, fetch the tag (command in protocol step 8). Guard backstop: the gate test fails, not skips, under `REQUIRE_FIELDTRIAL_ORACLE=1`. |
 | `#new-tab-adds-to-active-group` expiry at M150 | `roamux/patches/0068-new-tab-position-seam.patch` — "UPREV CAVEAT (M150)" (with `0067`) | Decide whether patches `0067` and `0068` collapse into a single Roamux-owned switch, or keep both. |
 | WebUI location-bar icon mapping | `roamux/patches/README.md` — patch `0039` row | *Conditional product obligation:* if an uprev enables `kWebUILocationBar`, add the Roamux icon mapping, because the native handler CHECKs unmapped icons. Overlay tests pin that surface off, which is exactly how the incompatibility would stay hidden. |
 | `chromium_src` override staleness | `roamux/chromium_src/README.md` — "On a milestone uprev" | Protocol step 4: re-review, then `--update`. |
@@ -230,7 +252,9 @@ preambles stay in). Two earlier sweeps built from lists of specific phrasings ea
 differently, so **re-run this superset form and classify every hit** rather than searching for particular
 wording. The 24 files hit on M149 were classified as:
 
-- **register rows** — the two tables above, sourced from: patch preambles `0065`, `0067`, `0068`, `0072`
+- **register rows** — the two tables above, sourced from (roam-342 later added two hits, both register rows:
+  `roamux/build/fieldtrial_inventory.py` restates the ADR 0002 obligation and
+  `roamux/build/tests/test_fieldtrial_inventory.py` states the oracle-tag prerequisite): patch preambles `0065`, `0067`, `0068`, `0072`
   (patch `0010`'s "Re-check on uprev" is a comment inside its diff body, so it surfaces through its README row);
   `roamux/patches/README.md` rows `0010`, `0029`, `0039`, `0065`, `0067`, `0068`, `0072`;
   `roamux/app/resources/icons/mac/README.md`; `roamux/chromium_src/README.md`; ADR 0002;

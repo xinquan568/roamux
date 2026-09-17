@@ -57,6 +57,22 @@ both files.
   diagnosis path (was it in the inventory?) and, if wanted, a deliberate re-enable path.
 - **Obligation**: regenerate the inventory (one script over the config JSON + a
   `BASE_FEATURE` harvest) at every Chromium pin bump and attach it to the uprev record.
+  The script is `roamux/build/fieldtrial_inventory.py` (roam-342); `docs/uprev.md` step 8
+  is the procedure.
+- **Methodology note (roam-342, 2026-09-17).** The numbers above are what the committed
+  generator's `textual-v1` rule produces, and the generator's acceptance test reproduces them
+  exactly from the pristine M149 tag; they are unchanged. They are **textual-harvest
+  classifications, not verified macOS compiled behaviour**: the harvest matches only the
+  literal `base::FEATURE_ENABLED_BY_DEFAULT` / `base::FEATURE_DISABLED_BY_DEFAULT` token with
+  whitespace-only argument lists, and the first match in path-then-text order wins. So
+  (a) a bare `FEATURE_DISABLED_BY_DEFAULT` (inside `namespace base`) or a
+  `base::FeatureState::` spelling counts as *unresolved* although its default is literal;
+  (b) a `#if` inside the macro's argument list counts as *unresolved*; (c) a
+  platform-conditional duplicate resolves to the textually-first branch, which can be a
+  non-mac branch — some "effective flips" and "no-ops" are therefore false; (d) test
+  sources are scanned. *Unresolved* remains "treat as a potential flip". Improving the rule
+  would move roughly thirty names between buckets and is a separate change that amends
+  these numbers; it must not happen silently.
 - Runtime verification on a packaged build (vertical-tabs surfaces: strip creation,
   collapse action, session restore, menus) is owned by the tracked follow-up recorded on
   issue #241, next-packaged-build timing — no packaged build exists in CI.
