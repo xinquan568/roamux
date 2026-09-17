@@ -139,6 +139,14 @@ phase rebrand-gate
 ( cd "${GITHUB_WORKSPACE}" && REQUIRE_GRIT=1 ROAMUX_CHROMIUM_SRC="${SRC}" \
     python3 -m unittest roamux.build.tests.test_rebrand_strings )
 
+# roam-342 (ADR 0002): the field-trial inventory generator's acceptance test compares its output for
+# the M149 oracle tag against the committed oracle. It is checkout-bound (git plumbing at
+# refs/tags/149.0.7827.201 — a PERSISTENT prerequisite independent of CHROMIUM_PIN; a fresh or shallow
+# base must fetch that tag), so tier-1 skips it; this runner HAS the checkout, so run it fail-not-skip.
+# Read-only against ${SRC} (git show/grep/cat-file at the tag; nothing under ${SRC} is written).
+phase fieldtrial-inventory-oracle
+( cd "${GITHUB_WORKSPACE}" && REQUIRE_FIELDTRIAL_ORACLE=1 ROAMUX_CHROMIUM_SRC="${SRC}" python3 -m unittest roamux.build.tests.test_fieldtrial_inventory )
+
 # roam-97: the signed-release parts-path + config-seam tests exercise Chromium's
 # real signing package (chrome/installer/mac/signing). Tier-1 CI (no checkout)
 # SKIPS them, but that is where the load-bearing "Chromium get_parts() paths

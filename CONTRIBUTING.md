@@ -21,6 +21,11 @@ hermetic member of a suite whose contract is hermeticity. It runs where a tier s
 strips the variable, so a `git push` never mounts. Full rationale, and why the other two options in
 roam-261 were rejected, sits above `dmg_mount_decision` in `roamux/build/tests/test_release_signing.py`.
 
+The same opt-in shape gates the checkout-bound tests: `REQUIRE_GRIT=1` (rebrand XTB binding) and
+`REQUIRE_FIELDTRIAL_ORACLE=1` (the ADR 0002 inventory generator's M149 oracle comparison, roam-342) skip
+here and run fail-not-skip on tier-2, which has the Chromium checkout. Locally:
+`REQUIRE_FIELDTRIAL_ORACLE=1 ROAMUX_CHROMIUM_SRC=~/chromium/src python3 -m unittest roamux.build.tests.test_fieldtrial_inventory`.
+
 ## `--no-verify` will not help you
 
 The CI `governance` job runs the **same checker scripts** (`scripts/checks/*.py`) over the PR's changed

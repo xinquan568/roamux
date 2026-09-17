@@ -151,7 +151,8 @@ class Tier2JobScriptTest(unittest.TestCase):
         first_run = self.code.index('"${OUT}/roamux_unittests"')
         self.assertLess(mk, first_run, "the artifact dir must exist before the first tee")
 
-    PHASES = ("reconcile", "runhook", "sparkle", "rebrand-gate", "signing-gate", "clone", "build",
+    PHASES = ("reconcile", "runhook", "sparkle", "rebrand-gate", "fieldtrial-inventory-oracle",
+              "signing-gate", "clone", "build",
               "run:roamux_unittests", "run:roamux_browser_unittests", "run:roamux_sparkle_tests",
               "run:roamux_browsertests", "staleness", "done")
 
@@ -222,6 +223,19 @@ class Tier2JobScriptTest(unittest.TestCase):
         self.assertIn("REQUIRE_GRIT=1", self.code)
         self.assertIn("test_rebrand_strings", self.code)
         self.assertIn('ROAMUX_CHROMIUM_SRC="${SRC}"', self.code)
+
+    def test_fieldtrial_inventory_oracle_runs_fail_not_skip(self):
+        # roam-342 (ADR 0002): the inventory generator's M149 oracle comparison is checkout-bound
+        # (tier-1 skips it). Tier-2 HAS the checkout, so it must run fail-not-skip — the opt-in, the
+        # checkout variable and the test module bound on ONE invocation line, from the overlay root.
+        lines = [l for l in self.code.splitlines()
+                 if "unittest roamux.build.tests.test_fieldtrial_inventory" in l]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("REQUIRE_FIELDTRIAL_ORACLE=1", lines[0])
+        self.assertIn('ROAMUX_CHROMIUM_SRC="${SRC}"', lines[0])
+        self.assertIn('cd "${GITHUB_WORKSPACE}"', lines[0])
+        self.assertLess(self.code.index("phase fieldtrial-inventory-oracle"), self.code.index(lines[0]))
+        self.assertLess(self.code.index(lines[0]), self.code.index("phase signing-gate"))
 
     def test_signing_parts_gate_runs_fail_not_skip(self):
         # roam-97: the signed-release parts-path + config-seam tests exercise
