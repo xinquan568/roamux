@@ -1,0 +1,71 @@
+# roam-306: guard VerticalTabView::OnFocus/OnBlur when the collection node is
+# already gone. Upstream ordering: TabCollectionNode::RemoveChild destroys the
+# node (VerticalTabView::ResetCollectionNode nulls collection_node_) and THEN
+# hands the still-alive view to the animating layout manager. OnBlur guards its
+# controller call on the node but not its hover-card branch, and
+# UpdateHoverCard starts with CHECK(collection_node_). On an INACTIVE window
+# (FocusManager::AdvanceFocusIfNecessary returns early when the widget is not
+# active) keyboard focus stays on the node-less view until
+# Widget::CloseWithReason -> ClearFocusManagerFromWidget -> ViewRemoved blurs it
+# with nothing focused -> FATAL vertical_tab_view.cc "Check failed:
+# collection_node_". The precondition is a strip tab holding keyboard focus
+# while the window is inactive at close (Roamux's pin, roam-214, is what puts
+# keyboard focus into the strip); whether ordinary user input reaches that
+# state is not established. The proven reproducer
+# establishes that state programmatically (RequestFocus after deactivation;
+# macOS clears the focused view on losing key status). Which activation
+# sequence produces it under the test launcher — five first-attempt crashes
+# on tier-2, PR #347 run 35219216275, and 4-5 per eight-job local run — is
+# not established; the guard removes the crash regardless of the sequence.
+#
+# The fix is two early returns at the focus call sites; UpdateHoverCard's
+# CHECK stays as the invariant for its input-handler callers (mouse/gesture
+# handlers run only while the view is attached with a live node).
+#
+# ORDERING DEPENDENCY: after 0054 (roam-214's activation call-outs in this
+# same file; this patch does not touch those hunks). Regenerated against
+# pristine + 0054 (the shared-file protocol).
+#
+# RETIREMENT: at every uprev, read the pinned OnBlur/OnFocus — if upstream
+# already returns early (or otherwise avoids UpdateHoverCard) when
+# collection_node_ is null, DELETE this patch. A context conflict on rebase is
+# that signal arriving on its own.
+#
+# Regression: RoamuxTabStripToggleTest.FocusedStripTabSurvivesInactiveWindowClose
+# (roamux_browsertests) — RED before this patch (the exact CHECK), GREEN after;
+# FocusedStripTabSurvivesActiveWindowClose is the active-window
+# characterization.
+diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc b/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_view.cc
+@@ -662,6 +662,14 @@ void VerticalTabView::RemovedFromWidget() {
+ void VerticalTabView::OnFocus() {
+   views::View::OnFocus();
+ 
++  // Roamux (roam-306, patch 0074): the collection node can already be gone
++  // (ResetCollectionNode ran from TabCollectionNode::RemoveChild) while this
++  // view is still alive and focused; UpdateHoverCard CHECKs the node. Nothing
++  // below is meaningful without it.
++  if (!collection_node_) {
++    return;
++  }
++
+   if (collection_node_ && collection_node_->GetController()) {
+     collection_node_->GetController()->TabKeyboardFocusChangedTo(
+         GetTabInterface());
+@@ -673,6 +681,15 @@ void VerticalTabView::OnFocus() {
+ void VerticalTabView::OnBlur() {
+   views::View::OnBlur();
+ 
++  // Roamux (roam-306, patch 0074): a window closing with keyboard focus on
++  // this tab reaches here AFTER the node was destroyed (Widget::CloseWithReason
++  // clears the focus manager, which blurs the surviving view); the hover-card
++  // branch below would CHECK(collection_node_). Nothing to update: the reset
++  // already dismissed a hover card targeting this tab.
++  if (!collection_node_) {
++    return;
++  }
++
+   if (collection_node_ && collection_node_->GetController()) {
+     collection_node_->GetController()->TabKeyboardFocusChangedTo(nullptr);
+   }
