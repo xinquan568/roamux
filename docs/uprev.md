@@ -34,7 +34,7 @@ re-checked when the pin moves.
   Sparkle and no build directory: set it up with `BOOTSTRAP.md` §2 (fetch), §3 (the overlay link and
   `fetch_sparkle.py`; its patch and rebrand commands are steps 3 and 6 here) and §4 (args and build).
 - **Serialize with CI.** `~/chromium/src` is shared with the self-hosted runner. Tier-2, nightly and release
-  jobs reconcile that base with `git reset --hard HEAD` and re-apply their own stack
+  jobs reconcile that base to HEAD plus their own stack (`apply_patches.py --reconcile`, roam-341)
   (`docs/ci/self-hosted-runner.md` §Cache model), which will reset an uprev in progress. Make sure no job is
   running and none will start: stop the runner's listener for the duration.
 - **Prefer a scratch checkout for the first pass** (the approach roam-293 names), so a failed uprev never
@@ -88,6 +88,8 @@ python3 roamux/build/apply_patches.py --chromium-src "$SRC"           # apply
   designed to raise. Triage in stack order, because later patches may depend on earlier context
   (`roamux/patches/README.md` records ordering dependencies per patch).
 - After any rebase or retirement decision, **re-run `--check`** before moving on.
+- **`--reconcile` is CI's mode, and it overwrites.** It forces the checkout to HEAD plus the current stack
+  (leaving byte-identical patched files untouched — roam-341). Never run it on a checkout whose edits you want.
 
 ### 4. Override staleness
 
@@ -176,7 +178,7 @@ of known divergent upstream tests, matched **by failure signature, not by test n
 Build the Roamux targets and run the Roamux suites locally.
 
 **Tier-2 does not move to the new pin by itself.** It runs against the runner's configured checkout
-(`ROAMUX_CHROMIUM_SRC`, default `~/chromium/src`), and its reconcile is `git reset --hard HEAD`: it never
+(`ROAMUX_CHROMIUM_SRC`, default `~/chromium/src`), and its reconcile (`apply_patches.py --reconcile`) forces the checkout to HEAD plus the stack: it never
 checks out `CHROMIUM_PIN` and never asserts HEAD against it (`roamux/build/ci/tier2_job.sh`). An uprev
 proven in a scratch checkout therefore proves nothing in CI until the runner's checkout moves too. Before
 resuming the runner for the uprev PR:
@@ -220,7 +222,7 @@ These fail silently if skipped. Perform each one.
 | `#new-tab-adds-to-active-group` expiry at M150 | `roamux/patches/0068-new-tab-position-seam.patch` — "UPREV CAVEAT (M150)" (with `0067`) | Decide whether patches `0067` and `0068` collapse into a single Roamux-owned switch, or keep both. |
 | WebUI location-bar icon mapping | `roamux/patches/README.md` — patch `0039` row | *Conditional product obligation:* if an uprev enables `kWebUILocationBar`, add the Roamux icon mapping, because the native handler CHECKs unmapped icons. Overlay tests pin that surface off, which is exactly how the incompatibility would stay hidden. |
 | `chromium_src` override staleness | `roamux/chromium_src/README.md` — "On a milestone uprev" | Protocol step 4: re-review, then `--update`. |
-| Patch `0056` rebase | Maintainer decision recorded on roam-291 (2026-09-13) | Rebase its seven `//base` files. Kept deliberately; reopen only on a measured per-run invalidation share, real rebase burden at an uprev, or an upstream equivalent. roam-341 is the general lever on its recurring build cost. |
+| Patch `0056` rebase | Maintainer decision recorded on roam-291 (2026-09-13) | Rebase its seven `//base` files. Kept deliberately; reopen only on a measured per-run invalidation share, real rebase burden at an uprev, or an upstream equivalent. Since roam-341 the reconcile leaves its headers untouched while their existing regular-file entries already have the stack's bytes and mode; they are rewritten (and their dependents rebuilt) when a hunk changes or a repair is needed — a stray edit, a missing file, a type or mode change. |
 | Patch `0072` retirement | `roamux/patches/0072-worker-thread-hang-watch-background-hint-gate.patch` — "at every uprev, check whether the pinned" | Read the **pristine** file at the target tag — the applied tree already carries the backport: `git -C "$SRC" show <TAG>:base/task/thread_pool/worker_thread.cc`. If `watch_for_hangs` in `WorkerThread::RunWorker` tests `thread_type_hint_` rather than `GetDesiredThreadType()`, delete the patch and its README row. Guard backstop: the `apply_patches.py` row below. |
 
 ### Guard-signalled
@@ -285,7 +287,7 @@ Patched upstream files, especially widely included headers, cost rebuild time. F
 | Case | Does a patched header force rebuilds? |
 |---|---|
 | **Local steady state** — base untouched between builds | No. `apply_patches.py` skips already-applied patches and nothing rewrites the files. |
-| **Same-pin CI reconcile** — every tier-2 run, `out/CI` retained | **Yes, every run**, even with byte-identical content: `git reset --hard` plus re-apply gives each patched file a new timestamp, and the build compares timestamps. roam-341 tracks avoiding this. |
+| **Same-pin CI reconcile** — every tier-2 run, `out/CI` retained | **No** (since roam-341). The runhook's `--reconcile` leaves a patched path untouched when its existing regular-file entry already has the stack's bytes and mode; a changed hunk, a repaired stray edit, a missing file, a type or mode change, or a prior mutation is rewritten and invalidates its dependents — correctly. Before roam-341, `git reset --hard` plus re-apply gave every patched file a new timestamp on every run. |
 | **Empty `out/`** | Everything compiles regardless. |
 | **Pin change** | Large invalidation regardless of any one patch. Removing a patch cannot promise to avoid it, and removing one itself invalidates its dependents once. |
 

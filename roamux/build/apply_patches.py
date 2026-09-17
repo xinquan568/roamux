@@ -13,11 +13,43 @@ file, when the tree matches no stack state.
 
 Usage:
   apply_patches.py --chromium-src ~/chromium/src [--patches DIR] [--check]
+  apply_patches.py --chromium-src ~/chromium/src --reconcile        # CI only — see below
 
 ``--check`` verifies (applied or cleanly appliable) without mutating the tree.
+
+``--reconcile`` (roam-341) is CI's base reconcile and **overwrites**: it forces the checkout to the
+fully-patched state of the current stack whatever the tree held before (a superseded stack, stray
+edits, a prior release's mutations), keeping every guarantee of the former
+``git reset --hard HEAD`` + ``git clean -fd -e /roamux`` + apply sequence (roam-175) — but a patched
+file whose bytes already equal the stack's target is left untouched, so its mtime survives and the
+retained build does not re-invalidate its dependents. It does that by letting git do the work:
+
+  1. simulate the stack from pristine (as always; a stack that does not apply fails loudly here,
+     before anything is mutated);
+  2. write the target blobs; build the tree "HEAD + targets" in a TEMPORARY index (staged junk in
+     the real index must not enter it);
+  3. seed only the union entries of the REAL index with those blobs (a stack-deleted path gets HEAD's
+     own entry re-seeded so the reset consumes the deletion; an entry that conflicts with the index —
+     a staged file where a directory must be, or vice versa — is skipped and repaired by the reset),
+     refresh the index so byte-identical files become stat-clean, and remove any real directory
+     sitting on a union path (git leaves those behind);
+  4. ``git read-tree --reset -u <tree>`` — the HEAD-preserving core of ``reset --hard``: every entry
+     absent from the tree is removed, every changed or non-clean entry is checked out (git unlinks
+     first: symlinks, obstructions and hardlink aliases are handled by git), every stat-clean entry
+     is left alone;
+  5. ``git clean -fd -e /roamux`` while the index still equals the tree (patch-added files are
+     tracked, so spared; superseded-stack leftovers removed; never ``-x``, never ``-ff``);
+  6. ``git read-tree --reset HEAD`` (no ``-u``): index back to pristine, worktree untouched, and — unlike
+     ``reset``, which writes ORIG_HEAD and a reflog line — no ref or reflog is touched.
+
+HEAD is never written, so an interruption at any point converges on the next run. Objects written
+are content-addressed (an unchanged stack adds none after its first run), unreferenced, and pruned by
+the checkout's ordinary gc. Patch-added executables would be seeded as 100644 (no patch adds a file
+today). Never run ``--reconcile`` on a checkout whose edits you want to keep.
 """
 
 import argparse
+import os
 import pathlib
 import shutil
 import subprocess
@@ -92,6 +124,162 @@ def _simulate(chromium_src, patches, union):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+_INDEX_CONFLICT = b"appears as both a file and as a directory"
+
+
+def _first_symlinked_ancestor(root, rel_path):
+    """The first ancestor component of rel_path (below root) that is a symlink, or None."""
+    current = pathlib.Path(root)
+    for part in pathlib.PurePosixPath(rel_path).parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            return current
+    return None
+
+
+def _reconcile(chromium_src, union, target):
+    """Force the checkout to `target` (the stack's final snapshot over `union`) through git's own
+    read-tree --reset -u; see the module docstring (roam-341). Returns a process exit code."""
+    src = str(chromium_src)
+
+    def g(*args, env=None, input_bytes=None):
+        return _run(["git", "--literal-pathspecs", "-C", src, *args], env=env, input=input_bytes)
+
+    def must(result, what):
+        if result.returncode != 0:
+            print(f"FAIL: reconcile: {what}: {result.stderr.decode('utf-8', 'replace').strip()}",
+                  file=sys.stderr)
+            return False
+        return True
+
+    head = g("rev-parse", "HEAD")
+    if not must(head, "rev-parse HEAD"):
+        return 1
+    orig = head.stdout.decode().strip()
+
+    head_entries = {}
+    if union:
+        listing = g("ls-tree", "-z", orig, "--", *union)
+        if not must(listing, "ls-tree"):
+            return 1
+        for record in listing.stdout.split(b"\0"):
+            if record:
+                meta, path = record.split(b"\t", 1)
+                mode, _kind, blob = meta.decode().split()
+                head_entries[path.decode()] = (mode, blob)
+
+    blobs = {}
+    for path in union:
+        if target.get(path) is not None:
+            written = g("hash-object", "-w", "--stdin", input_bytes=target[path])
+            if not must(written, f"hash-object {path}"):
+                return 1
+            blobs[path] = written.stdout.decode().strip()
+
+    def seed(path, env=None, *, for_tree):
+        """Index entry for `path`: in the target TREE a stack-deleted path is absent; in the REAL
+        index it keeps HEAD's own entry so that read-tree --reset consumes the deletion."""
+        if target.get(path) is None:
+            if path not in head_entries:  # HEAD never had it: nothing to remove or seed
+                return None
+            if for_tree:
+                return g("update-index", "--force-remove", "--", path, env=env)
+            mode, blob = head_entries[path]
+        else:
+            mode = head_entries.get(path, ("100644", None))[0]
+            blob = blobs[path]
+        return g("update-index", "--add", "--cacheinfo", f"{mode},{blob},{path}", env=env)
+
+    # The target tree, built from HEAD in a temporary index so staged junk never enters it.
+    fd, tmp_index = tempfile.mkstemp(prefix="roamux-reconcile-index-")
+    os.close(fd)
+    os.unlink(tmp_index)
+    tmp_env = {**os.environ, "GIT_INDEX_FILE": tmp_index}
+    try:
+        if not must(g("read-tree", orig, env=tmp_env), "read-tree into the temporary index"):
+            return 1
+        for path in union:
+            result = seed(path, env=tmp_env, for_tree=True)
+            if result is not None and not must(result, f"temporary index: {path}"):
+                return 1
+        tree = g("write-tree", env=tmp_env)
+        if not must(tree, "write-tree"):
+            return 1
+        tree = tree.stdout.decode().strip()
+    finally:
+        if os.path.exists(tmp_index):
+            os.unlink(tmp_index)
+
+    # Classify what is about to change, for the summary (before the real index is touched).
+    status = g("status", "--porcelain=v1", "-z", "--untracked-files=no")
+    if not must(status, "status"):
+        return 1
+    touched = set()
+    fields = status.stdout.split(b"\0")
+    i = 0
+    while i < len(fields):
+        record = fields[i]
+        i += 1
+        if len(record) < 4:
+            continue
+        touched.add(record[3:].decode("utf-8", "replace"))
+        if record[0:1] in (b"R", b"C"):  # a rename/copy record is followed by its source field
+            if i < len(fields):
+                touched.add(fields[i].decode("utf-8", "replace"))
+            i += 1
+    restored = sorted(touched - set(union))
+
+    # Seed the real index leniently, then let git decide which union entries are already clean.
+    for path in union:
+        result = seed(path, for_tree=False)
+        if result is not None and result.returncode != 0 and _INDEX_CONFLICT not in result.stderr:
+            if not must(result, f"seeding {path}"):
+                return 1
+    g("update-index", "-q", "--refresh")  # rc 1 just means "some entries need update"
+    removed = sorted(p for p in union if target.get(p) is None and os.path.lexists(os.path.join(src, p)))
+    for path in union:
+        # Obstructions git's checkout does not clear. (a) A symlinked ANCESTOR of a union path:
+        # the target tree has a real directory there, so the link is wrong whatever it points
+        # at; git replaces it for an entry it checks out but skips an entry it only deletes, and
+        # an ignored link then survives `clean` with the stack-deleted path still reachable
+        # through it. Unlink the link itself — never anything behind it (the old sequence
+        # replaced it with HEAD's directory the same way). (b) A real directory
+        # sitting on the union path itself (git unlinks files and links in the way, not
+        # directories), whose ignored contents would survive `clean`: remove it — only now that
+        # every ancestor is known to be a real directory inside the checkout.
+        ancestor_link = _first_symlinked_ancestor(src, path)
+        if ancestor_link is not None:
+            os.unlink(ancestor_link)
+            continue
+        obstruction = pathlib.Path(src) / path
+        if obstruction.is_dir() and not obstruction.is_symlink():
+            shutil.rmtree(obstruction)
+    dirty = g("diff-files", "--name-only", "-z", "--", *union) if union else None
+    needs_update = set(dirty.stdout.decode("utf-8", "replace").split("\0")) if dirty else set()
+    rewritten = sorted(p for p in union if target.get(p) is not None
+                       and (p in needs_update or not os.path.lexists(os.path.join(src, p))))
+    kept = [p for p in union if target.get(p) is not None and p not in rewritten]
+
+    if not must(g("read-tree", "--reset", "-u", tree), "read-tree --reset -u"):
+        return 1
+    if os.environ.get("ROAMUX_RECONCILE_STOP_AFTER") == "read-tree":  # test hook: interruption
+        return 0
+    if not must(g("clean", "-fd", "-e", "/roamux"), "clean"):
+        return 1
+    if not must(g("read-tree", "--reset", orig), "read-tree --reset HEAD"):
+        return 1
+
+    for path in rewritten:
+        print(f"[rewritten] {path}")
+    for path in removed:
+        print(f"[removed]   {path}")
+    for path in restored:
+        print(f"[restored]  {path}")
+    print(f"reconcile: {len(kept)} kept, {len(rewritten)} rewritten, {len(removed)} removed, "
+          f"{len(restored)} restored")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chromium-src", required=True, type=pathlib.Path,
@@ -101,12 +289,18 @@ def main():
                         help="directory holding *.patch files (default: roamux/patches)")
     parser.add_argument("--check", action="store_true",
                         help="verify only; do not mutate the tree")
+    parser.add_argument("--reconcile", action="store_true",
+                        help="CI only: force the tree to the fully-patched state, leaving "
+                             "byte-identical patched files untouched (roam-341); OVERWRITES")
     args = parser.parse_args()
+    if args.reconcile and args.check:
+        parser.error("--reconcile cannot be combined with --check "
+                     "(--check never mutates; --reconcile always may)")
 
     # Resolve now: the scratch simulation runs git apply with a different cwd,
     # so relative --patches paths must be absolute before that (roam-77 review).
     patches = sorted(args.patches.resolve().glob("*.patch"))
-    if not patches:
+    if not patches and not args.reconcile:
         print(f"no patches found under {args.patches}", file=sys.stderr)
         return 0
 
@@ -120,6 +314,9 @@ def main():
     snapshots = _simulate(args.chromium_src, patches, union)
     if snapshots is None:
         return 1
+
+    if args.reconcile:
+        return _reconcile(args.chromium_src, union, snapshots[-1])
 
     worktree = _read_tree(args.chromium_src, union)
     applied_count = None
