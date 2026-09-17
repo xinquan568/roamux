@@ -28,7 +28,9 @@
 #include <vector>
 
 #include "base/json/json_reader.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "base/test/run_until.h"
 #include "base/values.h"
 #include "chrome/browser/about_flags.h"
@@ -104,12 +106,28 @@ constexpr char kChangeThroughUiJs[] = R"JS(
     const find = (id) => rows.find(
         (r) => r.shadowRoot.querySelector('.experiment')?.id === id);
     const feature = find('roamux-new-tab-position').getSelect();
-    feature.selectedIndex = 2;  // Default / Enabled / Disabled
+    feature.selectedIndex = INDEX;  // Default / Enabled / Disabled
     feature.dispatchEvent(new Event('change'));
     const sw = find('roamux-signin-opt-in').getSelect();
     sw.value = 'enabled';
     sw.dispatchEvent(new Event('change'));
     return 'changed';
+  })()
+)JS";
+
+// Delays the app's next feature-data refresh (the one the Reset all handler
+// awaits) so a reader that does not wait for the re-render would see stale
+// rows; the barrier must still observe the reset state, ~delay later.
+constexpr char kDelayNextRefreshJs[] = R"JS(
+  (() => {
+    const app = document.querySelector('flags-app');
+    const original = app.requestExperimentalFeaturesData.bind(app);
+    app.requestExperimentalFeaturesData = async (...args) => {
+      await new Promise((r) => setTimeout(r, 1500));
+      app.requestExperimentalFeaturesData = original;
+      return original(...args);
+    };
+    return 'delayed';
   })()
 )JS";
 
@@ -223,6 +241,13 @@ class RoamuxFlagsEntriesTest : public roamux::test::RoamuxBrowserTest {
                                        : base::ListValue();
   }
 
+  std::string ChangeThroughUi(int feature_option_index) {
+    std::string js = kChangeThroughUiJs;
+    base::ReplaceFirstSubstringAfterOffset(&js, 0, "INDEX",
+                                           base::NumberToString(feature_option_index));
+    return content::EvalJs(contents(), js).ExtractString();
+  }
+
   static const base::DictValue* FindRow(const base::ListValue& rows,
                                           const std::string& id) {
     for (const base::Value& row : rows) {
@@ -284,7 +309,18 @@ IN_PROC_BROWSER_TEST_F(RoamuxFlagsEntriesTest, EveryRowRendersWithItsSelect) {
 
 IN_PROC_BROWSER_TEST_F(RoamuxFlagsEntriesTest, RowsAreUsableAndResetAllRestoresThem) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("chrome://flags")));
-  ASSERT_EQ(content::EvalJs(contents(), kChangeThroughUiJs), "changed");
+  // Negative control first: choose Enabled (@1) through the UI and require the
+  // backend to report exactly @1 — proving the assertion below discriminates
+  // between the two non-default options rather than merely "non-default".
+  ASSERT_EQ(ChangeThroughUi(1), "changed");
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return RoamuxModelRows()[kToggledFeatureRow].selected_option ==
+           std::string(kToggledFeatureRow) + "@1";
+  }));
+  EXPECT_NE(RoamuxModelRows()[kToggledFeatureRow].selected_option,
+            std::string(kToggledFeatureRow) + "@2");
+
+  ASSERT_EQ(ChangeThroughUi(2), "changed");
   // The change handlers post to the browser; wait for the model to reflect it.
   ASSERT_TRUE(base::test::RunUntil([&] {
     std::map<std::string, ModelRow> rows = RoamuxModelRows();
@@ -292,10 +328,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxFlagsEntriesTest, RowsAreUsableAndResetAllRestoresT
   }));
   {
     // The backend must have stored the option the UI chose — Disabled (@2) —
-    // and nothing else; storing Enabled (@1) would also be "non-default".
+    // and nothing else: not @1, not two options.
     std::map<std::string, ModelRow> model = RoamuxModelRows();
     EXPECT_EQ(model[kToggledFeatureRow].selected_option,
               std::string(kToggledFeatureRow) + "@2");
+    EXPECT_NE(model[kToggledFeatureRow].selected_option,
+              std::string(kToggledFeatureRow) + "@1");
     EXPECT_EQ(model[kToggledFeatureRow].selected_options, 1);
     EXPECT_TRUE(model[kSwitchRow].enabled);
     base::ListValue rows = PageRows();
@@ -303,11 +341,18 @@ IN_PROC_BROWSER_TEST_F(RoamuxFlagsEntriesTest, RowsAreUsableAndResetAllRestoresT
     EXPECT_EQ(*FindRow(rows, kSwitchRow)->FindString("value"), "enabled");
   }
 
+  // Delayed-refresh control: the reset handler's data refresh is held for
+  // 1.5 s, so a reader that did not wait for the re-render would observe the
+  // pre-reset rows; the barrier must observe the reset state and take ≥ 1.5 s.
+  ASSERT_EQ(content::EvalJs(contents(), kDelayNextRefreshJs), "delayed");
+  const base::TimeTicks reset_clicked = base::TimeTicks::Now();
   ASSERT_EQ(content::EvalJs(contents(), kResetThroughButtonJs), "clicked");
   // The reset handler re-requests the feature data and awaits re-rendering,
   // but the app's readiness promise resolved once at load and is never
   // replaced — so wait on the rendered DOM itself (bounded), not on that promise.
   ASSERT_EQ(content::EvalJs(contents(), kWaitForResetRenderJs), "rendered");
+  EXPECT_GE(base::TimeTicks::Now() - reset_clicked, base::Milliseconds(1500))
+      << "the barrier must have waited for the delayed refresh, not read stale rows";
   ASSERT_TRUE(base::test::RunUntil([&] {
     std::map<std::string, ModelRow> rows = RoamuxModelRows();
     return rows[kToggledFeatureRow].is_default && rows[kSwitchRow].is_default &&
