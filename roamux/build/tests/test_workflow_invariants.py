@@ -1918,3 +1918,82 @@ class ReleaseKeychainCleanupBehaviourTest(unittest.TestCase):
         self.assertIn(["delete-keychain", kc], self.calls())
         self.assertIn(["delete-generic-password", "-s", SPARKLE_SERVICE, "-a", LEGACY_VERIFY_ACCOUNT],
                       self.calls())
+
+
+# ---------------------------------------------------------------------------------------------
+# roam-292 (grill H1): the scheduled Chromium pin-staleness check lives in its own hosted-only
+# workflow (nightly.yml is disabled at the GitHub level; the check must not depend on it). These
+# are STRUCTURAL assertions over the text (no YAML parser in the hermetic tooling); GitHub
+# validates the file on first run.
+class PinStalenessWorkflowTest(unittest.TestCase):
+    NAME = "pin-staleness.yml"
+
+    def _text(self):
+        text = _read(self.NAME)
+        self.assertIsNotNone(text, f"{self.NAME} missing")
+        return text
+
+    def test_spdx_header(self):
+        self.assertIn("SPDX-License-Identifier: Apache-2.0", "\n".join(self._text().splitlines()[:3]))
+
+    def test_scheduled_and_dispatchable_never_on_pull_request_or_push(self):
+        text = self._text()
+        self.assertIn("schedule:", text)
+        self.assertIn("workflow_dispatch:", text)
+        self.assertNotIn("pull_request", text, "a scheduled issue writer must not run on PRs")
+        self.assertNotRegex(text, r"(?m)^\s*push:", "a scheduled issue writer must not run on pushes")
+
+    def test_exactly_one_hosted_job(self):
+        jobs = _jobs(self._text())
+        self.assertEqual(len(jobs), 1, f"expected one job, got {sorted(jobs)}")
+        (job,) = jobs.values()
+        self.assertNotIn("self-hosted", job, "the staleness check never touches the builder")
+        self.assertFalse(_job_has_key(job, "concurrency"))
+
+    def test_job_scoped_permissions_are_exactly_contents_read_and_issues_write(self):
+        (job,) = _jobs(self._text()).values()
+        block = _job_key_block(job, "permissions")
+        self.assertIsNotNone(block, "the job must declare its own permissions")
+        perms = sorted(l.strip() for l in block.splitlines()[1:] if l.strip() and not l.strip().startswith("#"))
+        self.assertEqual(perms, ["contents: read", "issues: write"])
+
+    def test_invokes_the_tool_with_the_step_summary(self):
+        (job,) = _jobs(self._text()).values()
+        self.assertIn("roamux/build/ci/pin_staleness.py", job)
+        self.assertIn('--summary "$GITHUB_STEP_SUMMARY"', job)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", job)
+
+    def test_exactly_one_hosted_job_with_an_explicit_hosted_runner(self):
+        (job,) = _jobs(self._text()).values()
+        self.assertRegex(job, r"(?m)^    runs-on: ubuntu-latest$", "an explicit hosted runs-on is required")
+
+    @staticmethod
+    def _assert_gating(job):
+        """The publish decision must be wired end to end: the PUBLISH env carries the repository AND ref
+        expression, the shell compares exactly that variable with the string "true", both mode
+        assignments exist, and the executed invocation uses the chosen mode."""
+        env = re.search(r"(?m)^\s+PUBLISH: \$\{\{ github\.repository == 'xinquan568/roamux' && "
+                        r"github\.ref == 'refs/heads/main' \}\}\s*$", job)
+        assert env, "PUBLISH env must be exactly the repository-AND-ref expression"
+        decision = re.search(r'(?m)^\s+if \[ "\$PUBLISH" = "true" \]; then mode=--publish; else mode=--dry-run; fi\s*$', job)
+        assert decision, 'the shell must compare "$PUBLISH" with "true" and set mode to --publish/--dry-run'
+        run = re.search(r'(?m)^\s+python3 roamux/build/ci/pin_staleness\.py --summary "\$GITHUB_STEP_SUMMARY" "\$mode"\s*$', job)
+        assert run, 'the tool must be invoked with "$mode"'
+
+    def test_publish_only_on_the_canonical_repository_main_branch(self):
+        (job,) = _jobs(self._text()).values()
+        self._assert_gating(job)
+
+    def test_gating_assertions_fail_on_mutations(self):
+        (job,) = _jobs(self._text()).values()
+        self._assert_gating(job)  # the real job passes
+        mutations = (
+            job.replace('if [ "$PUBLISH" = "true" ]', "if true"),
+            job.replace('if [ "$PUBLISH" = "true" ]', 'if [ "$PUBLISH" = "false" ]'),
+            job.replace("&& github.ref == 'refs/heads/main'", ""),
+            job.replace('"$mode"', "--publish"),
+        )
+        for i, mutated in enumerate(mutations):
+            with self.subTest(mutation=i):
+                with self.assertRaises(AssertionError):
+                    self._assert_gating(mutated)

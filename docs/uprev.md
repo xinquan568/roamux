@@ -4,7 +4,9 @@
 Roamux tracks the latest stable Chromium milestone and re-pins every milestone cycle
 (`docs/adr/0001-chromium-overlay-strategy.md`: "A per-milestone re-pin (Q(i4)-A) tracks the latest stable
 Chromium"). This document is the procedure for doing that, and the register of everything that must be
-re-checked when the pin moves.
+re-checked when the pin moves. The time bound on that policy — the pin at most 14 days behind stable, plus the
+in-the-wild-CVE clause — is `docs/security-uprev.md` (roam-292); its scheduled check files the tracker issue that
+triggers this procedure.
 
 > **Status: not yet rehearsed end to end on a new pin.** Every step — or, in a compound step, each sub-step —
 > is tagged:
