@@ -15,13 +15,16 @@
 # VerticalTabGroupView -> collection node -> VerticalTabStripController), so
 # activation, new-tab, closing-mode and freezing-vote logic stays upstream's.
 # New origin ToggleTabGroupCollapsedStateOrigin::kRoamuxBulkHeaderDoubleClick is
-# implicit for metrics in both controllers (one action per gesture).
+# implicit for metrics in both controllers (one action per gesture). A release
+# inherits its press's double-click flag even after a drag, so each header's
+# OnMouseDragged ends the gesture once the drag passes the views threshold.
 #
 # Files: tab_group_header.{h,cc}, vertical/vertical_tab_group_header_view.{h,cc}
 # (+ its unittest's MockDelegate), vertical/vertical_tab_group_view.{h,cc},
 # shared/tab_strip_types.h, browser_tab_strip_controller.cc,
 # vertical/vertical_tab_strip_controller.cc, vertical/BUILD.gn (impl deps on
-# //roamux/browser/tabs; //chrome/browser/ui already has it via patch 0065).
+# //roamux/browser/tabs and //roamux/common, both included directly;
+# //chrome/browser/ui already depends on both through earlier patches).
 #
 # ORDERING DEPENDENCY: after 0054 — vertical_tab_strip_controller.cc is also
 # patched by 0054 (roam-214, different hunk); this patch was generated against
@@ -95,7 +98,7 @@ diff --git a/chrome/browser/ui/views/tabs/tab_group_header.cc b/chrome/browser/u
  #include "ui/gfx/canvas.h"
  #include "ui/gfx/color_palette.h"
  #include "ui/gfx/color_utils.h"
-@@ -245,9 +252,25 @@ bool TabGroupHeader::OnMousePressed(const ui::MouseEvent& event) {
+@@ -245,9 +252,26 @@ bool TabGroupHeader::OnMousePressed(const ui::MouseEvent& event) {
    // gets run after we receive the mouse event. If this sounds brittle,
    // that's because it is!
    if (editor_bubble_tracker_.is_open()) {
@@ -107,6 +110,7 @@ diff --git a/chrome/browser/ui/views/tabs/tab_group_header.cc b/chrome/browser/u
 +  if (base::FeatureList::IsEnabled(
 +          roamux::features::kTabGroupHeaderDoubleClickAll)) {
 +    if (event.IsOnlyLeftMouseButton()) {
++      roamux_press_location_ = event.location();
 +      Browser* browser = tab_slot_controller_->GetBrowser();
 +      roamux_double_click_.OnLeftPress(
 +          event.flags() & ui::EF_IS_DOUBLE_CLICK, event.time_stamp(),
@@ -121,7 +125,18 @@ diff --git a/chrome/browser/ui/views/tabs/tab_group_header.cc b/chrome/browser/u
    tab_slot_controller_->UpdateHoverCard(
        nullptr, TabSlotController::HoverCardUpdateType::kEvent);
  
-@@ -270,6 +293,9 @@ bool TabGroupHeader::OnMouseDragged(const ui::MouseEvent& event) {
+@@ -264,12 +288,20 @@ bool TabGroupHeader::OnMousePressed(const ui::MouseEvent& event) {
+ }
+ 
+ bool TabGroupHeader::OnMouseDragged(const ui::MouseEvent& event) {
++  // Roamux (roam-322, patch 0075): a drag past the threshold ends any
++  // double-click gesture; the release still carries the press's flag.
++  if (ExceededDragThreshold(event.location() - roamux_press_location_)) {
++    roamux_double_click_.Reset();
++  }
+   // TODO: ensure ignoring return value is ok.
+   std::ignore = tab_slot_controller_->ContinueDrag(this, event);
+   return true;
  }
  
  void TabGroupHeader::OnMouseReleased(const ui::MouseEvent& event) {
@@ -131,7 +146,7 @@ diff --git a/chrome/browser/ui/views/tabs/tab_group_header.cc b/chrome/browser/u
    if (!dragging()) {
      bool open_editor_bubble =
          event.IsRightMouseButton() && !editor_bubble_tracker_.is_open();
-@@ -281,8 +307,16 @@ void TabGroupHeader::OnMouseReleased(const ui::MouseEvent& event) {
+@@ -281,8 +313,16 @@ void TabGroupHeader::OnMouseReleased(const ui::MouseEvent& event) {
            /*anchor_view=*/this, /*anchor_rect=*/std::nullopt,
            /*stop_context_menu_propagation=*/false));
      } else if (toggle_collapse) {
@@ -150,7 +165,7 @@ diff --git a/chrome/browser/ui/views/tabs/tab_group_header.cc b/chrome/browser/u
        views::ElementTrackerViews::GetInstance()->NotifyViewActivated(
            kTabGroupHeaderElementId, this);
      }
-@@ -291,6 +325,49 @@ void TabGroupHeader::OnMouseReleased(const ui::MouseEvent& event) {
+@@ -291,6 +331,49 @@ void TabGroupHeader::OnMouseReleased(const ui::MouseEvent& event) {
    tab_slot_controller_->EndDrag(EndDragReason::kComplete);
  }
  
@@ -231,13 +246,14 @@ diff --git a/chrome/browser/ui/views/tabs/tab_group_header.h b/chrome/browser/ui
    void UpdateAccessibleName();
  
    void OnTabGroupDataChanged();
-@@ -190,6 +197,10 @@ class TabGroupHeader : public TabSlotView,
+@@ -190,6 +197,11 @@ class TabGroupHeader : public TabSlotView,
    base::CallbackListSubscription editor_bubble_closed_subscription_;
    std::unique_ptr<tabs::TabGroupDataObserver> tab_group_data_observer_;
    base::CallbackListSubscription tab_group_data_observer_subscription_;
 +
 +  // Roamux (roam-322, patch 0075): the double-click-all gesture state.
 +  roamux::group_header_double_click::GestureState roamux_double_click_;
++  gfx::Point roamux_press_location_;
 +  base::WeakPtrFactory<TabGroupHeader> roamux_weak_factory_{this};
  };
  
@@ -245,11 +261,12 @@ diff --git a/chrome/browser/ui/views/tabs/tab_group_header.h b/chrome/browser/ui
 diff --git a/chrome/browser/ui/views/tabs/vertical/BUILD.gn b/chrome/browser/ui/views/tabs/vertical/BUILD.gn
 --- a/chrome/browser/ui/views/tabs/vertical/BUILD.gn
 +++ b/chrome/browser/ui/views/tabs/vertical/BUILD.gn
-@@ -70,6 +70,7 @@ source_set("impl") {
+@@ -70,6 +70,8 @@ source_set("impl") {
    ]
  
    deps = [
 +    "//roamux/browser/tabs",  # Roamux (roam-322, patch 0075)
++    "//roamux/common",  # Roamux (roam-322, patch 0075)
      ":vertical",
      "//chrome/browser:primitives",
      "//chrome/browser/glic",
@@ -270,7 +287,7 @@ diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_group_header_vie
  #include "ui/gfx/color_utils.h"
  #include "ui/gfx/geometry/rounded_corners_f.h"
  #include "ui/views/accessibility/view_accessibility.h"
-@@ -238,9 +240,23 @@ bool VerticalTabGroupHeaderView::OnMousePressed(const ui::MouseEvent& event) {
+@@ -238,9 +240,24 @@ bool VerticalTabGroupHeaderView::OnMousePressed(const ui::MouseEvent& event) {
    // gets run after we receive the mouse event. If this sounds brittle,
    // that's because it is!
    if (editor_bubble_tracker_.is_open()) {
@@ -282,6 +299,7 @@ diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_group_header_vie
 +  if (base::FeatureList::IsEnabled(
 +          roamux::features::kTabGroupHeaderDoubleClickAll)) {
 +    if (event.IsOnlyLeftMouseButton()) {
++      roamux_press_location_ = event.location();
 +      roamux_double_click_.OnLeftPress(
 +          event.flags() & ui::EF_IS_DOUBLE_CLICK, event.time_stamp(),
 +          base::Milliseconds(ui::kDoubleClickTimeMs),
@@ -294,7 +312,19 @@ diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_group_header_vie
    // Hide the group hovercard if it is currently showing.
    delegate_->HideHoverCard(TabSlotController::HoverCardUpdateType::kEvent);
  
-@@ -266,12 +282,48 @@ void VerticalTabGroupHeaderView::OnMouseReleased(const ui::MouseEvent& event) {
+@@ -254,6 +271,11 @@ bool VerticalTabGroupHeaderView::OnMousePressed(const ui::MouseEvent& event) {
+ }
+ 
+ bool VerticalTabGroupHeaderView::OnMouseDragged(const ui::MouseEvent& event) {
++  // Roamux (roam-322, patch 0075): a drag past the threshold ends any
++  // double-click gesture; the release still carries the press's flag.
++  if (ExceededDragThreshold(event.location() - roamux_press_location_)) {
++    roamux_double_click_.Reset();
++  }
+   return delegate_->ContinueHeaderDrag(event);
+ }
+ 
+@@ -266,12 +288,48 @@ void VerticalTabGroupHeaderView::OnMouseReleased(const ui::MouseEvent& event) {
    if (open_editor_bubble) {
      ShowEditorBubble();
    } else if (toggle_collapse) {
@@ -380,12 +410,13 @@ diff --git a/chrome/browser/ui/views/tabs/vertical/vertical_tab_group_header_vie
    void UpdateEditorBubbleButtonVisibility();
    void OnBubbleOpened();
    void OnBubbleClosed();
-@@ -158,6 +170,9 @@ class VerticalTabGroupHeaderView : public views::FlexLayoutView,
+@@ -158,6 +170,10 @@ class VerticalTabGroupHeaderView : public views::FlexLayoutView,
    base::CallbackListSubscription editor_bubble_opened_subscription_;
    base::CallbackListSubscription editor_bubble_closed_subscription_;
  
 +  // Roamux (roam-322, patch 0075): the double-click-all gesture state.
 +  roamux::group_header_double_click::GestureState roamux_double_click_;
++  gfx::Point roamux_press_location_;
 +
    base::WeakPtrFactory<VerticalTabGroupHeaderView> weak_ptr_factory_{this};
  };

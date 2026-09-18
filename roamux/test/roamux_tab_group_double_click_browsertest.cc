@@ -172,6 +172,13 @@ class RoamuxTabGroupDoubleClickTestBase : public test::RoamuxBrowserTest {
                      gfx::Point(4, 4), t, button | extra_flags, button);
     HeaderView(id)->OnMouseReleased(e);
   }
+  // A drag along the strip's axis, well past the views drag threshold.
+  void Drag(const TabGroupId& id, base::TimeTicks t) {
+    const gfx::Point to = vertical_ ? gfx::Point(4, 40) : gfx::Point(40, 4);
+    ui::MouseEvent e(ui::EventType::kMouseDragged, to, to, t,
+                     ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+    HeaderView(id)->OnMouseDragged(e);
+  }
   void Click(const TabGroupId& id, base::TimeTicks t) {
     Press(id, t);
     Release(id, t + base::Milliseconds(40));
@@ -277,6 +284,20 @@ IN_PROC_BROWSER_TEST_P(RoamuxTabGroupDoubleClickTest,
   EXPECT_TRUE(Collapsed(a_));
   EXPECT_TRUE(Collapsed(b_));
   EXPECT_TRUE(Collapsed(c_));
+}
+
+IN_PROC_BROWSER_TEST_P(RoamuxTabGroupDoubleClickTest,
+                       DragAfterTheSecondPressIsNotABulkPass) {
+  // The release inherits the press's double-click flag even after a drag;
+  // a drag past the threshold must end the gesture.
+  const base::TimeTicks t = base::TimeTicks::Now();
+  Click(a_, t);
+  Press(a_, t + base::Milliseconds(150), ui::EF_IS_DOUBLE_CLICK);
+  Drag(a_, t + base::Milliseconds(170));
+  Release(a_, t + base::Milliseconds(190), ui::EF_IS_DOUBLE_CLICK);
+  Settle();
+  EXPECT_FALSE(Collapsed(b_)) << "no bulk pass after a drag";
+  EXPECT_FALSE(Collapsed(c_)) << "no bulk pass after a drag";
 }
 
 IN_PROC_BROWSER_TEST_P(RoamuxTabGroupDoubleClickTest,
