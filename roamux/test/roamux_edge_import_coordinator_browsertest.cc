@@ -24,7 +24,6 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/services/storage/privileged/mojom/indexed_db_control.mojom.h"
 #include "components/services/storage/privileged/mojom/indexed_db_control_test.mojom.h"
-#include "components/services/storage/public/mojom/local_storage_control.mojom.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -33,7 +32,10 @@
 #include "roamux/browser/importer/edge_import_report.h"
 #include "roamux/browser/importer/edge_import_types.h"
 #include "roamux/common/roamux_features.h"
+#include "roamux/test/support/local_storage_seed_ack.h"
+#include "roamux/test/support/local_storage_snapshot_probe.h"
 #include "roamux/test/support/roamux_browser_test.h"
+#include "roamux/test/support/storage_flush_barrier.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -86,8 +88,9 @@ class RoamuxEdgeImportCoordinatorTestBase
         .Append(FILE_PATH_LITERAL("Default"));
   }
 
-  // Seeds one IndexedDB record (key 'k' = `value`) + a localStorage entry in
-  // the live browser and flushes both to disk.
+  // Seeds one IndexedDB record (key 'k' = `value`) + a localStorage entry
+  // (`auth` = `lsval`) in the live browser, with both carriers ordered before
+  // the caller's SnapshotEdge copies the profile directories.
   void SeedLiveCarriers(const GURL& origin, const std::string& value) {
     ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), origin));
     ASSERT_TRUE(
@@ -97,14 +100,32 @@ class RoamuxEdgeImportCoordinatorTestBase
                                    std::string("const arguments_value = $1;") +
                                        kSeedIdbJs,
                                    value)));
-    partition()->GetLocalStorageControl()->Flush();
-    // Drain the IDB sequence so the store is on disk.
-    mojo::Remote<storage::mojom::IndexedDBControlTest> t;
-    partition()->GetIndexedDBControl().BindTestInterfaceForTesting(
-        t.BindNewPipeAndPassReceiver());
-    base::test::TestFuture<const base::FilePath&> p;
-    t->GetBaseDataPathForTesting(p.GetCallback());
-    ASSERT_FALSE(p.Get().empty());
+    // roam-338 (site A1, per roam-331): the renderer's StorageArea::Put is
+    // asynchronous and ExecJs returning acknowledges nothing, so first prove
+    // the seed reached the storage service, THEN order its commit against the
+    // directory copy. A bare Flush() did neither.
+    roamux::test::AcknowledgeLocalStorageEntry(partition(), origin, "auth",
+                                               "lsval");
+    roamux::test::FlushLocalStorageAndWait(partition());
+    // IndexedDB is ordered by the awaited tx.oncomplete in kSeedIdbJs
+    // (Transaction::CommitPhaseTwo commits the backing store before issuing
+    // OnComplete); no further barrier is needed or available here.
+  }
+
+  // Verify the SNAPSHOT — the artifact the importer actually reads — holds the
+  // seed. Checking the live profile would prove nothing: ReadEdgeLocalStorage
+  // opens its own private copy. Call BEFORE ClearOriginStorage, while a
+  // failure still points at the seed.
+  void VerifySnapshotHasSeed(const base::FilePath& snapshot_profile,
+                             const GURL& origin) {
+    const roamux::test::SnapshotLocalStorageProbe probe =
+        roamux::test::ProbeSnapshotLocalStorage(snapshot_profile, origin,
+                                                "auth", "lsval");
+    ASSERT_TRUE(probe.found)
+        << "localStorage seed not readable from the snapshot (missing or "
+           "unreadable)."
+        << "\n  live=" << browser()->profile()->GetPath()
+        << probe.Describe(snapshot_profile);
   }
 
   // Copies the live profile's Local Storage + IndexedDB into a fake Edge
@@ -183,12 +204,16 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
   // Declared first so it outlives (covers the teardown of) the ScopedTempDir.
   base::ScopedAllowBlockingForTesting allow_blocking;
   const GURL origin = embedded_test_server()->GetURL("/title1.html");
-  SeedLiveCarriers(origin, "idbval");
+  ASSERT_NO_FATAL_FAILURE(SeedLiveCarriers(origin, "idbval"));
 
   base::ScopedTempDir edge;
   ASSERT_TRUE(edge.CreateUniqueTempDir());
-  SnapshotEdge(edge.GetPath(), "150.0.3478.97");
-  ClearOriginStorage(origin);
+  ASSERT_NO_FATAL_FAILURE(SnapshotEdge(edge.GetPath(), "150.0.3478.97"));
+  // The only coordinator case whose outcome depends on the snapshot's
+  // localStorage content: prove it before the destination is cleared.
+  ASSERT_NO_FATAL_FAILURE(
+      VerifySnapshotHasSeed(EdgeDefaultDir(edge.GetPath()), origin));
+  ASSERT_NO_FATAL_FAILURE(ClearOriginStorage(origin));
 
   EdgeImportReport report = RunCoordinator(
       edge.GetPath(), {EdgeCarrier::kLocalStorage, EdgeCarrier::kIndexedDb});
@@ -203,7 +228,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
             report.Find(EdgeCarrier::kIndexedDb)->status);
   EXPECT_GE(report.Find(EdgeCarrier::kIndexedDb)->count, 1u);
 
-  ForceInitIdb();
+  ASSERT_NO_FATAL_FAILURE(ForceInitIdb());
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), origin));
   EXPECT_EQ("lsval", content::EvalJs(web(), "localStorage.getItem('auth')"));
   EXPECT_EQ("idbval", content::EvalJs(web(), kReadIdbJs));
@@ -215,12 +240,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
                        EdgeRunningBlocksIndexedDbNoCorruption) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   const GURL origin = embedded_test_server()->GetURL("/title1.html");
-  SeedLiveCarriers(origin, "idbval");
+  ASSERT_NO_FATAL_FAILURE(SeedLiveCarriers(origin, "idbval"));
 
   base::ScopedTempDir edge;
   ASSERT_TRUE(edge.CreateUniqueTempDir());
-  SnapshotEdge(edge.GetPath(), "150.0.0.0");
-  ClearOriginStorage(origin);
+  ASSERT_NO_FATAL_FAILURE(SnapshotEdge(edge.GetPath(), "150.0.0.0"));
+  ASSERT_NO_FATAL_FAILURE(ClearOriginStorage(origin));
   ASSERT_TRUE(base::CreateSymbolicLink(
       base::FilePath(FILE_PATH_LITERAL("host-4321")),
       edge.GetPath()
@@ -244,11 +269,11 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
                        DestinationInitializedBlocksIndexedDbNoClobber) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   const GURL origin = embedded_test_server()->GetURL("/title1.html");
-  SeedLiveCarriers(origin, "sourceval");
+  ASSERT_NO_FATAL_FAILURE(SeedLiveCarriers(origin, "sourceval"));
 
   base::ScopedTempDir edge;
   ASSERT_TRUE(edge.CreateUniqueTempDir());
-  SnapshotEdge(edge.GetPath(), "150.0.0.0");
+  ASSERT_NO_FATAL_FAILURE(SnapshotEdge(edge.GetPath(), "150.0.0.0"));
 
   // Do NOT clear: the destination keeps a store. Overwrite the destination
   // value so a wrongful import would be observable.
@@ -266,7 +291,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
   EXPECT_EQ(CarrierStatus::kBlocked,
             report.Find(EdgeCarrier::kIndexedDb)->status);
 
-  ForceInitIdb();
+  ASSERT_NO_FATAL_FAILURE(ForceInitIdb());
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), origin));
   // The destination's own value survives — never clobbered by the source.
   EXPECT_EQ("destval", content::EvalJs(web(), kReadIdbJs));
@@ -302,17 +327,24 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
                        DestinationInitializedBlocksLocalStorageNoClobber) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   const GURL origin = embedded_test_server()->GetURL("/title1.html");
-  SeedLiveCarriers(origin, "idbval");
+  ASSERT_NO_FATAL_FAILURE(SeedLiveCarriers(origin, "idbval"));
 
   base::ScopedTempDir edge;
   ASSERT_TRUE(edge.CreateUniqueTempDir());
-  SnapshotEdge(edge.GetPath(), "150.0.0.0");
+  ASSERT_NO_FATAL_FAILURE(SnapshotEdge(edge.GetPath(), "150.0.0.0"));
 
   // Do NOT clear: the destination keeps localStorage. Set a distinct value so a
-  // wrongful import would be observable.
+  // wrongful import would be observable, and prove THAT value reached the
+  // storage service (the acknowledgement is value-aware: `auth` already holds
+  // `lsval` from the seed, so a key-only wait would prove nothing here).
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), origin));
   ASSERT_TRUE(content::ExecJs(web(), "localStorage.setItem('auth','destls');"));
-  partition()->GetLocalStorageControl()->Flush();
+  roamux::test::AcknowledgeLocalStorageEntry(partition(), origin, "auth",
+                                             "destls");
+  // roam-338 (site A2): deliberately NO flush barrier. This site prepares no
+  // snapshot; the coordinator's own occupancy probe is a replying GetUsage() on
+  // the same database sequence, and usage covers live areas as well as
+  // committed ones — an acknowledged write is enough for it to be seen.
 
   EdgeImportReport report =
       RunCoordinator(edge.GetPath(), {EdgeCarrier::kLocalStorage});
@@ -321,6 +353,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
   EXPECT_EQ(CarrierStatus::kBlocked,
             report.Find(EdgeCarrier::kLocalStorage)->status);
 
+  // No clobber, checked at the storage service (not only through the renderer's
+  // cached area): the acknowledgement resolves immediately from GetAll's
+  // snapshot when `auth` still holds `destls`; a clobbered value would time out
+  // at the helper's CHECK with the observed value in the diagnostic.
+  roamux::test::AcknowledgeLocalStorageEntry(partition(), origin, "auth",
+                                             "destls");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), origin));
   EXPECT_EQ("destls", content::EvalJs(web(), "localStorage.getItem('auth')"));
 }
@@ -331,11 +369,11 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
                        CorruptLocalStorageDegradesOtherCarrierSurvives) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   const GURL origin = embedded_test_server()->GetURL("/title1.html");
-  SeedLiveCarriers(origin, "idbval");
+  ASSERT_NO_FATAL_FAILURE(SeedLiveCarriers(origin, "idbval"));
 
   base::ScopedTempDir edge;
   ASSERT_TRUE(edge.CreateUniqueTempDir());
-  SnapshotEdge(edge.GetPath(), "150.0.0.0");
+  ASSERT_NO_FATAL_FAILURE(SnapshotEdge(edge.GetPath(), "150.0.0.0"));
 
   // Corrupt the source localStorage LevelDB: the dir still exists (so the
   // carrier is "available"), but open fails (a bogus CURRENT, no MANIFEST) →
@@ -348,7 +386,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
   ASSERT_TRUE(base::CreateDirectory(ls_leveldb));
   ASSERT_TRUE(base::WriteFile(ls_leveldb.AppendASCII("CURRENT"), "garbage\n"));
 
-  ClearOriginStorage(origin);
+  ASSERT_NO_FATAL_FAILURE(ClearOriginStorage(origin));
 
   EdgeImportReport report = RunCoordinator(
       edge.GetPath(), {EdgeCarrier::kLocalStorage, EdgeCarrier::kIndexedDb});
@@ -365,7 +403,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxEdgeImportCoordinatorTest,
             report.Find(EdgeCarrier::kIndexedDb)->status);
 
   // The destination remains valid: the IndexedDB carrier round-trips.
-  ForceInitIdb();
+  ASSERT_NO_FATAL_FAILURE(ForceInitIdb());
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), origin));
   EXPECT_EQ("idbval", content::EvalJs(web(), kReadIdbJs));
 }
