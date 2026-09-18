@@ -37,6 +37,12 @@ BASE_DECLARE_FEATURE(
                               // chrome://flags/#roamux-refresh-all-initial-urls
                               // is the kill-switch, patch 0073 — historically 0066)
 BASE_DECLARE_FEATURE(
+    kTabGroupHeaderDoubleClickAll);  // roam-322 — double-click a tab group
+                                     // header to collapse / expand ALL groups
+                                     // (SHIPS ENABLED; chrome://flags/
+                                     // #roamux-tab-group-header-double-click-all
+                                     // is the kill-switch, patch 0073)
+BASE_DECLARE_FEATURE(
     kNewTabPosition);  // roam-277 — where Cmd+T / "+" / File > New Tab insert
                        // the new tab (prefs::kNewTabPosition: end of strip /
                        // end of active group / after active tab). SHIPS

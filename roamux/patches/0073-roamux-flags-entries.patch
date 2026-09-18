@@ -21,12 +21,12 @@
 #   * roamux_browsertests' RoamuxFlagsEntriesTest (tier-2) asserts every expected
 #     row is present, rendered and usable on chrome://flags — extend its list.
 #
-# Rows (10 FEATURE_VALUE_TYPE kill-switches + 1 SINGLE_VALUE_TYPE switch mirror):
+# Rows (11 FEATURE_VALUE_TYPE kill-switches + 1 SINGLE_VALUE_TYPE switch mirror):
 #   roamux-bookmark-subfolder-groups, roamux-brave-style-profiles, roamux-edge-import,
 #   roamux-external-open-profile, roamux-initial-url, roamux-new-tab-position,
 #   roamux-refresh-all-initial-urls, roamux-signin-opt-in (switch; hidden by
 #   ShouldSkipConditionalFeatureEntry while kBraveStyleProfiles is off),
-#   roamux-tab-strip-position, roamux-tab-strip-toggle-shortcut, roamux-tab-visit-nav.
+#   roamux-tab-group-header-double-click-all (roam-322), roamux-tab-strip-position, roamux-tab-strip-toggle-shortcut, roamux-tab-visit-nav.
 #   kRoamuxSchemeAlias deliberately has no row (unchanged by roam-340).
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
 --- a/chrome/browser/about_flags.cc
@@ -41,7 +41,7 @@ diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
  #include <iterator>
  #include <map>
  #include <memory>
-@@ -4740,6 +4743,105 @@ const FeatureEntry::FeatureVariation kGestureUserEducationVariations[] = {
+@@ -4740,6 +4743,118 @@ const FeatureEntry::FeatureVariation kGestureUserEducationVariations[] = {
  //
  // When adding a new choice, add it to the end of the list.
  const FeatureEntry kFeatureEntries[] = {
@@ -91,6 +91,19 @@ diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
 +     "the Roamux opt-in preference were enabled. Sign-in stays "
 +     "inert-with-explanation unless the build is keyed and authorized.",
 +     kOsMac | kOsWin | kOsLinux, SINGLE_VALUE_TYPE(roamux::switches::kSigninOptIn)},
++    // Roamux (roam-322): double-click a tab group header to collapse or expand
++    // every group in the window. Ships default-on like every Roamux flag since
++    // roam-226, so this entry IS the kill-switch and lands in the same change
++    // as the feature (the roam-266/269 precedent). Off: a double-click is two
++    // ordinary single toggles, exactly as upstream.
++    {"roamux-tab-group-header-double-click-all",
++     "Roamux: double-click a group header to collapse or expand all groups",
++     "Double-clicking a tab group header collapses every group in the window "
++     "when all are expanded, and otherwise expands them all. A single click "
++     "still toggles only that group. Turn this off to restore the stock "
++     "behaviour.",
++     kOsMac | kOsWin | kOsLinux,
++     FEATURE_VALUE_TYPE(roamux::features::kTabGroupHeaderDoubleClickAll)},
 +    // Roamux (roam-185): the E1 4-way tab-strip position control, shipped
 +    // default-on and user-toggleable here.
 +    {"roamux-tab-strip-position", "Roamux: tab strip position",
@@ -147,7 +160,7 @@ diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
  // Include generated flags for flag unexpiry; see //docs/flag_expiry.md and
  // //tools/flags/generate_unexpire_flags.py.
  #include "build/chromeos_buildflags.h"
-@@ -13376,6 +13478,12 @@ void GetStorage(Profile* profile, GetStorageCallback callback) {
+@@ -13376,6 +13491,12 @@ void GetStorage(Profile* profile, GetStorageCallback callback) {
  bool ShouldSkipConditionalFeatureEntry(const flags_ui::FlagsStorage* storage,
                                         const FeatureEntry& entry) {
    version_info::Channel channel = chrome::GetChannel();
@@ -163,7 +176,7 @@ diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
 diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.json
 --- a/chrome/browser/flag-metadata.json
 +++ b/chrome/browser/flag-metadata.json
-@@ -8395,6 +8395,61 @@
+@@ -8395,6 +8395,66 @@
      "owners": [ "eleanorlee@google.com", "lazzzis@google.com", "twellington@chromium.org" ],
      "expiry_milestone": 150
    },
@@ -208,6 +221,11 @@ diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.js
 +    "expiry_milestone": -1
 +  },
 +  {
++    "name": "roamux-tab-group-header-double-click-all",
++    "owners": [ "xinquan568@users.noreply.github.com" ],
++    "expiry_milestone": -1
++  },
++  {
 +    "name": "roamux-tab-strip-position",
 +    "owners": [ "xinquan568@users.noreply.github.com" ],
 +    "expiry_milestone": -1
@@ -228,7 +246,7 @@ diff --git a/chrome/browser/flag-metadata.json b/chrome/browser/flag-metadata.js
 diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-never-expire-list.json
 --- a/chrome/browser/flag-never-expire-list.json
 +++ b/chrome/browser/flag-never-expire-list.json
-@@ -115,6 +115,17 @@
+@@ -115,6 +115,18 @@
    "related-website-sets-permission-grants",
    "release-notes-notification-all-channels",
    "release-notes-notification-always-eligible",
@@ -240,6 +258,7 @@ diff --git a/chrome/browser/flag-never-expire-list.json b/chrome/browser/flag-ne
 +  "roamux-new-tab-position",
 +  "roamux-refresh-all-initial-urls",
 +  "roamux-signin-opt-in",
++  "roamux-tab-group-header-double-click-all",
 +  "roamux-tab-strip-position",
 +  "roamux-tab-strip-toggle-shortcut",
 +  "roamux-tab-visit-nav",
