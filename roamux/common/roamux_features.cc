@@ -66,6 +66,13 @@ BASE_FEATURE(kRefreshAllInitialUrls,
 BASE_FEATURE(kNewTabPosition,
              "RoamuxNewTabPosition",
              base::FEATURE_ENABLED_BY_DEFAULT);
+// roam-322: ships default-on with its chrome://flags entry (patch 0073) as the
+// kill-switch, the roam-266/269 rule. Gates the double-click branch in both
+// tab group header views (patch 0075): OFF, a double-click is two ordinary
+// single toggles, exactly as upstream.
+BASE_FEATURE(kTabGroupHeaderDoubleClickAll,
+             "RoamuxTabGroupHeaderDoubleClickAll",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 // §7.3 defaults. Validation (out-of-range yields the DEFAULT, never a clip;
 // then min_spacing = min(min_spacing, interval)) lives in the pure scheduler's
 // Params::FromMilliseconds — roam-268 — not here.

@@ -6,6 +6,8 @@
 
 source_set("tabs") {
   sources = [
+    "group_header_double_click.cc",
+    "group_header_double_click.h",
     "initial_url_refresh_scheduler.cc",
     "initial_url_refresh_scheduler.h",
     "navigation_settle_gate.cc",

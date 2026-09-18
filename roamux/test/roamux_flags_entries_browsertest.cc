@@ -50,7 +50,7 @@
 
 namespace {
 
-// Ten FEATURE_VALUE_TYPE kill-switches + the SINGLE_VALUE_TYPE switch mirror.
+// Eleven FEATURE_VALUE_TYPE kill-switches + the SINGLE_VALUE_TYPE switch mirror.
 // kRoamuxSchemeAlias deliberately has no row. Keep in sync with patch 0073.
 constexpr const char* kExpectedRows[] = {
     "roamux-bookmark-subfolder-groups",
@@ -61,6 +61,7 @@ constexpr const char* kExpectedRows[] = {
     "roamux-new-tab-position",
     "roamux-refresh-all-initial-urls",
     "roamux-signin-opt-in",
+    "roamux-tab-group-header-double-click-all",
     "roamux-tab-strip-position",
     "roamux-tab-strip-toggle-shortcut",
     "roamux-tab-visit-nav",
