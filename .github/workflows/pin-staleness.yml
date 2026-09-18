@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+# roam-292 (grill H1): scheduled Chromium pin staleness check — the "different home" the maintainer
+# allowed. nightly.yml is disabled at the GitHub level (disabled_manually; reason not recorded), and
+# this check deliberately does not depend on it or on the builder: one hosted job, stdlib Python + gh.
+#
+# Publishes (files/updates the per-pin tracker issue) ONLY on the canonical repository's main branch;
+# everywhere else — forks, other refs — it runs --dry-run (summary only). Job-scoped permissions:
+# contents: read (checkout, to read roamux/build/CHROMIUM_PIN and the tool) + issues: write.
+#
+# 19:00 UTC is a preference for a slot away from nightly's 18:00 UTC, not mutual exclusion: GitHub may
+# delay or drop scheduled runs, and a schedule run and a manual dispatch can overlap. Two overlapping
+# runs could both create a tracker — an accepted residual (hosted jobs carry no concurrency group by
+# invariant); the next run lists every tracker it finds. The SLA lives in docs/security-uprev.md.
+name: pin-staleness
+on:
+  schedule:
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pin-staleness:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Chromium pin staleness (publishes on the canonical main only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ github.repository == 'xinquan568/roamux' && github.ref == 'refs/heads/main' }}
+        run: |
+          if [ "$PUBLISH" = "true" ]; then mode=--publish; else mode=--dry-run; fi
+          python3 roamux/build/ci/pin_staleness.py --summary "$GITHUB_STEP_SUMMARY" "$mode"

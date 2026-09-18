@@ -144,7 +144,9 @@ next job re-clones). The clone is restart-safe (roam-280): it is made into `out/
 for `build.ninja`/`args.gn`, and renamed into place atomically; a directory without them is an
 interrupted clone and is redone — for the default `out/CI` only; an overridden `ROAMUX_CI_OUT` in
 that state is refused, never deleted. Known v1 contention: the runner shares the machine/checkout with local
-development. The three base-mutating jobs (tier-2, nightly, release) are serialized by the
+development. (The `nightly` workflow is `disabled_manually` at the GitHub level as of 2026-09-18 — the reason is
+not recorded in this tree; the scheduled pin-staleness check, `pin-staleness.yml`, is hosted-only and deliberately
+does not depend on it, roam-292.) The three base-mutating jobs (tier-2, nightly, release) are serialized by the
 `roamux-shared-base` concurrency group (roam-279: `cancel-in-progress: false` — a running build is
 never killed by a newcomer; `queue: max` — waiting jobs queue in order, where GitHub's default
 single pending slot would cancel the older pending job) — declared, so it still holds if a second
