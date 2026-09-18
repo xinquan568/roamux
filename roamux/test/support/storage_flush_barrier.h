@@ -24,8 +24,8 @@ namespace roamux::test {
 // NOT an acknowledgement that a mutation has REACHED the service. A renderer's
 // localStorage.setItem sends an asynchronous StorageArea::Put, and ExecJs
 // returning proves nothing about it — flushing before it arrives flushes
-// nothing. Acknowledge the mutation first (see the GetAll-with-observer wait in
-// roamux_edge_import_driver_browsertest.cc), then call this.
+// nothing. Acknowledge the mutation first (LocalStorageEntryAck /
+// AcknowledgeLocalStorageEntry in local_storage_seed_ack.h), then call this.
 void FlushLocalStorageAndWait(content::StoragePartition* partition);
 
 }  // namespace roamux::test

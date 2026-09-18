@@ -17,8 +17,6 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/services/storage/privileged/mojom/indexed_db_control.mojom.h"
 #include "components/services/storage/privileged/mojom/indexed_db_control_test.mojom.h"
-#include "components/services/storage/public/mojom/local_storage_control.mojom.h"
-#include "components/services/storage/public/mojom/storage_usage_info.mojom.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -31,7 +29,10 @@
 #include "roamux/browser/importer/edge_local_storage_reader.h"
 #include "roamux/browser/importer/roamux_indexed_db_import_stage.h"
 #include "roamux/browser/importer/roamux_origin_storage_import_stage.h"
+#include "roamux/test/support/local_storage_seed_ack.h"
+#include "roamux/test/support/local_storage_snapshot_probe.h"
 #include "roamux/test/support/roamux_browser_test.h"
+#include "roamux/test/support/storage_flush_barrier.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -96,19 +97,15 @@ IN_PROC_BROWSER_TEST_F(ThreeCarrierTest,
   ASSERT_TRUE(content::ExecJs(web(), "localStorage.setItem('auth','lsval');"));
   ASSERT_EQ("ok", content::EvalJs(web(), kSeedIdbJs));
 
-  // Flush localStorage + drain the IDB sequence so both carriers are on disk.
-  {
-    partition()->GetLocalStorageControl()->Flush();
-    base::test::TestFuture<std::vector<storage::mojom::StorageUsageInfoPtr>> u;
-    partition()->GetLocalStorageControl()->GetUsage(u.GetCallback());
-    ASSERT_TRUE(u.Wait());
-    mojo::Remote<storage::mojom::IndexedDBControlTest> t;
-    partition()->GetIndexedDBControl().BindTestInterfaceForTesting(
-        t.BindNewPipeAndPassReceiver());
-    base::test::TestFuture<const base::FilePath&> p;
-    t->GetBaseDataPathForTesting(p.GetCallback());
-    ASSERT_FALSE(p.Get().empty());
-  }
+  // roam-338 (site B, per roam-331): the renderer's StorageArea::Put is
+  // asynchronous and ExecJs returning acknowledges nothing — prove the seed
+  // reached the storage service, THEN order its commit against the directory
+  // copies below (Flush() alone only initiates a commit). IndexedDB is ordered
+  // by the awaited tx.oncomplete in kSeedIdbJs; the former path lookup here
+  // drained nothing.
+  roamux::test::AcknowledgeLocalStorageEntry(partition(), origin, "auth",
+                                             "lsval");
+  roamux::test::FlushLocalStorageAndWait(partition());
 
   base::ScopedAllowBlockingForTesting allow_blocking;
   // Snapshot the file carriers (localStorage + IndexedDB) into an "Edge" dir.
@@ -121,6 +118,18 @@ IN_PROC_BROWSER_TEST_F(ThreeCarrierTest,
   ASSERT_TRUE(base::CopyDirectory(
       src_profile.Append(FILE_PATH_LITERAL("IndexedDB")),
       edge.GetPath().Append(FILE_PATH_LITERAL("IndexedDB")), true));
+  // Verify the SNAPSHOT (this test's snapshot root is `edge` itself) holds the
+  // seed before the origin is cleared: the stage reads the copy, not the live
+  // store, and a failure here still points at the seed.
+  {
+    const roamux::test::SnapshotLocalStorageProbe probe =
+        roamux::test::ProbeSnapshotLocalStorage(edge.GetPath(), origin, "auth",
+                                                "lsval");
+    ASSERT_TRUE(probe.found)
+        << "localStorage seed not readable from the snapshot (missing or "
+           "unreadable)."
+        << "\n  live=" << src_profile << probe.Describe(edge.GetPath());
+  }
 
   // Import both origin-storage carriers into a fresh destination profile.
   base::ScopedTempDir dest;
@@ -148,7 +157,7 @@ IN_PROC_BROWSER_TEST_F(ThreeCarrierTest,
   base::test::TestFuture<size_t> idb_done;
   idb_stage.Import(idb_done.GetCallback());
   EXPECT_GE(idb_done.Get(), 1u);
-  ForceInitIdb();
+  ASSERT_NO_FATAL_FAILURE(ForceInitIdb());
 
   // Carrier 3: a cookie, written straight to the destination CookieManager
   // (the roam-16 secret stage's ProfileWriter::AddCookies path is covered by
