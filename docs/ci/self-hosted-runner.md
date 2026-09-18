@@ -131,7 +131,7 @@ two steps run after the script **whenever it ran, green or red** (`if: always() 
   `gh run download <run-id> -n tier2-artifacts`.
 
 The script also prints cumulative checkpoints `phase=<name> elapsed=<s>s` (reconcile, runhook,
-sparkle, rebrand-gate, signing-gate, clone, build, run:<suite> ×4, staleness, done) to the log and
+sparkle, rebrand-gate, signing-gate, clone, build, run:<suite> ×4, done) to the log and
 the step summary, so a run killed by the 12 h bound is attributable to the phase it was in. Bounds:
 the step summary is published when the step ends (runner loss leaves only the log); the runs are
 keyless, but logs and snippets are not privacy-scrubbed (paths and hostnames may appear).

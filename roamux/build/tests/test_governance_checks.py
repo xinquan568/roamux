@@ -47,17 +47,12 @@ class SpdxHeaderTest(TmpTree):
         f = self.write("roamux/common/x.cc", "// SPDX-License-Identifier: Apache-2.0\nint main(){}\n")
         self.assertEqual(run_check("spdx_header.py", f).returncode, 0)
 
-    def test_chromium_src_copy_exempt(self):
-        # A full upstream copy keeps the BSD header and must NOT be required to carry ours.
-        f = self.write("roamux/chromium_src/chrome/x.h", "// Copyright The Chromium Authors\n")
-        self.assertEqual(run_check("spdx_header.py", f).returncode, 0)
-
     def test_markdown_doc_exempt(self):
         f = self.write("README.md", "# Roamux\nno header here\n")
         self.assertEqual(run_check("spdx_header.py", f).returncode, 0)
 
     def test_json_data_exempt(self):
-        f = self.write("roamux/build/override_signatures.json", '{"pin":"x"}\n')
+        f = self.write("roamux/build/tests/data/fieldtrial_inventory/m149-expected.json", '{"pin":"x"}\n')
         self.assertEqual(run_check("spdx_header.py", f).returncode, 0)
 
 
@@ -382,8 +377,6 @@ class OverlayStructureTest(TmpTree):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("upstream mirror path", r.stdout + r.stderr)
 
-    def test_our_file_under_chromium_src_accepted(self):
-        self.assertEqual(self.check_rel("roamux/chromium_src/chrome/browser/x.h").returncode, 0)
 
     def test_additive_roamux_file_accepted(self):
         self.assertEqual(self.check_rel("roamux/browser/x.cc").returncode, 0)

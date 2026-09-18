@@ -254,10 +254,5 @@ echo "::group::run ${OUT}/roamux_browsertests"
 "${OUT}/roamux_browsertests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_browsertests.json" 2>&1 | tee "${ART}/roamux_browsertests.log"
 echo "::endgroup::"
 
-# Staleness gate against this job's overlay.
-phase staleness
-python3 "${GITHUB_WORKSPACE}/roamux/build/check_override_staleness.py" \
-  --chromium-src "${SRC}" --overlay "${GITHUB_WORKSPACE}/roamux"
-
 phase done
 echo "tier-2 job green in ${SECONDS}s (warm incremental)" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"

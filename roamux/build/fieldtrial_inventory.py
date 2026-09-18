@@ -10,8 +10,7 @@ committed; this one was rebuilt (roam-342) against the surviving M149 output and
 (``roamux/build/tests/test_fieldtrial_inventory.py``, opt-in ``REQUIRE_FIELDTRIAL_ORACLE=1``).
 
 What it computes, for one platform (default ``mac``), reading everything from the PRISTINE pin tag
-(``git show``/``git grep`` at ``refs/tags/<pin>``, never the patched working tree — the same idiom as
-``check_override_staleness.py``):
+(``git show``/``git grep`` at ``refs/tags/<pin>``, never the patched working tree):
 
 * studies whose ``platforms`` include the platform; the FIRST-listed experiment of each is the one the
   testing config activates (Chromium's ``ChooseExperiment()`` also weighs eligibility/forcing flags;

@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # `roamux/patches` — minimal upstream patches (roam-2 / plan §12.2)
 
-In-function hook points and generated-table edits that **neither** an additive `//roamux` file **nor** a
-`chromium_src` override can reach — e.g. a one-line `ROAMUX_*` macro insert, an `IDC_*` command-id enum
+In-function hook points and generated-table edits that an additive `//roamux` file cannot reach (the
+`chromium_src` override channel was retired by ADR 0004, roam-300) — e.g. a one-line `ROAMUX_*` macro insert, an `IDC_*` command-id enum
 entry, a macOS accelerator table row, `RegisterProfilePrefs`, or a `BrowsingDataRemover` registration.
 
 ## The runhook (roam-2)
@@ -22,8 +22,6 @@ runs manually / from the build gate.
 | Patch | Kind | What it does |
 |---|---|---|
 | `0001-gn-all-add-roamux-targets.patch` | **persistent** | wires `//roamux` + the `//roamux:roamux_tests` group into `gn_all` (§12.4) — new test targets join the group, never this patch |
-| `0002-chromium-src-include-redirect.patch` | **persistent** | enables `chromium_src` shadowing (one `include_dirs` line, §12.2 mechanism 2) |
-| `0003-sample-marker.patch` | **sample** | one-line inert marker proving the runhook end-to-end (roam-2 test) |
 | `0004-register-profile-prefs.patch` | **persistent** | the §12.2 registrar hook (roam-3): `roamux::prefs::RegisterProfilePrefs` call + include in `browser_prefs.cc`, plus the `//roamux/common` dep edge on its owning GN target. **roam-182**: also calls `roamux::prefs::MigrateProfilePrefs` from `MigrateObsoleteProfilePrefs` (one-time startup normalization of `vertical_tabs.enabled` onto the roamux placement) |
 | `0005-tab-menu-tab-strip-position.patch` | **persistent** | the §12.2 tab-strip context-menu hook (roam-6): flag-gated "Tab strip position (Roamux)" submenu (member + `Build()` call in `TabMenuModel`) plus the `//roamux/browser/ui/tabs` dep edge; roam-181 widens the touch set to `tab/tab_context_menu_controller.cc` (range guards so roamux command ids never reach the upstream `ContextMenuCommand` cast); **roam-194** widens those guards to also cover the Initial-URL submenu ids (2110–2112, predicate `IsInitialUrlCommandId` from `initial_url_menu.h`). **roam-184**: the submenu title is end-user copy "Tab strip position" (no "(Roamux)"), set in `//roamux` source (`tab_strip_position_menu.cc`), not this patch |
 | `0006-settings-appearance-tab-strip-position.patch` | **persistent** | the settings WebUI insertion (roam-6; **maintainer-authorized §12.2 mechanism revision**, see issue #6 — at pin M149 the `chromium_src` include-redirect cannot reach `build_webui()` resource lists, so the insertion lands as this minimal patch): Appearance-page row + `settings_private` allowlist entry + `roamuxTabStripPositionEnabled` loadTimeData, plus the `//roamux/common` dep edge on `//chrome/browser/ui`; **roam-183**: the upstream `#tabStripPosition` row is hidden when the roamux flag is on by gating the `showVerticalTabsEnabled_` property's `value()` (its only consumer), leaving the Appearance HTML pristine so patch 0024's context is untouched; **roam-184**: end-user row label ("Tab strip position", no "(Roamux)") + Left/Right sub-toggles (expand-on-hover / organizer) re-homing the upstream vertical-tabs sub-settings |

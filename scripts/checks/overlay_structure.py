@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Overlay-structure check (roam-38, §7.9 / §12.2) — a STRUCTURAL APPROXIMATION only. A single commit
-cannot know the whole §12.2 hook inventory, so this enforces cheap shape rules; the roam-2 staleness
-gate and the reviewer are the deeper enforcement. Hook + CI both call it.
+cannot know the whole §12.2 hook inventory, so this enforces cheap shape rules; the reviewer is the
+deeper enforcement. Hook + CI both call it.
 
 Rules:
   (1) files under roamux/patches/ match NNNN-slug.patch (or are README.md);
   (2) a Roamux-authored file (carrying our SPDX) must live under a declared Roamux area
       (roamux/, scripts/, .github/, docs/, or top-level) — NOT at an upstream-Chromium mirror path
-      (chrome/, content/, base/, ui/, components/, ...) outside roamux/chromium_src/. That mirror-path
-      shape is how an undeclared in-tree upstream edit would masquerade as ours; such a file belongs in
-      roamux/chromium_src/ (an override) instead.
+      (chrome/, content/, base/, ui/, components/, ...). That mirror-path shape is how an undeclared
+      in-tree upstream edit would masquerade as ours; an upstream change is expressed as a minimal
+      patches/ entry or as additive code under roamux/ (§12.2; the chromium_src override channel
+      was retired by ADR 0004, roam-300).
 """
 
 import pathlib
@@ -43,13 +44,12 @@ def main(argv):
             if not (name == "README.md" or name.startswith(".") or PATCH_RE.match(name)):
                 violations.append(f"{path}: patch name must match NNNN-slug.patch")
         # (2) upstream-path masquerade: a Roamux-authored (our-SPDX) file at an upstream mirror path
-        # that is NOT under roamux/chromium_src/ is an undeclared in-tree upstream edit.
+        # is an undeclared in-tree upstream edit.
         first = pathlib.PurePath(p).parts[0] if pathlib.PurePath(p).parts else ""
-        if (first in UPSTREAM_ROOT_NAMES and "roamux/chromium_src/" not in p
-                and _carries_our_spdx(path)):
+        if first in UPSTREAM_ROOT_NAMES and _carries_our_spdx(path):
             violations.append(
-                f"{path}: Roamux-authored file at an upstream mirror path — put overrides under "
-                f"roamux/chromium_src/ or additive code under roamux/ (§12.2)")
+                f"{path}: Roamux-authored file at an upstream mirror path — express upstream changes "
+                f"as a minimal patches/ entry or additive code under roamux/ (§12.2, ADR 0004)")
     for v in violations:
         print(f"overlay-structure: {v}", file=sys.stderr)
     return 1 if violations else 0
