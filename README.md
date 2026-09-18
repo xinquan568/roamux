@@ -26,7 +26,6 @@ issue breakdown). Work is tracked as GitHub issues **roam-1 … roam-40** (epics
 roamux/            the overlay (placed at src/roamux/ at build time)
   browser/         net-new browser code (tabs UI, tab-visit, importer, sign-in)
   common/          shared helpers (features, prefs)
-  chromium_src/    upstream overrides (§12.2 — used sparingly)
   patches/         minimal upstream patches (§12.2)
   build/args/      GN arg files (reference.gn = unbranded default)
   app/             branding, packaging, Sparkle (M6)

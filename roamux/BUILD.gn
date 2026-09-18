@@ -78,7 +78,6 @@ test("roamux_unittests") {
     "test/roamux_edge_import_driver_unittest.cc",
     "test/roamux_features_unittest.cc",
     "test/roamux_indexed_db_import_stage_unittest.cc",
-    "test/roamux_overlay_mechanism_unittest.cc",
     "test/roamux_prefs_unittest.cc",
     "test/roamux_scheme_display_unittest.cc",
     "test/roamux_scheme_rewrite_unittest.cc",

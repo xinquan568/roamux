@@ -33,6 +33,6 @@ files and commit messages, so bypassing the local hook is caught at the PR. The 
 feedback; CI is the gate.
 
 SPDX headers are required on the code/build/CI/script set (`.cc/.h/.mm/.ts/.py/.sh/.gn/.gni/.yml`).
-Exempt: `roamux/chromium_src/**` (upstream BSD copies), `.md` docs, and pure-data files
+Exempt: `.md` docs and pure-data files
 (`.json`, `CHROMIUM_PIN`, `LICENSE`, `NOTICE`). Issue linkage (`roam-<N>` branch/PR/`Closes #N`) is
 enforced separately (roam-39).

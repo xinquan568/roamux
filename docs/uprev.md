@@ -67,8 +67,8 @@ test "$(git -C "$SRC" rev-parse HEAD)" = \
      "$(git -C "$SRC" rev-parse "refs/tags/$(grep -v '^#' roamux/build/CHROMIUM_PIN | sed '/^$/d')^{commit}")"
 ```
 
-This matters because the two tools below resolve different references: `apply_patches.py` simulates against
-the checkout's **HEAD**, while `check_override_staleness.py` resolves **`refs/tags/<pin>`** strictly, with no
+This matters because the tools below resolve different references: `apply_patches.py` simulates against
+the checkout's **HEAD**, while `fieldtrial_inventory.py` (step 8) resolves **`refs/tags/<pin>`** strictly, with no
 HEAD fallback. Both can pass while looking at different revisions.
 
 *Verified on M149 (the equality check):* HEAD equalled `refs/tags/149.0.7827.201^{commit}`; exit 0.
@@ -91,18 +91,12 @@ python3 roamux/build/apply_patches.py --chromium-src "$SRC"           # apply
 - **`--reconcile` is CI's mode, and it overwrites.** It forces the checkout to HEAD plus the current stack
   (leaving byte-identical patched files untouched — roam-341). Never run it on a checkout whose edits you want.
 
-### 4. Override staleness
+### 4. Override staleness — retired
 
-```sh
-python3 roamux/build/check_override_staleness.py --chromium-src "$SRC"            # gate
-python3 roamux/build/check_override_staleness.py --chromium-src "$SRC" --update   # after review
-```
-
-Every file under `roamux/chromium_src/` shadows an upstream file. The gate compares a recorded hash of the
-*pristine* upstream counterpart at the pin against the new pin, and fails loudly when it changed.
-**[verified on M149]** — exit 0, "1 override(s) fresh at 149.0.7827.201". Re-reviewing flagged overrides and
-running `--update` on a new pin is **[prospective]**. Context: roam-300 proposes retiring the override
-channel altogether.
+Nothing to run. The `chromium_src` override channel and its staleness gate were retired by roam-300
+([ADR 0004](adr/0004-retire-chromium-src-override-channel.md)); the step number is kept so the cross-references
+in this document stay stable. A header override re-enters only through a fresh ADR that states its own
+staleness obligation.
 
 ### 5. Work the per-pin obligation register [prospective]
 
@@ -149,7 +143,7 @@ python3 roamux/build/fieldtrial_inventory.py --chromium-src "$SRC" --out-dir doc
 ```
 
 It reads the pin from `roamux/build/CHROMIUM_PIN` (or `--tag <TAG>`), resolves `refs/tags/<pin>` strictly
-like the staleness gate, and writes `effective-diff.json` and `inventory.md` in about five seconds. **Attach
+and writes `effective-diff.json` and `inventory.md` in about five seconds. **Attach
 both**: commit them under `docs/uprev-records/<TAG>/` in the uprev PR and link them from its body — that
 directory is the "uprev record" ADR 0002 refers to. The inventory reads upstream's pristine defaults; the
 overlay's own default flips (today patch `0067`, `NewTabAddsToActiveGroup`) are a separate, known delta.
@@ -221,7 +215,6 @@ These fail silently if skipped. Perform each one.
 | Oracle tag `149.0.7827.201` reachable in the runner's checkout | `roamux/build/tests/test_fieldtrial_inventory.py` — "PERSISTENT prerequisite" | Independent of the pin: before resuming tier-2 on a fresh or shallow checkout, fetch the tag (command in protocol step 8). Guard backstop: the gate test fails, not skips, under `REQUIRE_FIELDTRIAL_ORACLE=1`. |
 | `#new-tab-adds-to-active-group` expiry at M150 | `roamux/patches/0068-new-tab-position-seam.patch` — "UPREV CAVEAT (M150)" (with `0067`) | Decide whether patches `0067` and `0068` collapse into a single Roamux-owned switch, or keep both. |
 | WebUI location-bar icon mapping | `roamux/patches/README.md` — patch `0039` row | *Conditional product obligation:* if an uprev enables `kWebUILocationBar`, add the Roamux icon mapping, because the native handler CHECKs unmapped icons. Overlay tests pin that surface off, which is exactly how the incompatibility would stay hidden. |
-| `chromium_src` override staleness | `roamux/chromium_src/README.md` — "On a milestone uprev" | Protocol step 4: re-review, then `--update`. |
 | Patch `0056` rebase | Maintainer decision recorded on roam-291 (2026-09-13) | Rebase its seven `//base` files. Kept deliberately; reopen only on a measured per-run invalidation share, real rebase burden at an uprev, or an upstream equivalent. Since roam-341 the reconcile leaves its headers untouched while their existing regular-file entries already have the stack's bytes and mode; they are rewritten (and their dependents rebuilt) when a hunk changes or a repair is needed — a stray edit, a missing file, a type or mode change. |
 | Patch `0072` retirement | `roamux/patches/0072-worker-thread-hang-watch-background-hint-gate.patch` — "at every uprev, check whether the pinned" | Read the **pristine** file at the target tag — the applied tree already carries the backport: `git -C "$SRC" show <TAG>:base/task/thread_pool/worker_thread.cc`. If `watch_for_hangs` in `WorkerThread::RunWorker` tests `thread_type_hint_` rather than `GetDesiredThreadType()`, delete the patch and its README row. Guard backstop: the `apply_patches.py` row below. |
 
@@ -259,15 +252,14 @@ wording. The 24 files hit on M149 were classified as:
   `roamux/build/tests/test_fieldtrial_inventory.py` states the oracle-tag prerequisite): patch preambles `0065`, `0067`, `0068`, `0072`
   (patch `0010`'s "Re-check on uprev" is a comment inside its diff body, so it surfaces through its README row);
   `roamux/patches/README.md` rows `0010`, `0029`, `0039`, `0065`, `0067`, `0068`, `0072`;
-  `roamux/app/resources/icons/mac/README.md`; `roamux/chromium_src/README.md`; ADR 0002;
+  `roamux/app/resources/icons/mac/README.md`; ADR 0002;
   `roamux/test/roamux_test_env_browsertest.cc`; `roamux/test/support/roamux_browser_test.h`;
   `roamux/test/roamux_refresh_all_initial_urls_browsertest.mm`; `roamux/test/roamux_external_open_profile_browsertest.mm`;
 - **protocol** — `BOOTSTRAP.md` (the fetch-and-checkout commands step 1 reuses; its other hit is a historical
   note on the first build's re-pin); `roamux/build/CHROMIUM_PIN` (the pin's own policy comment, step 2);
-  `roamux/build/check_override_staleness.py` (step 4); ADR 0003 (step 9 — its per-re-pin obligation is the
+  ADR 0003 (step 9 — its per-re-pin obligation is the
   patch failures `apply_patches.py` already raises);
 - **context** — `docs/adr/0001-chromium-overlay-strategy.md` (the re-pin policy);
-  `roamux/build/tests/test_override_staleness.py` (the staleness gate's own tests, which simulate an uprev);
   `roamux/patches/README.md` rows `0059` (how the field-trial studies mask the collapse-action crash —
   covered by explicit-disable regression tests at any pin), `0060` (why widening the predicate absorbs callers
   upstream adds at future pin bumps) and `0062` (why `histograms.xml` is not patched: rebase cost);

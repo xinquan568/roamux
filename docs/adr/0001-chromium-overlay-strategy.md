@@ -2,7 +2,8 @@
 # 0001. Chromium overlay strategy
 
 ## Status
-Accepted
+Accepted — partially superseded by [0004](0004-retire-chromium-src-override-channel.md): channel 2
+(the `chromium_src` include-redirect override) was retired by roam-300; the other decisions below stand.
 
 ## Context
 Roamux is a small, feature-focused derivative of Chromium maintained by a solo developer. Forking

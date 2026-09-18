@@ -96,9 +96,6 @@ class Tier2JobScriptTest(unittest.TestCase):
         self.assertNotIn("-fdx", self.code, "clean -x would nuke out/CI")
         self.assertNotIn("-ffd", self.code, "clean -ff would enter submodules")
 
-    def test_staleness_gate_runs(self):
-        self.assertIn("check_override_staleness.py", self.code)
-
     def test_all_four_suites_build_and_run(self):
         # roam-6 (WB-CI): the browser-test suite joined the tier-2 gate; roam-282 (grill H15):
         # roamux_sparkle_tests joined it — it had existed in BUILD.gn for months without any
@@ -158,7 +155,7 @@ class Tier2JobScriptTest(unittest.TestCase):
     PHASES = ("reconcile", "runhook", "sparkle", "rebrand-gate", "fieldtrial-inventory-oracle",
               "signing-gate", "clone", "build",
               "run:roamux_unittests", "run:roamux_browser_unittests", "run:roamux_sparkle_tests",
-              "run:roamux_browsertests", "staleness", "done")
+              "run:roamux_browsertests", "done")
 
     def test_phase_checkpoints_exist_in_order(self):
         # roam-283: cumulative phase-start checkpoints into the step summary, so a 12h timeout is
@@ -211,7 +208,7 @@ class Tier2JobScriptTest(unittest.TestCase):
         # shell-side git mutation of the base reintroduced here fails this test.
         # "readlink" (roam-280): a READ-ONLY probe — restore_overlay records the previous link
         # target before it decides whether it may re-link. It never mutates the base.
-        allowed_markers = ("ln -sfn", "apply_patches.py", "check_override_staleness.py", "--chromium-src",
+        allowed_markers = ("ln -sfn", "apply_patches.py", "--chromium-src",
                            "autoninja", "gn ", "cd ", "cp ", "OUT=", "SRC=", "echo", "test ", "[ ",
                            "readlink")
         for line in self.code.splitlines():

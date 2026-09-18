@@ -20,9 +20,7 @@ jobs:
           while IFS= read -r f; do
             head -3 "$f" | grep -q 'SPDX-License-Identifier: Apache-2.0' \
               || { echo "::error file=$f::missing SPDX Apache-2.0 header"; missing=1; }
-          # chromium_src/ holds full copies of upstream (BSD-licensed) files — they keep the
-          # upstream header; the Roamux delta's licensing is documented inside each override.
-          done < <(find roamux -type f \( -name '*.cc' -o -name '*.h' -o -name '*.mm' -o -name '*.gn' -o -name '*.gni' \) -not -path 'roamux/chromium_src/*')
+          done < <(find roamux -type f \( -name '*.cc' -o -name '*.h' -o -name '*.mm' -o -name '*.gn' -o -name '*.gni' \))
           exit $missing
       - name: Build config sanity
         run: |
