@@ -326,9 +326,6 @@ class LedgerTest(Case):
         self.assertNotIn("::error::ledger line", out)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RealLedgerTest(unittest.TestCase):
     """roam-308: the committed ledger enforces. After the seeding-window sweep every name that retries on current code has an
@@ -340,3 +337,7 @@ class RealLedgerTest(unittest.TestCase):
         mode, rows = flake_report.parse_ledger(self.LEDGER.read_text())
         self.assertEqual("fail", mode)
         self.assertTrue(rows, "fail mode with no rows would be legal, but the sweep recorded owned rows")
+
+
+if __name__ == "__main__":
+    unittest.main()

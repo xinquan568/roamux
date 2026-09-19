@@ -125,9 +125,11 @@ two steps run after the script **whenever it ran, green or red** (`if: always() 
   under a `mode:` directive. The ledger is in **`mode: fail`**. roam-308 flipped it after sweeping
   every tier-2 artifact of the warn-only seeding window, which ran from 2026-09-06; every name still
   retrying on current code got a row with an open owner. In fail mode:
-  - An **unlisted pass-on-retry** test name is a `::error::`, and so is a **stale** row. A row is
-    stale when its pattern matches no test in the `all_tests` of the suite summaries available that
-    run.
+  - A **retried** test (more than one attempt, including one whose retries never passed) whose name
+    matches no row is a `::error::`, and so is a **stale** row. A row is stale when its pattern
+    matches no test in the `all_tests` of the suite summaries available that run. An unlisted retry
+    that never passed draws both the retry error (its text still says "passed only on retry") and
+    the final-status error.
   - Unaffected by the mode: a final non-success test (including a retry that never passed), an
     invalid ledger and an absent/malformed/incomplete summary are errors in either mode. No row
     exempts them.
@@ -144,7 +146,8 @@ two steps run after the script **whenever it ran, green or red** (`if: always() 
      `<suite>.log` and fix that, never the ledger.
   2. *Final non-success test* (including a retry that never passed): a real failure. Fix it; no row
      can exempt it.
-  3. *Unlisted retry*: fix the test, or file an owner issue (`roam-N`, with the run, the attempt
+  3. *Unlisted retry* that passed on a retry (if it never passed, class 2 applies as well): fix the
+     test, or file an owner issue (`roam-N`, with the run, the attempt
      statuses and the failing attempt's snippet) and add a name-exact row whose note records the
      signature. Do this in the blocked PR or in a dedicated one.
   4. *Stale row*: first check that every suite summary was complete (a missing suite makes valid
