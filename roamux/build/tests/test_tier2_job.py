@@ -108,6 +108,22 @@ class Tier2JobScriptTest(unittest.TestCase):
                        "roamux_sparkle_tests", "roamux_browsertests"):
             self.assertIn('"${OUT}/%s"' % binary, self.code)
 
+    def test_sparkle_host_leftovers_are_swept_right_before_the_sparkle_suite(self):
+        # roam-310: every Sparkle check uses its own random host identifier; cfprefsd or a Sparkle
+        # helper can write that identifier's defaults plist after the test process exits, so the
+        # serialized tier-2 job (not the test) removes earlier checks' leftovers. The sweep must sit
+        # between the suite's phase marker and its run line, and may only touch the test's prefix.
+        lines = self.code.splitlines()
+        phase = lines.index("phase run:roamux_sparkle_tests")
+        run = next(i for i, l in enumerate(lines) if l.startswith('"${OUT}/roamux_sparkle_tests"'))
+        sweeps = [i for i, l in enumerate(lines) if "com.roamux.sparkle.testhost" in l]
+        self.assertEqual(1, len(sweeps), "exactly one sweep line")
+        self.assertTrue(phase < sweeps[0] < run, "sweep must run just before the Sparkle suite")
+        targets = lines[sweeps[0]].split()[2:]
+        self.assertEqual(
+            ['"${HOME}/Library/Preferences/com.roamux.sparkle.testhost."*',
+             '"${HOME}/Library/Caches/com.roamux.sparkle.testhost."*'], targets)
+
     def test_no_suite_runs_under_a_gtest_filter(self):
         # roam-282 (grill H14): the Roamux* filter on roamux_browsertests silently dropped the one
         # fixture not named Roamux* (ThreeCarrierTest) for months. The overlay targets contain

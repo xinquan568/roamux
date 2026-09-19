@@ -16,11 +16,14 @@
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/time/time.h"
+#include "base/token.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -137,6 +140,21 @@ class RoamuxSparkleFeedTest : public testing::Test {
 
     base::FilePath host_dir;
     ASSERT_TRUE(base::CreateNewTempDirectory("roamux-sparkle-host", &host_dir));
+    // One host identity per check (roam-310). Sparkle names its per-host state
+    // (launchd label, defaults, caches, an in-progress update it will try to
+    // resume) by CFBundleIdentifier; with one shared identifier a check could
+    // pick up the previous check's update and fail with SUResumeAppcastError
+    // (1004), even in a fresh process.
+    host_id_ =
+        "com.roamux.sparkle.testhost." + base::Token::CreateRandom().ToString();
+    SCOPED_TRACE(host_id_);
+    // Remove this check's temp host dir and cache folder once the updater is
+    // gone. The identifier's defaults plist is left alone: cfprefsd or a
+    // Sparkle helper can write it after this process exits, so tier-2 sweeps
+    // those (tier2_job.sh) instead. An identifier is never reused, so a
+    // leftover cannot affect another check.
+    base::ScopedClosureRunner cleanup(
+        base::BindOnce(&RemoveHostArtifacts, host_dir, host_id_));
     const base::FilePath contents =
         host_dir.AppendASCII("TestHost.app").AppendASCII("Contents");
     ASSERT_TRUE(base::CreateDirectory(contents.AppendASCII("MacOS")));
@@ -145,7 +163,7 @@ class RoamuxSparkleFeedTest : public testing::Test {
         R"(<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>com.roamux.sparkle.testhost</string>
+  <key>CFBundleIdentifier</key><string>%s</string>
   <key>CFBundleName</key><string>TestHost</string>
   <key>CFBundleExecutable</key><string>TestHost</string>
   <key>CFBundleVersion</key><string>1.0</string>
@@ -155,7 +173,7 @@ class RoamuxSparkleFeedTest : public testing::Test {
   <key>SUEnableAutomaticChecks</key><false/>
 </dict></plist>
 )",
-        base_url.c_str(), public_key.c_str());
+        host_id_.c_str(), base_url.c_str(), public_key.c_str());
     ASSERT_TRUE(base::WriteFile(contents.AppendASCII("Info.plist"), plist));
 
     @autoreleasepool {
@@ -193,8 +211,32 @@ class RoamuxSparkleFeedTest : public testing::Test {
     return response;
   }
 
+  static void RemoveHostArtifacts(const base::FilePath& host_dir,
+                                  const std::string& host_id) {
+    base::DeletePathRecursively(host_dir);
+    base::DeletePathRecursively(base::GetHomeDir()
+                                    .AppendASCII("Library")
+                                    .AppendASCII("Caches")
+                                    .AppendASCII(host_id));
+  }
+
+  // The rejection both bad items must hit: Sparkle's signature gate (4005,
+  // "improperly signed and could not be validated"). Any other error — e.g. a
+  // resume of another check's update (1004) — is not a signature rejection.
+  void ExpectSignatureRejection() {
+    ASSERT_TRUE(driver_.updaterError);
+    const std::string description =
+        host_id_ + ": " +
+        base::SysNSStringToUTF8([driver_.updaterError description]);
+    EXPECT_TRUE(
+        [driver_.updaterError.domain isEqualToString:SUSparkleErrorDomain])
+        << description;
+    EXPECT_EQ(SUInstallationError, driver_.updaterError.code) << description;
+  }
+
   std::string appcast_;
   std::string artifact_;
+  std::string host_id_;
   RoamuxTestUserDriver* driver_ = nil;
 };
 
@@ -209,7 +251,8 @@ TEST_F(RoamuxSparkleFeedTest, SignedItemPassesSignatureValidation) {
   // install/relaunch needs a genuine signed app bundle — I-6.3's staging
   // E2E; out of this in-tree harness's scope.)
   EXPECT_TRUE(driver_.extractionStarted);
-  EXPECT_FALSE(driver_.updaterError);
+  EXPECT_FALSE(driver_.updaterError)
+      << base::SysNSStringToUTF8([driver_.updaterError description]);
 }
 
 // A tampered enclosure (signature over different bytes) is rejected at the
@@ -218,14 +261,15 @@ TEST_F(RoamuxSparkleFeedTest, TamperedItemRejectedAtSignatureGate) {
   RunCheck("appcast-tampered.xml");
   EXPECT_TRUE(driver_.updateFound);
   EXPECT_FALSE(driver_.readyToInstall);
-  EXPECT_TRUE(driver_.updaterError);
+  ExpectSignatureRejection();
 }
 
 // An unsigned item is rejected — no "check without a key" mode (plan K3).
 TEST_F(RoamuxSparkleFeedTest, UnsignedItemRejected) {
   RunCheck("appcast-unsigned.xml");
+  EXPECT_TRUE(driver_.updateFound);
   EXPECT_FALSE(driver_.readyToInstall);
-  EXPECT_TRUE(driver_.updaterError);
+  ExpectSignatureRejection();
 }
 
 }  // namespace
