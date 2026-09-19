@@ -22,11 +22,13 @@
 // is enumerated in the frozen plan; every other test here passes on the stock
 // path by construction and guards it.
 
+#include <algorithm>
 #include <optional>
 #include <vector>
 
 #include "base/feature_list.h"
 #include "base/run_loop.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/profiles/profile.h"
@@ -872,6 +874,51 @@ class RoamuxNewTabPositionVerticalScrollTest : public test::RoamuxBrowserTest {
     CollectVerticalTabViews(browser_view(), &views);
     return views;
   }
+  // The rows this test measures: the tab views inside the unpinned scroll
+  // view's contents.
+  std::vector<VerticalTabView*> UnpinnedRows(views::ScrollView* scroll_view) {
+    std::vector<VerticalTabView*> rows;
+    CollectVerticalTabViews(scroll_view->contents(), &rows);
+    return rows;
+  }
+  // True once every unpinned row is at its preferred height: the predicate
+  // upstream's scroll-into-view waits on (vertical_tab_strip_view.cc), i.e. the
+  // insert slide of TabCollectionAnimatingLayoutManager has finished. A row
+  // still sliding in is 0 to 30 px tall, so reading earlier can make the strip
+  // look fuller than it is (roam-307).
+  bool UnpinnedRowsSettled(views::ScrollView* scroll_view) {
+    const std::vector<VerticalTabView*> rows = UnpinnedRows(scroll_view);
+    return !rows.empty() && std::ranges::all_of(rows, [](VerticalTabView* v) {
+      return v->height() == v->GetPreferredSize().height();
+    });
+  }
+  // Waits for the rows to settle (RunUntil spins the real message loop, so the
+  // slide's timer runs), then lays out, which also runs the scroll view's
+  // post-layout callbacks: upstream's scroll-into-view.
+  void Settle(views::ScrollView* scroll_view) {
+    ASSERT_TRUE(base::test::RunUntil([&]() {
+      return UnpinnedRowsSettled(scroll_view);
+    })) << "the unpinned rows never reached their preferred height";
+    Layout();
+  }
+  // The height every settled unpinned row shares; 0 (with a failure) if they
+  // differ, so "N rows of overflow" is measured, not assumed.
+  int UniformRowHeight(views::ScrollView* scroll_view) {
+    const std::vector<VerticalTabView*> rows = UnpinnedRows(scroll_view);
+    if (rows.empty()) {
+      ADD_FAILURE() << "no unpinned rows";
+      return 0;
+    }
+    const int row = rows.front()->height();
+    for (size_t i = 0; i < rows.size(); ++i) {
+      if (rows[i]->height() != row) {
+        ADD_FAILURE() << "row " << i << " is " << rows[i]->height()
+                      << " px, row 0 is " << row << " px";
+        return 0;
+      }
+    }
+    return row;
+  }
 
  private:
   base::test::ScopedFeatureList features_;
@@ -891,20 +938,28 @@ IN_PROC_BROWSER_TEST_F(RoamuxNewTabPositionVerticalScrollTest,
   ASSERT_NE(nullptr, scroll_view);
 
   // Overflow the unpinned scroll view by at least three rows, however tall
-  // the test window is.
-  for (int added = 0; added < 200; ++added) {
-    chrome::AddTabAt(browser(), GURL(url::kAboutBlankURL), /*idx=*/-1,
-                     /*foreground=*/true);
-    Layout();
-    const std::vector<VerticalTabView*> views = TabViews();
-    if (views.size() >= 4 && scroll_view->contents()->bounds().height() >=
-                                 scroll_view->GetVisibleRect().height() +
-                                     3 * views.back()->height()) {
+  // the test window is. Rows are added in the background (tab 0 stays active,
+  // the scroll offset stays 0) and every check reads a settled layout, so a
+  // viewport that is still growing just means more rows get added.
+  for (int added = 0;; ++added) {
+    ASSERT_NO_FATAL_FAILURE(Settle(scroll_view));
+    const int row = UniformRowHeight(scroll_view);
+    ASSERT_GT(row, 0);
+    if (UnpinnedRows(scroll_view).size() >= 4 &&
+        scroll_view->contents()->bounds().height() >=
+            scroll_view->GetVisibleRect().height() + 3 * row) {
       break;
     }
+    ASSERT_LT(added, 200) << "the strip never overflowed by three rows: "
+                          << "viewport "
+                          << scroll_view->GetVisibleRect().ToString()
+                          << " contents "
+                          << scroll_view->contents()->bounds().ToString();
+    chrome::AddTabAt(browser(), GURL(url::kAboutBlankURL), /*idx=*/-1,
+                     /*foreground=*/false);
   }
   model->ActivateTabAt(0);
-  Layout();
+  ASSERT_NO_FATAL_FAILURE(Settle(scroll_view));
   const std::vector<VerticalTabView*> views = TabViews();
   ASSERT_EQ(static_cast<size_t>(model->count()), views.size());
   const gfx::Rect viewport = scroll_view->GetVisibleRect();
@@ -922,7 +977,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxNewTabPositionVerticalScrollTest,
   ASSERT_LT(last_visible, model->count() - 2)
       << "viewport " << viewport.ToString() << " rows " << views.size();
   model->ActivateTabAt(last_visible);
-  Layout();
+  ASSERT_NO_FATAL_FAILURE(Settle(scroll_view));
   ASSERT_TRUE(views[last_visible]->IsActive());
   ASSERT_TRUE(scroll_view->GetVisibleRect().Contains(
       BoundsInScrollContents(views[last_visible], scroll_view)))
@@ -931,7 +986,7 @@ IN_PROC_BROWSER_TEST_F(RoamuxNewTabPositionVerticalScrollTest,
   SetNewTabPosition(prefs, NewTabPosition::kAfterActiveTab);
   chrome::ExecuteCommand(browser(), IDC_NEW_TAB);
   ASSERT_EQ(last_visible + 1, model->active_index());
-  Layout();
+  ASSERT_NO_FATAL_FAILURE(Settle(scroll_view));
   ASSERT_EQ(static_cast<size_t>(model->count()), TabViews().size());
   VerticalTabView* const new_tab_view =
       FindActiveVerticalTabView(browser_view());
