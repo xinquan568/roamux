@@ -240,6 +240,11 @@ echo "::group::run ${OUT}/roamux_browser_unittests"
 "${OUT}/roamux_browser_unittests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_browser_unittests.json" 2>&1 | tee "${ART}/roamux_browser_unittests.log"
 echo "::endgroup::"
 phase run:roamux_sparkle_tests
+# roam-310: every Sparkle check uses its own random host identifier, and cfprefsd or a Sparkle helper
+# can write that identifier's defaults plist (and cache folder) after the test process has exited,
+# so the test cannot remove them itself. Tier-2 runs are serialized, so no check is live here: drop
+# every earlier check's per-identifier leftovers. The prefix matches nothing but the test's hosts.
+rm -rf "${HOME}/Library/Preferences/com.roamux.sparkle.testhost."* "${HOME}/Library/Caches/com.roamux.sparkle.testhost."*
 echo "::group::run ${OUT}/roamux_sparkle_tests"
 "${OUT}/roamux_sparkle_tests" --test-launcher-retry-limit="${RETRY_LIMIT}" --test-launcher-summary-output="${ART}/roamux_sparkle_tests.json" 2>&1 | tee "${ART}/roamux_sparkle_tests.log"
 echo "::endgroup::"
