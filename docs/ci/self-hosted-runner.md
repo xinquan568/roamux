@@ -122,10 +122,38 @@ two steps run after the script **whenever it ran, green or red** (`if: always() 
   snippet), final non-success tests, and skips (`GTEST_SKIP()` shows up as a `result_parts` skip
   entry — listed only; failing on skips is L17). Retried tests are matched against
   `roamux/build/ci/known_flakes.txt`: rows `<Fixture.Case | Fixture.*> | <owner roam-N> | <note>`
-  under a `mode:` directive. `mode: warn` (now, seeding window from 2026-09-06): an unlisted retry
-  is a `::warning::`. `mode: fail` (roam-308, on/after 2026-09-20): an unlisted retry turns the
-  step red. Listed flakes are always shown; a row matching no test in any suite's `all_tests` is
-  stale (error in fail mode). Closing an owner issue deletes its row in the same change.
+  under a `mode:` directive. The ledger is in **`mode: fail`**. roam-308 flipped it after sweeping
+  every tier-2 artifact of the warn-only seeding window, which ran from 2026-09-06; every name still
+  retrying on current code got a row with an open owner. In fail mode:
+  - An **unlisted pass-on-retry** test name is a `::error::`, and so is a **stale** row. A row is
+    stale when its pattern matches no test in the `all_tests` of the suite summaries available that
+    run.
+  - Unaffected by the mode: a final non-success test (including a retry that never passed), an
+    invalid ledger and an absent/malformed/incomplete summary are errors in either mode. No row
+    exempts them.
+  - Matching is by **name only**. A new failure signature on a listed name stays suppressed but is
+    shown in the report, so owners read their rows' occurrences. Keep rows name-exact (no fixture
+    wildcards), with the observed signature in the note.
+
+  Listed flakes are always shown. Closing an owner issue deletes its row in the same change. The
+  step has no `continue-on-error`, so a red report fails `targeted-suite-selfhosted`, the required
+  check for same-repo PRs and `main` pushes.
+
+  **When the Flake report goes red**, start from the error class in the step summary:
+  1. *Absent / malformed / incomplete summary* for a suite: a harness or job problem. Read the named
+     `<suite>.log` and fix that, never the ledger.
+  2. *Final non-success test* (including a retry that never passed): a real failure. Fix it; no row
+     can exempt it.
+  3. *Unlisted retry*: fix the test, or file an owner issue (`roam-N`, with the run, the attempt
+     statuses and the failing attempt's snippet) and add a name-exact row whose note records the
+     signature. Do this in the blocked PR or in a dedicated one.
+  4. *Stale row*: first check that every suite summary was complete (a missing suite makes valid
+     rows look stale). Then confirm the test was really removed or renamed, and delete or rename the
+     row with it.
+  5. *Invalid ledger*: fix the syntax (exactly one `mode:` directive; three `|`-separated fields per
+     row; the owner is `roam-N`).
+
+  Then push the fix or ledger change and get the checks green.
 - **Upload tier-2 artifacts** — `actions/upload-artifact@v4`, artifact `tier2-artifacts`, 14 days:
   `<suite>.json` + `<suite>.log` for every suite that ran. Download with
   `gh run download <run-id> -n tier2-artifacts`.

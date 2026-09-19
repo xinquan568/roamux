@@ -7,15 +7,26 @@
 #   mode: warn  — an unlisted retried test is a ::warning:: in the step summary; exit 0.
 #   mode: fail  — an unlisted retried test is a ::error::; the Flake report step goes red.
 #
-# Seeding window: warn-only for two weeks from 2026-09-06. FLIP to `mode: fail` on or after
-# 2026-09-20 — tracked by roam-308 (one-line change here + the docs/ci/self-hosted-runner.md
-# section). Listed flakes are still SHOWN in every report (a row suppresses the failure, never the
-# data). A row whose test no longer exists in any suite's all_tests is stale (an error in fail
-# mode). Closing an owner issue means deleting its row in the same change.
+# Seeding window: warn-only from 2026-09-06. roam-308 flipped this ledger to `mode: fail` after
+# sweeping every tier-2 artifact of the window (landing no earlier than 2026-09-20): every name that
+# still retries on current code has a row below with an open owner issue.
+#
+# What fail mode enforces: an UNLISTED pass-on-retry test name, and a STALE row (its pattern matches
+# no test in the all_tests of the suite summaries available that run), are errors. What it does not
+# change: a final non-success test (including a retry that never passed), an invalid ledger and an
+# absent/malformed/incomplete suite summary are errors in BOTH modes, and no row exempts them.
+# Matching is by NAME only: a new failure signature on an already-listed name stays suppressed (it is
+# still shown in the report); the note records the observed signature as documentation, not as a
+# matcher. Keep rows name-exact so a row never blankets a fixture (the roam-306 lesson).
+# Listed flakes are still SHOWN in every report. Closing an owner issue deletes its row in the same
+# change. When the report goes red, see docs/ci/self-hosted-runner.md ("Flake signal and artifacts").
 #
 # Format:  <Fixture.Case | Fixture.*> | <owner roam-N> | <signature / note>
 # ('*' matches within the test name only; '|' separates exactly three fields; '#' starts a comment.)
-mode: warn
+mode: fail
 RoamuxTabStripToggleTest.EscInStripUnpinsEscInPageDoesNot | roam-336 | first-attempt focus-wait timeout (RunUntil on the focused view inside the strip) seen 2026-09-13; not the roam-306 CHECK crash, which roam-306 fixed (patch 0074)
 RoamuxTabStripToggleTest.PinFocusesStrip | roam-336 | same focus-wait timeout as the row above (identical RunUntil on the focused view inside the strip after Toggle), first CI observation PR #348 run 35245701444 attempt 1, 2026-09-17; not the roam-306 CHECK
 RoamuxTabStripToggleTest.HoverPromotionToPin | roam-349 | first-attempt timeout waiting for the hover reveal (RunUntil on IsPeekOpen) under launcher load; seen before and after patch 0074 (roam-306), so not the collection_node_ CHECK; PR #348 five-run record attempt 5, 2026-09-17
+RoamuxShutdownDrainDiagnosticsTest.SequenceIdentityViaRealPostingPath | roam-357 | first attempt TIMED OUT (launcher per-test timeout, no assertion text) and the passing retry took 24-36 s; seen twice (runs 34667832889, 35177259104; 2026-09-12, 2026-09-17), roamux_unittests
+RoamuxTabStripBottomLayoutFlagOffTest.PrefIsInertWhenFlagOff | roam-358 | first attempt TIMED OUT (45 s, no assertion text), retry passed in 1.4 s; seen once (run 35420924029 attempt 4, 2026-09-19)
+RoamuxTabStripToggleTest.FocusedStripTabSurvivesActiveWindowClose | roam-359 | window-activation wait RunUntil(widget->IsActive()) timed out at roamux_tab_strip_toggle_browsertest.mm:389 (~32 s); seen 4 times 2026-09-17..19, all after patch 0074; not roam-336's focused-view wait

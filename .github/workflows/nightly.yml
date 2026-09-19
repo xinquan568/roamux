@@ -52,7 +52,7 @@ jobs:
       # script step was skipped (the hosted kill-switch path skips checkout and the script; a bare
       # always() would then fail the report for the wrong reason and upload nothing). The report reads
       # the per-suite launcher summaries, lists retried / non-success / skipped tests into the step
-      # summary and checks retried tests against known_flakes.txt (mode: warn until roam-308 flips it).
+      # summary and checks retried tests against known_flakes.txt (mode: fail since roam-308).
       - name: Flake report
         if: always() && steps.tier2.outcome != 'skipped'
         run: python3 roamux/build/ci/flake_report.py --artifacts "$ROAMUX_CI_ARTIFACTS" --ledger roamux/build/ci/known_flakes.txt --summary "$GITHUB_STEP_SUMMARY"
