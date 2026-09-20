@@ -65,7 +65,8 @@ diff --git a/chrome/browser/resources/settings/system_page/roamux_proxy_section.
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/settings/system_page/roamux_proxy_section.html
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,88 @@
++<!-- SPDX-License-Identifier: Apache-2.0 -->
 +<!-- Roamux (roam-323): the per-profile proxy section. Thin by design: it renders the state the
 +     browser reports and submits raw fields, because every validation and precedence rule is
 +     C++-side (//roamux/browser/proxy + RoamuxProxyHandler). The mode-specific rows are always
@@ -100,7 +101,7 @@ new file mode 100644
 +<div class="cr-row continuation" id="roamuxProxyManualFields"
 +    hidden$="[[!isManual_(mode_)]]">
 +  <select id="roamuxProxyScheme" class="md-select field"
-+      on-change="onSchemeChange_" disabled$="[[!state_.canEdit]]">
++      disabled$="[[!state_.canEdit]]">
 +    <option value="http">http</option>
 +    <option value="https">https</option>
 +    <option value="socks5">socks5</option>
@@ -157,7 +158,7 @@ diff --git a/chrome/browser/resources/settings/system_page/roamux_proxy_section.
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/settings/system_page/roamux_proxy_section.ts
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,303 @@
 +// SPDX-License-Identifier: Apache-2.0
 +// Roamux (roam-323). Roamux-authored source living in the upstream resources tree (patch 0076
 +// carries it), so it takes the Roamux license header rather than Chromium's.
@@ -232,6 +233,7 @@ new file mode 100644
 +  pac_scheme: 'roamuxProxyErrorPacScheme',
 +  pac_data_url: 'roamuxProxyErrorPacDataUrl',
 +  mode: 'roamuxProxyErrorMode',
++  command_line: 'roamuxProxyErrorCommandLine',
 +  incognito: 'roamuxProxyErrorIncognito',
 +  policy: 'roamuxProxyErrorPolicy',
 +  extension: 'roamuxProxyErrorExtension',
@@ -343,6 +345,8 @@ new file mode 100644
 +                'roamuxProxyOwnerExtensionRegularProfile' :
 +                'roamuxProxyOwnerExtension',
 +            state.controllerName || '');
++      case 'command_line':
++        return loadTimeData.getString('roamuxProxyOwnerCommandLine');
 +      case 'recommended':
 +        return loadTimeData.getString('roamuxProxyOwnerRecommended');
 +      case 'roamux':
@@ -397,6 +401,12 @@ new file mode 100644
 +        '';
 +  }
 +
++  /**
++   * Reads the controls, never the model: `form_` exists only to POPULATE them from browser state,
++   * and re-assigning it would push those stale values back over whatever the user has typed. That
++   * is why the scheme selector has no change handler — its value is read here like every other
++   * control.
++   */
 +  private fieldsFromControls_(): {[key: string]: string|boolean} {
 +    return {
 +      mode: this.mode_,
@@ -430,11 +440,6 @@ new file mode 100644
 +    if (this.mode_ === 'system' || this.mode_ === 'direct') {
 +      this.submit_({mode: this.mode_});
 +    }
-+  }
-+
-+  private onSchemeChange_() {
-+    this.form_ = Object.assign(
-+        {}, this.form_, {scheme: this.$.roamuxProxyScheme.value});
 +  }
 +
 +  private onApplyClick_() {
@@ -513,7 +518,7 @@ diff --git a/chrome/browser/resources/settings/system_page/system_page.ts b/chro
 diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -589,6 +589,121 @@ void AddAppearanceStrings(content::WebUIDataSource* html_source,
+@@ -589,6 +589,128 @@ void AddAppearanceStrings(content::WebUIDataSource* html_source,
    html_source->AddBoolean("roamuxTabStripPositionEnabled",
                            base::FeatureList::IsEnabled(
                                roamux::features::kTabStripPosition));
@@ -571,6 +576,9 @@ diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provide
 +                         "The extension \"$1\" sets the proxy for your "
 +                         "regular profile; incognito windows follow whatever "
 +                         "that extension is allowed to do.");
++  html_source->AddString("roamuxProxyOwnerCommandLine",
++                         "A command-line switch used to start this browser "
++                         "controls routing.");
 +  // A recommended value is upstream's CONFIG_FALLBACK: this Mac's own proxy configuration, when it
 +  // has one, still wins. Saying it "controls routing" would be a claim this state cannot support.
 +  html_source->AddString("roamuxProxyOwnerRecommended",
@@ -629,6 +637,10 @@ diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provide
 +  html_source->AddString("roamuxProxyErrorPolicy",
 +                         "Your organization controls this setting, so it "
 +                         "cannot be changed here.");
++  html_source->AddString("roamuxProxyErrorCommandLine",
++                         "This browser was started with a proxy on its command "
++                         "line, which takes precedence. Restart without it to "
++                         "set a proxy here.");
 +  html_source->AddString("roamuxProxyErrorExtension",
 +                         "An extension controls this setting. Remove or "
 +                         "disable it to change the proxy here.");

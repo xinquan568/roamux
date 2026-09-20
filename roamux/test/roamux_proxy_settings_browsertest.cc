@@ -11,12 +11,14 @@
 #include <string_view>
 #include <tuple>
 
+#include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
 #include "chrome/browser/password_manager/password_manager_test_base.h"
 #include "chrome/browser/profiles/profile.h"
@@ -28,6 +30,8 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/keyed_service/core/service_access_type.h"
+#include "components/password_manager/core/browser/http_auth_manager.h"
+#include "components/password_manager/core/browser/http_auth_observer.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_store/password_store_results_observer.h"
@@ -64,6 +68,7 @@ namespace {
 constexpr char kProxyMarker[] = "served-by-the-test-proxy";
 constexpr char kOriginMarker[] = "served-by-the-origin-directly";
 constexpr char kUserProxyMarker[] = "served-by-the-user-proxy";
+constexpr char kSwitchProxyMarker[] = "served-by-the-command-line-proxy";
 
 // Null-safe readers: a missing key is a legible failure, not a crash that
 // aborts the run.
@@ -365,6 +370,76 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesEligibleTest,
   EXPECT_FALSE(Flag(state, "overrideRulesActive", true));
 }
 
+// Eligibility is not only the feature: proxy_config::ProxyOverrideRulesAllowed
+// also weighs the affiliation / all-users / scope prefs and who set the list.
+// This test pins what a browsertest can actually move, and records what it
+// cannot: the affiliation input is owned by the management state, so a write to
+// the pref does not stick (upstream drives it with ManagementContextMixin in
+// chrome/browser/enterprise/net/proxy_override_rules_browsertest.cc). Since our
+// answer IS that predicate's answer — BuildState reports what
+// PrefProxyConfigTrackerImpl::ReadPrefConfig produced — a Roamux test of the
+// affiliation rule would be testing upstream's rule, not our reporting of it.
+IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesEligibleTest,
+                       AnExtensionSetListIsReportedWithItsOwnerAndEligibility) {
+  constexpr char kExtensionId[] = "abcdefghijklmnopabcdefghijklmnop";
+  auto handler = MakeHandler(browser()->profile());
+
+  ExtensionPrefValueMap* map =
+      ExtensionPrefValueMapFactory::GetForBrowserContext(browser()->profile());
+  ASSERT_TRUE(map);
+  map->RegisterExtension(kExtensionId, base::Time::Now(), /*is_enabled=*/true,
+                         /*is_incognito_enabled=*/false);
+  map->SetExtensionPref(kExtensionId, proxy_config::prefs::kProxyOverrideRules,
+                        ExtensionPrefValueMap::ChromeSettingScope::kRegular,
+                        base::Value(OneOverrideRule()));
+  ASSERT_TRUE(prefs()
+                  ->FindPreference(proxy_config::prefs::kProxyOverrideRules)
+                  ->IsExtensionControlled());
+
+  // Default management state: affiliated, so even an extension-set list is
+  // eligible — and upstream's predicate agrees, which is the thing we report.
+  ASSERT_TRUE(
+      prefs()->GetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation));
+  ASSERT_TRUE(proxy_config::ProxyOverrideRulesAllowed(prefs()));
+  const base::DictValue state = handler->GetStateForTesting();
+  EXPECT_TRUE(Flag(state, "overrideRulesConfigured", false));
+  EXPECT_TRUE(Flag(state, "overrideRulesActive", false));
+  EXPECT_EQ("extension", Str(state, "overrideRulesOwner"))
+      << "the list's owner is reported separately from the base "
+         "configuration's";
+
+  // CHARACTERISATION of the limit above: the affiliation input cannot be moved
+  // from here, which is why there is no unaffiliated leg in this file.
+  prefs()->SetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation,
+                      false);
+  EXPECT_TRUE(
+      prefs()->GetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation))
+      << "if this ever fails, the management state became settable from a "
+         "browsertest — add the unaffiliated eligibility legs here";
+}
+
+// The page has to learn about an eligibility change too, not only about the
+// list: the registrar watches those prefs, so a change must push fresh state.
+IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesEligibleTest,
+                       AnEligibilityChangePushesFreshState) {
+  content::TestWebUI test_web_ui;
+  test_web_ui.set_web_contents(
+      browser()->tab_strip_model()->GetActiveWebContents());
+  auto handler = std::make_unique<ExposedProxyHandler>(browser()->profile());
+  handler->set_web_ui(&test_web_ui);
+  handler->AllowJavascriptForTesting();
+  const size_t before = test_web_ui.call_data().size();
+  // Writing the user value notifies the registrar even though the management
+  // state keeps the effective value; what matters here is that the section is
+  // told to refresh when an eligibility input moves.
+  prefs()->SetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation,
+                      false);
+  ASSERT_GT(test_web_ui.call_data().size(), before)
+      << "an eligibility change must not leave stale attribution on screen";
+  EXPECT_EQ("roamux-proxy-state-changed",
+            test_web_ui.call_data().back()->arg1()->GetString());
+}
+
 // The engine's own gate (kEnableProxyOverrideRules) is pinned OFF here, so a
 // configured list that the engine ignores must never be presented as
 // controlling routing.
@@ -460,11 +535,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyRoutingTest,
   EXPECT_EQ(kProxyMarker, NavigateAndReadBody(OriginUrl()));
 }
 
-// PRECONDITION: the test environment has no system proxy configured, so mode
-// `system` resolves to a direct connection here. What is asserted is that OUR
-// endpoint leaves the path and the request reaches the destination — that a
-// real macOS system proxy is honoured is upstream's own configuration service
-// and is not established by this test.
+// PRECONDITION: this fixture installs no base configuration, so mode `system`
+// resolves to a direct connection here — the assertion is that OUR endpoint
+// leaves the path and the request reaches the destination.
+// A distinguishable system configuration cannot be installed from inside a
+// browsertest: the only switch that installs one (--proxy-server) lands ABOVE
+// the user pref layer, which RoamuxProxyCommandLineProxyTest establishes.
 IN_PROC_BROWSER_TEST_F(RoamuxProxyRoutingTest,
                        ExplicitSystemModeStopsRoutingThroughUs) {
   auto handler = MakeHandler(browser()->profile());
@@ -568,6 +644,58 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyRoutingTest,
                    ->FindPreference(proxy_config::prefs::kProxy)
                    ->HasUserSetting())
       << "this section writes the profile pref only";
+}
+
+// --proxy-server is the only way to install a proxy configuration from inside a
+// browsertest, and it turns out NOT to be a base configuration: it lands in the
+// command-line pref store, i.e. ABOVE the user layer — which is what this test
+// establishes. It follows that a distinguishable *system* (OS) configuration
+// cannot be installed here at all.
+class RoamuxProxyCommandLineProxyTest : public RoamuxProxyRoutingTest {
+ public:
+  RoamuxProxyCommandLineProxyTest() {
+    switch_proxy_.RegisterRequestHandler(base::BindRepeating(
+        &ServeFixedMarker, std::string(kSwitchProxyMarker)));
+    CHECK(switch_proxy_.InitializeAndListen());
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    RoamuxProxyRoutingTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII(
+        "proxy-server",
+        "127.0.0.1:" + base::NumberToString(switch_proxy_.port()));
+  }
+
+  void SetUpOnMainThread() override {
+    RoamuxProxyRoutingTest::SetUpOnMainThread();
+    switch_proxy_.StartAcceptingConnections();
+  }
+
+ protected:
+  net::test_server::EmbeddedTestServer switch_proxy_;
+};
+
+IN_PROC_BROWSER_TEST_F(RoamuxProxyCommandLineProxyTest,
+                       ACommandLineProxyIsNamedAndBlocksUsHonestly) {
+  ASSERT_EQ(kSwitchProxyMarker, NavigateAndReadBody(OriginUrl()))
+      << "the command-line proxy is what routes";
+  auto handler = MakeHandler(browser()->profile());
+  const base::DictValue state = handler->GetStateForTesting();
+  EXPECT_EQ("command_line", Str(state, "baseOwner"))
+      << "neither policy nor an extension nor this Mac's settings — the switch";
+  EXPECT_FALSE(Flag(state, "canEdit", true));
+  EXPECT_FALSE(Flag(state, "hasOurValue", true));
+
+  const base::DictValue error = handler->SetForTesting(ProxyFields(proxy_));
+  ASSERT_FALSE(error.empty()) << "the pref is not user-modifiable here";
+  EXPECT_EQ("command_line", Str(error, "reason"))
+      << "the refusal must not blame policy or an extension";
+  EXPECT_EQ(kSwitchProxyMarker, NavigateAndReadBody(OriginUrl()));
+
+  // Reset removes OUR value; there is none, so it is a no-op that changes
+  // nothing about who routes.
+  EXPECT_TRUE(handler->ResetForTesting().empty());
+  EXPECT_EQ(kSwitchProxyMarker, NavigateAndReadBody(OriginUrl()));
 }
 
 // ---- slice 3 (continued): who wins -----------------------------------------
@@ -715,18 +843,39 @@ class RoamuxProxyAuthTest : public RoamuxProxyHandlerTest {
   net::test_server::EmbeddedTestServer auth_proxy_;
 };
 
+// Records what the password manager delivers for a pending proxy challenge.
+// Upstream's autofill path PREFILLS the dialog
+// (LoginView::OnAutofillDataAvailable) rather than submitting it, so "no second
+// prompt" can never be the evidence for filling — this observer is the seam
+// upstream's own ProxyAuthFilling test uses.
+class RecordingHttpAuthObserver : public password_manager::HttpAuthObserver {
+ public:
+  void OnAutofillDataAvailable(std::u16string_view username,
+                               std::u16string_view password) override {
+    username_ = std::u16string(username);
+    password_ = std::u16string(password);
+    delivered_ = true;
+  }
+  void OnLoginModelDestroying() override {}
+
+  bool delivered() const { return delivered_; }
+  const std::u16string& username() const { return username_; }
+  const std::u16string& password() const { return password_; }
+
+ private:
+  bool delivered_ = false;
+  std::u16string username_;
+  std::u16string password_;
+};
+
 // What this establishes: the prompt is upstream's, cancelling keeps the request
-// out, the supplied credential gets it through, the credential is offered to
-// and stored by the password manager under the proxy's realm, and a later
-// request in the same session is not challenged again.
-//
-// What it deliberately does NOT claim: that the password manager would FILL a
-// challenge in a later browser session. The reuse below is the network layer's
-// HTTP auth cache; filling from the store is upstream's HttpAuthManager path
-// (and it prefills the dialog rather than submitting it), so proving it would
-// take a fixture that survives a restart. Not established here.
+// out, the supplied credential gets it through, the credential is stored by the
+// password manager under the proxy's realm, the password manager then DELIVERS
+// it for a later challenge at that realm (the fill path itself), and a later
+// request in the same session is not challenged again — the network layer's
+// auth cache, a separate mechanism, asserted separately.
 IN_PROC_BROWSER_TEST_F(RoamuxProxyAuthTest,
-                       PromptCancelRetryThenSavedAndReusedInSession) {
+                       PromptCancelRetrySaveFillAndSessionReuse) {
   // 1. The prompt appears (the LoginHandler path, not something we built).
   content::WebContents* tab =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -778,8 +927,29 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyAuthTest,
       << "the 407 credential belongs to the password manager, under "
       << expected_realm;
 
-  // 5. Reused in this session: a different path is fetched without a second
-  // challenge (the network layer's auth cache — see the note above).
+  // 5. Filled: for a fresh challenge at the proxy's realm the password manager
+  // hands back exactly this credential. The fill path is asked directly, rather
+  // than inferred from the absence of a prompt.
+  RecordingHttpAuthObserver observer;
+  password_manager::HttpAuthManager* auth_manager =
+      ChromePasswordManagerClient::FromWebContents(tab)->GetHttpAuthManager();
+  ASSERT_TRUE(auth_manager);
+  password_manager::PasswordForm pending;
+  pending.scheme = password_manager::PasswordForm::Scheme::kBasic;
+  pending.url = GURL(
+      "http://127.0.0.1:" + base::NumberToString(auth_proxy_.port()) + "/");
+  pending.signon_realm = expected_realm;
+  auth_manager->SetObserverAndDeliverCredentials(&observer, pending);
+  EXPECT_TRUE(base::test::RunUntil([&]() { return observer.delivered(); }))
+      << "the password manager must offer the stored proxy credential for a "
+         "challenge at "
+      << expected_realm;
+  EXPECT_EQ(u"user", observer.username());
+  EXPECT_EQ(u"pass", observer.password());
+  auth_manager->DetachObserver(&observer);
+
+  // 6. Reused in this session: a different path is fetched without a second
+  // challenge. That is the network layer's auth cache, not step 5's mechanism.
   Navigate(tab, "/again");
   ASSERT_TRUE(BodyEventuallyShowsPath("/again"));
   EXPECT_TRUE(LoginHandler::GetAllLoginHandlersForTest().empty())
@@ -986,6 +1156,73 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxySectionDomTest,
       << "re-applying an untouched form must not drop the bypass list";
 }
 
+// The order the user works in must not matter: typing an endpoint and THEN
+// changing its scheme has to keep what was typed. (A form model re-assigned on
+// the scheme change would push stale values back over the controls, which is
+// why the scheme selector has no change handler.)
+IN_PROC_BROWSER_TEST_F(RoamuxProxySectionDomTest,
+                       ChangingSchemeAfterTypingKeepsTheTypedFields) {
+  // Start from a SAVED configuration, so there are stale model values available
+  // to clobber the typed ones with.
+  base::DictValue saved = ManualFields("old.example", "1111");
+  saved.Set("bypassList", "*.old.example");
+  ASSERT_TRUE(MakeHandler(browser()->profile())->SetForTesting(saved).empty());
+
+  content::WebContents* web_contents = NavigateToSystemSettings();
+  const std::string body = R"(
+      if (!await waitUntil(() => $('roamuxProxyHost').value === 'old.example')) {
+        return 'host: ' + $('roamuxProxyHost').value;
+      }
+      $('roamuxProxyHost').value = 'typed.example';
+      $('roamuxProxyPort').value = '2222';
+      $('roamuxProxyBypass').value = '*.typed.example';
+      const scheme = $('roamuxProxyScheme');
+      scheme.value = 'https';
+      scheme.dispatchEvent(new Event('change'));
+      await settle();
+      const shown = [$('roamuxProxyHost').value, $('roamuxProxyPort').value,
+                     $('roamuxProxyBypass').value];
+      if (shown.join('|') !== 'typed.example|2222|*.typed.example') {
+        return 'clobbered: ' + shown.join('|');
+      }
+      $('roamuxProxyApply').click();
+      if (!await waitUntil(() => $('roamuxProxyHost').value === 'typed.example' &&
+                                 !$('roamuxProxyHost').invalid)) {
+        return 'not-applied';
+      }
+      return 'ok';
+  )";
+  ASSERT_EQ("ok", content::EvalJs(web_contents, InSectionScript(body)));
+  const ProxyConfigDictionary stored(StoredConfig());
+  std::string servers;
+  ASSERT_TRUE(stored.GetProxyServer(&servers));
+  EXPECT_EQ("https://typed.example:2222", servers)
+      << "the endpoint the user typed must be what is stored";
+  std::string bypass;
+  EXPECT_TRUE(stored.GetBypassList(&bypass));
+  EXPECT_EQ("*.typed.example;", bypass);
+}
+
+IN_PROC_BROWSER_TEST_F(RoamuxProxySectionDomTest,
+                       ChoosingSystemInTheSelectorClearsOurValue) {
+  ASSERT_TRUE(MakeHandler(browser()->profile())
+                  ->SetForTesting(ManualFields("ui.example", "8080"))
+                  .empty());
+  content::WebContents* web_contents = NavigateToSystemSettings();
+  const std::string body = R"(
+      if (!await waitUntil(() => $('roamuxProxyMode').value === 'manual')) {
+        return 'mode: ' + $('roamuxProxyMode').value;
+      }
+  )" + base::StringPrintf(kChooseMode, "system") +
+                           R"(
+      if (!$('roamuxProxyManualFields').hidden) return 'manual-fields-shown';
+      return 'ok';
+  )";
+  ASSERT_EQ("ok", content::EvalJs(web_contents, InSectionScript(body)));
+  EXPECT_TRUE(WaitForUserProxyValue(false))
+      << "system must clear our value, not store mode:system";
+}
+
 IN_PROC_BROWSER_TEST_F(RoamuxProxySectionDomTest,
                        PacModeShowsItsFieldsAndStoresTheMandatoryChoice) {
   content::WebContents* web_contents = NavigateToSystemSettings();
@@ -1140,10 +1377,17 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxySectionPolicyDomTest,
   policies.Set(policy::key::kProxyServer, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
                base::Value("policy.example:3128"), nullptr);
+  // Our own value first, so Reset has something to remove and precedence is
+  // exercised rather than assumed.
+  ASSERT_TRUE(MakeHandler(browser()->profile())
+                  ->SetForTesting(ManualFields("ours.example", "8080"))
+                  .empty());
   policy_provider_.UpdateChromePolicy(policies);
   ASSERT_TRUE(base::test::RunUntil([&]() {
     return prefs()->FindPreference(proxy_config::prefs::kProxy)->IsManaged();
   }));
+  ASSERT_TRUE(
+      prefs()->FindPreference(proxy_config::prefs::kProxy)->HasUserSetting());
 
   content::WebContents* web_contents = NavigateToSystemSettings();
   const std::string body = R"(
@@ -1155,18 +1399,35 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxySectionPolicyDomTest,
       if ($('roamuxProxyHost').value !== 'policy.example') {
         return 'host: ' + $('roamuxProxyHost').value;
       }
+      // Reset is the one thing still usable: it removes OUR value.
+      $('roamuxProxyReset').click();
+      await settle();
       return text('roamuxProxyOwner');
   )";
   const std::string owner =
       content::EvalJs(web_contents, InSectionScript(body)).ExtractString();
   EXPECT_NE(std::string::npos, owner.find("organization"))
-      << "policy control must be named, not hidden; got: " << owner;
+      << "policy control must be named, and must keep being named after Reset; "
+         "got: "
+      << owner;
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return !prefs()
+                ->FindPreference(proxy_config::prefs::kProxy)
+                ->HasUserSetting();
+  })) << "Reset must remove our value even while policy controls routing";
+  EXPECT_TRUE(prefs()->FindPreference(proxy_config::prefs::kProxy)->IsManaged())
+      << "and policy must still be in control afterwards";
 }
 
 // An extension controlling the value is named in the label, from the DOM.
 IN_PROC_BROWSER_TEST_F(RoamuxProxySectionDomTest,
                        ExtensionControlIsNamedInTheLabel) {
   constexpr char kExtensionId[] = "abcdefghijklmnopabcdefghijklmnop";
+  // Our own value first — once the extension's is in place the pref is no
+  // longer user-modifiable, so this is also the only order a user could reach.
+  ASSERT_TRUE(MakeHandler(browser()->profile())
+                  ->SetForTesting(ManualFields("ours.example", "8080"))
+                  .empty());
   ExtensionPrefValueMap* map =
       ExtensionPrefValueMapFactory::GetForBrowserContext(browser()->profile());
   ASSERT_TRUE(map);
@@ -1182,12 +1443,21 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxySectionDomTest,
       if (!await waitUntil(() => $('roamuxProxyApply').disabled)) {
         return 'apply-still-enabled';
       }
+      if ($('roamuxProxyReset').disabled) return 'reset-disabled';
+      $('roamuxProxyReset').click();
+      await settle();
       return text('roamuxProxyOwner');
   )";
   const std::string owner =
       content::EvalJs(web_contents, InSectionScript(body)).ExtractString();
   EXPECT_NE(std::string::npos, owner.find(kExtensionId))
-      << "the extension in control must be named; got: " << owner;
+      << "the extension in control must be named, before and after Reset; got: "
+      << owner;
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return !prefs()
+                ->FindPreference(proxy_config::prefs::kProxy)
+                ->HasUserSetting();
+  })) << "Reset must remove our value even while an extension controls routing";
 }
 
 // Configured-but-ignored override rules must not be presented as if they were

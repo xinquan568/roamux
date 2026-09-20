@@ -246,6 +246,12 @@ base::DictValue RoamuxProxyHandler::BuildState() {
       // implying we resolved the incognito layer.
       state.Set("extensionScope", "regular_profile");
     }
+  } else if (!pref->IsUserModifiable()) {
+    // Something above the user layer that is neither policy nor an extension —
+    // in practice the --proxy-server command line, which lands in the
+    // command-line pref store. Saying "this Mac's settings" here would be a
+    // plain lie, and "an extension" (the old fallback) a different one.
+    base_owner = "command_line";
   } else if (!pref->HasUserSetting() && pref->GetRecommendedValue()) {
     base_owner = "recommended";
   } else if (pref->HasUserSetting() && mode != ProxyPrefs::MODE_SYSTEM) {
@@ -293,7 +299,10 @@ base::DictValue RoamuxProxyHandler::Commit(const base::DictValue& fields) {
   const PrefService::Preference* pref =
       prefs->FindPreference(proxy_config::prefs::kProxy);
   if (!pref->IsUserModifiable()) {
-    return Error("mode", pref->IsManaged() ? "policy" : "extension");
+    return Error("mode", pref->IsManaged() ? "policy"
+                                           : (pref->IsExtensionControlled()
+                                                  ? "extension"
+                                                  : "command_line"));
   }
 
   const std::optional<proxy::Input> input = ToInput(fields);
