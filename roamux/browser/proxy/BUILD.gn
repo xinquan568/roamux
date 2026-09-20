@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# roam-323: the pure proxy-configuration validator/builder behind the Settings > System
+# proxy section. No //chrome dependency, so roamux_unittests can drive it directly (the
+# shortcut_registry precedent); the WebUI handler in //roamux/browser/ui/webui is its only
+# production caller.
+
+source_set("proxy") {
+  sources = [
+    "proxy_config_builder.cc",
+    "proxy_config_builder.h",
+  ]
+  deps = [
+    "//base",
+    "//components/proxy_config",
+    "//net",
+    "//url",
+  ]
+}

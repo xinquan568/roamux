@@ -38,6 +38,12 @@ BASE_DECLARE_FEATURE(
                               // is the kill-switch, patch 0073 — historically 0066)
 BASE_DECLARE_FEATURE(
     kTabGroupHeaderDoubleClickAll);  // roam-322 — double-click a tab group
+BASE_DECLARE_FEATURE(kRoamuxProxyConfig);  // roam-323 — the Settings > System
+                                          // per-profile proxy section (SHIPS
+                                          // DISABLED; chrome://flags/
+                                          // #roamux-proxy-config is the
+                                          // experiment switch, patch 0073;
+                                          // graduation is roam-326)
                                      // header to collapse / expand ALL groups
                                      // (SHIPS ENABLED; chrome://flags/
                                      // #roamux-tab-group-header-double-click-all
