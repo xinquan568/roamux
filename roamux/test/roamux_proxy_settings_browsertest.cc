@@ -435,10 +435,13 @@ class RoamuxProxyOverrideRulesPolicyTest
  protected:
   // `affiliated` false means: the device has affiliation ids and the user is
   // not one of them — the case the handler turns into affiliation=false.
-  void ApplyRulesPolicy(bool affiliated, int enable_for_all_users) {
+  void ApplyRulesPolicy(
+      bool affiliated,
+      int enable_for_all_users,
+      policy::PolicyScope rules_scope = policy::POLICY_SCOPE_USER) {
     policy::PolicyMap policies;
     policies.Set(policy::key::kProxyOverrideRules,
-                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_LEVEL_MANDATORY, rules_scope,
                  policy::POLICY_SOURCE_CLOUD, base::Value(OneOverrideRule()),
                  nullptr);
     policies.Set(policy::key::kEnableProxyOverrideRulesForAllUsers,
@@ -495,6 +498,61 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesPolicyTest,
   // And back: the answer moves in both directions.
   ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/1);
   EXPECT_TRUE(ActiveIs(true));
+
+  // Scope is the third input: the handler writes kProxyOverrideRulesScope from
+  // the policy's own scope, and only a USER-scoped managed list is refused for
+  // an unaffiliated user. A MACHINE-scoped list is applied to everyone.
+  ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/0);
+  ASSERT_TRUE(ActiveIs(false));
+  ASSERT_EQ(policy::POLICY_SCOPE_USER,
+            prefs()->GetInteger(proxy_config::prefs::kProxyOverrideRulesScope));
+  ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/0,
+                   policy::POLICY_SCOPE_MACHINE);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return prefs()->GetInteger(proxy_config::prefs::kProxyOverrideRulesScope) ==
+           policy::POLICY_SCOPE_MACHINE;
+  })) << "the handler must record the policy's scope";
+  EXPECT_TRUE(proxy_config::ProxyOverrideRulesAllowed(prefs()));
+  EXPECT_TRUE(ActiveIs(true))
+      << "a machine-scoped list applies to an unaffiliated user too";
+}
+
+// And the page is told: a real eligibility transition must PUSH a state whose
+// overrideRulesActive has changed, not merely fire an event.
+IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesPolicyTest,
+                       AnEligibilityTransitionPushesTheChangedAnswer) {
+  // The starting point has all-users=1 so that the transition below changes a
+  // policy VALUE as well as eligibility — a bundle whose values are unchanged
+  // is not re-applied, and then nothing would move at all.
+  ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/1);
+  ASSERT_TRUE(ActiveIs(true));
+
+  content::TestWebUI test_web_ui;
+  test_web_ui.set_web_contents(
+      browser()->tab_strip_model()->GetActiveWebContents());
+  auto handler = std::make_unique<ExposedProxyHandler>(browser()->profile());
+  handler->set_web_ui(&test_web_ui);
+  handler->AllowJavascriptForTesting();
+  ASSERT_TRUE(
+      Flag(handler->GetStateForTesting(), "overrideRulesActive", false));
+
+  // Withdraw the all-users allowance: an unaffiliated user's rules stop
+  // applying.
+  ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/0);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    if (test_web_ui.call_data().empty()) {
+      return false;
+    }
+    const content::TestWebUI::CallData& last = *test_web_ui.call_data().back();
+    return last.function_name() == "cr.webUIListenerCallback" &&
+           last.arg1()->GetString() == "roamux-proxy-state-changed" &&
+           last.arg2() && last.arg2()->is_dict() &&
+           Flag(last.arg2()->GetDict(), "overrideRulesActive", true) == false;
+  })) << "the pushed state must carry the new answer, not just a notification";
+  const base::DictValue& pushed =
+      test_web_ui.call_data().back()->arg2()->GetDict();
+  EXPECT_TRUE(Flag(pushed, "overrideRulesConfigured", false))
+      << "still configured — only no longer applied";
 }
 
 // The page has to learn about an eligibility change too, not only about the
@@ -731,12 +789,13 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyRoutingTest,
       << "this section writes the profile pref only";
 }
 
-// --proxy-server was the candidate for installing a base configuration in-process
-// and turns out NOT to be one: it lands in the command-line pref store, i.e.
-// ABOVE the user layer, which is what this test establishes. It is a real
-// configuration in its own right, so it is tested as one — and the honest
-// consequence is recorded where mode `system` is tested: no base-configuration
-// seam was found here, and upstream unit-tests that contract itself.
+// --proxy-server was the candidate for installing a base configuration
+// in-process and turns out NOT to be one: it lands in the command-line pref
+// store, i.e. ABOVE the user layer, which is what this test establishes. It is
+// a real configuration in its own right, so it is tested as one — and the
+// honest consequence is recorded where mode `system` is tested: no
+// base-configuration seam was found here, and upstream unit-tests that contract
+// itself.
 class RoamuxProxyCommandLineProxyTest : public RoamuxProxyRoutingTest {
  public:
   RoamuxProxyCommandLineProxyTest() {
