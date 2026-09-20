@@ -21,7 +21,9 @@
 #   * roamux_browsertests' RoamuxFlagsEntriesTest (tier-2) asserts every expected
 #     row is present, rendered and usable on chrome://flags — extend its list.
 #
-# Rows (12 FEATURE_VALUE_TYPE kill-switches + 1 SINGLE_VALUE_TYPE switch mirror):
+# Rows (13 total: 11 FEATURE_VALUE_TYPE kill-switches for shipped features, 1
+# FEATURE_VALUE_TYPE experiment switch that ships DISABLED (roamux-proxy-config), and 1
+# SINGLE_VALUE_TYPE switch mirror):
 #   roamux-bookmark-subfolder-groups, roamux-brave-style-profiles, roamux-edge-import,
 #   roamux-external-open-profile, roamux-initial-url, roamux-new-tab-position,
 #   roamux-proxy-config (roam-323; ships DISABLED — the E10 experiment switch),
@@ -42,7 +44,7 @@ diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
  #include <iterator>
  #include <map>
  #include <memory>
-@@ -4740,6 +4743,129 @@ const FeatureEntry::FeatureVariation kGestureUserEducationVariations[] = {
+@@ -4740,6 +4743,130 @@ const FeatureEntry::FeatureVariation kGestureUserEducationVariations[] = {
  //
  // When adding a new choice, add it to the end of the list.
  const FeatureEntry kFeatureEntries[] = {
@@ -90,9 +92,10 @@ diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
 +    {"roamux-proxy-config", "Roamux: proxy for this profile",
 +     "Adds a Settings > System section that configures a proxy for this "
 +     "profile (system, direct, a single endpoint, or a PAC URL), writing "
-+     "Chromium's own proxy setting. While this is off the section is hidden; a "
-+     "proxy already saved from an earlier session keeps routing until it is "
-+     "reset here.",
++     "Chromium's own proxy setting. While this is off the section is hidden and "
++     "a proxy already saved from an earlier session keeps routing: to change or "
++     "remove it, turn this back on, relaunch, and use Reset in Settings > "
++     "System.",
 +     kOsMac, FEATURE_VALUE_TYPE(roamux::features::kRoamuxProxyConfig)},
 +    // Roamux (roam-31): developer mirror of
 +    // roamux.signin.optional_entry_point_enabled (E5). Functional sign-in
@@ -172,7 +175,7 @@ diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
  // Include generated flags for flag unexpiry; see //docs/flag_expiry.md and
  // //tools/flags/generate_unexpire_flags.py.
  #include "build/chromeos_buildflags.h"
-@@ -13376,6 +13502,12 @@ void GetStorage(Profile* profile, GetStorageCallback callback) {
+@@ -13376,6 +13503,12 @@ void GetStorage(Profile* profile, GetStorageCallback callback) {
  bool ShouldSkipConditionalFeatureEntry(const flags_ui::FlagsStorage* storage,
                                         const FeatureEntry& entry) {
    version_info::Channel channel = chrome::GetChannel();

@@ -40,6 +40,20 @@ bool HasCredentials(std::string_view host) {
   return host.find('@') != std::string_view::npos;
 }
 
+// No ASCII space or control character belongs in a host. This has to be its own
+// check rather than a character set: a pasted endpoint can carry a trailing
+// CR/LF, which net::ProxyServer::FromSchemeHostAndPort silently trims — so the
+// stored endpoint would differ from what the user was shown to have typed.
+bool HasSpaceOrControl(std::string_view value) {
+  for (const char c : value) {
+    const unsigned char byte = static_cast<unsigned char>(c);
+    if (byte <= ' ' || byte == 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::optional<net::ProxyServer::Scheme> ParseScheme(std::string_view scheme) {
   if (scheme == "http") {
     return net::ProxyServer::SCHEME_HTTP;
@@ -86,16 +100,16 @@ Outcome BuildManual(const Input& input) {
   if (input.host.empty()) {
     return Reject("host", "host");
   }
-  if (input.host.find_first_of("/?# \t") != std::string::npos ||
-      decoded_host.find_first_of("/?# \t") != std::string::npos) {
+  if (input.host.find_first_of("/?#") != std::string::npos ||
+      decoded_host.find_first_of("/?#") != std::string::npos ||
+      HasSpaceOrControl(input.host) || HasSpaceOrControl(decoded_host)) {
     return Reject("host", "not_an_endpoint");
   }
-  // A bare `::1` is ambiguous (ParseHostAndPort would read it as host + port),
-  // so an IPv6 literal must arrive bracketed.
-  if (input.host.find(':') != std::string::npos &&
-      !(input.host.front() == '[' && input.host.back() == ']')) {
-    return Reject("host", "host");
-  }
+  // An IPv6 literal may arrive either way: FromSchemeHostAndPort brackets a
+  // bare one itself (the port is a separate argument here, so there is nothing
+  // for `::1` to be ambiguous with), and the single-endpoint guard below is
+  // what rejects a host the downstream parser would read as more than one
+  // endpoint.
   unsigned port = 0;
   if (input.port.empty() ||
       !base::ContainsOnlyChars(input.port, "0123456789") ||

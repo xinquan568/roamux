@@ -65,10 +65,11 @@ diff --git a/chrome/browser/resources/settings/system_page/roamux_proxy_section.
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/settings/system_page/roamux_proxy_section.html
-@@ -0,0 +1,73 @@
-+<!-- Roamux (roam-323): the per-profile proxy section. Deliberately thin: it renders the state
-+     the browser reports and submits raw fields, because every validation and precedence rule is
-+     C++-side (//roamux/browser/proxy + RoamuxProxyHandler). -->
+@@ -0,0 +1,87 @@
++<!-- Roamux (roam-323): the per-profile proxy section. Thin by design: it renders the state the
++     browser reports and submits raw fields, because every validation and precedence rule is
++     C++-side (//roamux/browser/proxy + RoamuxProxyHandler). The mode-specific rows are always
++     stamped and hidden, so every control exists to be populated from the saved configuration. -->
 +<style include="cr-shared-style settings-shared">
 +  .field {
 +    margin-bottom: 8px;
@@ -83,47 +84,60 @@ new file mode 100644
 +    <div class="secondary" id="roamuxProxyOwner">[[ownerLabel_(state_)]]</div>
 +    <div class="secondary" id="roamuxProxyOverrideRules"
 +        hidden$="[[!state_.overrideRulesConfigured]]">
-+      $i18n{roamuxProxyOverrideRules}
++      [[overrideRulesLabel_(state_)]]
 +    </div>
 +  </div>
 +</div>
 +<div class="cr-row continuation">
 +  <select id="roamuxProxyMode" class="md-select field"
-+      value="[[state_.mode]]" on-change="onModeChange_"
-+      disabled$="[[!state_.canEdit]]">
++      on-change="onModeChange_" disabled$="[[!state_.canEdit]]">
 +    <option value="system">$i18n{roamuxProxyModeSystem}</option>
 +    <option value="direct">$i18n{roamuxProxyModeDirect}</option>
 +    <option value="manual">$i18n{roamuxProxyModeManual}</option>
 +    <option value="pac">$i18n{roamuxProxyModePac}</option>
 +  </select>
 +</div>
-+<template is="dom-if" if="[[isManual_(state_)]]" restamp>
-+  <div class="cr-row continuation">
-+    <select id="roamuxProxyScheme" class="md-select field">
-+      <option value="http">http</option>
-+      <option value="https">https</option>
-+      <option value="socks5">socks5</option>
-+    </select>
-+    <cr-input id="roamuxProxyHost" class="field" label="$i18n{roamuxProxyHost}">
-+    </cr-input>
-+    <cr-input id="roamuxProxyPort" class="field" label="$i18n{roamuxProxyPort}">
-+    </cr-input>
-+    <cr-input id="roamuxProxyBypass" class="field"
-+        label="$i18n{roamuxProxyBypass}"></cr-input>
-+    <div class="secondary">$i18n{roamuxProxySocks5NoAuth}</div>
-+    <div class="secondary">$i18n{roamuxProxyHopSecurity}</div>
-+  </div>
-+</template>
-+<template is="dom-if" if="[[isPac_(state_)]]" restamp>
-+  <div class="cr-row continuation">
-+    <cr-input id="roamuxProxyPacUrl" class="field"
-+        label="$i18n{roamuxProxyPacUrl}"></cr-input>
-+    <cr-checkbox id="roamuxProxyPacMandatory" checked="{{pacMandatory_}}">
-+      $i18n{roamuxProxyPacMandatory}
-+    </cr-checkbox>
-+    <div class="secondary">$i18n{roamuxProxyPacDirectFetch}</div>
-+  </div>
-+</template>
++<div class="cr-row continuation" id="roamuxProxyManualFields"
++    hidden$="[[!isManual_(mode_)]]">
++  <select id="roamuxProxyScheme" class="md-select field"
++      on-change="onSchemeChange_" disabled$="[[!state_.canEdit]]">
++    <option value="http">http</option>
++    <option value="https">https</option>
++    <option value="socks5">socks5</option>
++  </select>
++  <cr-input id="roamuxProxyHost" class="field" label="$i18n{roamuxProxyHost}"
++      value="[[form_.host]]" disabled$="[[!state_.canEdit]]"
++      invalid="[[fieldInvalid_('host', errorField_)]]"
++      error-message="[[fieldError_('host', errorField_, errorReason_)]]">
++  </cr-input>
++  <cr-input id="roamuxProxyPort" class="field" label="$i18n{roamuxProxyPort}"
++      value="[[form_.port]]" disabled$="[[!state_.canEdit]]"
++      invalid="[[fieldInvalid_('port', errorField_)]]"
++      error-message="[[fieldError_('port', errorField_, errorReason_)]]">
++  </cr-input>
++  <cr-input id="roamuxProxyBypass" class="field"
++      label="$i18n{roamuxProxyBypass}" value="[[form_.bypassList]]"
++      disabled$="[[!state_.canEdit]]"
++      invalid="[[fieldInvalid_('bypass', errorField_)]]"
++      error-message="[[fieldError_('bypass', errorField_, errorReason_)]]">
++  </cr-input>
++  <div class="secondary">$i18n{roamuxProxySocks5NoAuth}</div>
++  <div class="secondary">$i18n{roamuxProxyHopSecurity}</div>
++</div>
++<div class="cr-row continuation" id="roamuxProxyPacFields"
++    hidden$="[[!isPac_(mode_)]]">
++  <cr-input id="roamuxProxyPacUrl" class="field"
++      label="$i18n{roamuxProxyPacUrl}" value="[[form_.pacUrl]]"
++      disabled$="[[!state_.canEdit]]"
++      invalid="[[fieldInvalid_('pac_url', errorField_)]]"
++      error-message="[[fieldError_('pac_url', errorField_, errorReason_)]]">
++  </cr-input>
++  <cr-checkbox id="roamuxProxyPacMandatory" checked="[[form_.pacMandatory]]"
++      disabled$="[[!state_.canEdit]]">
++    $i18n{roamuxProxyPacMandatory}
++  </cr-checkbox>
++  <div class="secondary">$i18n{roamuxProxyPacDirectFetch}</div>
++</div>
 +<div class="cr-row continuation">
 +  <cr-button id="roamuxProxyApply" on-click="onApplyClick_"
 +      disabled$="[[!state_.canEdit]]">
@@ -135,24 +149,26 @@ new file mode 100644
 +  </cr-button>
 +</div>
 +<div class="cr-row continuation error" id="roamuxProxyError"
-+    hidden$="[[!errorReason_]]">
-+  [[errorText_(errorField_, errorReason_)]]
++    hidden$="[[!generalError_(errorField_, errorReason_)]]">
++  [[generalError_(errorField_, errorReason_)]]
 +</div>
 +<div class="cr-row continuation secondary">$i18n{roamuxProxyAuthNote}</div>
 diff --git a/chrome/browser/resources/settings/system_page/roamux_proxy_section.ts b/chrome/browser/resources/settings/system_page/roamux_proxy_section.ts
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/settings/system_page/roamux_proxy_section.ts
-@@ -0,0 +1,196 @@
-+// Copyright 2026 The Chromium Authors
-+// Use of this source code is governed by a BSD-style license that can be
-+// found in the LICENSE file.
+@@ -0,0 +1,299 @@
++// SPDX-License-Identifier: Apache-2.0
++// Roamux (roam-323). Roamux-authored source living in the upstream resources tree (patch 0076
++// carries it), so it takes the Roamux license header rather than Chromium's.
 +
 +/**
-+ * Roamux (roam-323): 'roamux-proxy-section' configures a proxy for THIS profile by handing raw
-+ * fields to the browser. It validates nothing itself — RoamuxProxyHandler and
-+ * //roamux/browser/proxy own validation, the write, and the truth about who controls routing —
-+ * so the page cannot store a half-valid configuration or talk itself out of a guard.
++ * @fileoverview 'roamux-proxy-section' configures a proxy for THIS profile by handing raw fields
++ * to the browser. It validates nothing itself — RoamuxProxyHandler and //roamux/browser/proxy own
++ * validation, the write, and the truth about who controls routing — so the page cannot store a
++ * half-valid configuration or talk itself out of a guard. What it does own: showing the saved
++ * configuration in the controls (so Apply never has to be re-typed from memory) and turning the
++ * browser's reason token into an explanation next to the field it belongs to.
 + */
 +
 +import 'chrome://resources/cr_elements/cr_button/cr_button.js';
@@ -161,7 +177,10 @@ new file mode 100644
 +import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 +import '../settings_shared.css.js';
 +
-+import {addWebUiListener, sendWithPromise} from 'chrome://resources/js/cr.js';
++import type {CrCheckboxElement} from 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
++import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
++import {sendWithPromise} from 'chrome://resources/js/cr.js';
 +import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 +import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 +
@@ -177,10 +196,21 @@ new file mode 100644
 +  pacMandatory?: boolean;
 +  baseOwner: string;
 +  controllerName?: string;
++  extensionScope?: string;
 +  overrideRulesConfigured?: boolean;
 +  overrideRulesActive?: boolean;
++  overrideRulesOwner?: string;
 +  canEdit?: boolean;
 +  canReset?: boolean;
++}
++
++interface ProxyForm {
++  scheme: string;
++  host: string;
++  port: string;
++  bypassList: string;
++  pacUrl: string;
++  pacMandatory: boolean;
 +}
 +
 +interface ProxyError {
@@ -188,13 +218,40 @@ new file mode 100644
 +  reason?: string;
 +}
 +
++// The browser's rejection tokens (proxy_config_builder.h) in the user's words. `bypass` is absent
++// on purpose: its reason carries the offending entry, so it is formatted with it.
++const REASON_STRINGS: {[reason: string]: string} = {
++  scheme: 'roamuxProxyErrorScheme',
++  host: 'roamuxProxyErrorHost',
++  port: 'roamuxProxyErrorPort',
++  userinfo: 'roamuxProxyErrorUserinfo',
++  socks5_no_auth: 'roamuxProxyErrorSocks5NoAuth',
++  list_syntax: 'roamuxProxyErrorListSyntax',
++  not_an_endpoint: 'roamuxProxyErrorNotAnEndpoint',
++  pac_url: 'roamuxProxyErrorPacUrl',
++  pac_scheme: 'roamuxProxyErrorPacScheme',
++  pac_data_url: 'roamuxProxyErrorPacDataUrl',
++  mode: 'roamuxProxyErrorMode',
++  incognito: 'roamuxProxyErrorIncognito',
++  policy: 'roamuxProxyErrorPolicy',
++  extension: 'roamuxProxyErrorExtension',
++};
++
 +export interface RoamuxProxySectionElement {
 +  $: {
 +    roamuxProxyMode: HTMLSelectElement,
++    roamuxProxyScheme: HTMLSelectElement,
++    roamuxProxyHost: CrInputElement,
++    roamuxProxyPort: CrInputElement,
++    roamuxProxyBypass: CrInputElement,
++    roamuxProxyPacUrl: CrInputElement,
++    roamuxProxyPacMandatory: CrCheckboxElement,
 +  };
 +}
 +
-+export class RoamuxProxySectionElement extends PolymerElement {
++const RoamuxProxySectionElementBase = WebUiListenerMixin(PolymerElement);
++
++export class RoamuxProxySectionElement extends RoamuxProxySectionElementBase {
 +  static get is() {
 +    return 'roamux-proxy-section';
 +  }
@@ -206,20 +263,26 @@ new file mode 100644
 +  static get properties() {
 +    return {
 +      state_: Object,
-+      errorField_: String,
-+      errorReason_: String,
-+      pacMandatory_: {type: Boolean, value: true},
++      form_: Object,
++      // The selector the user is looking at, which is not yet a stored value: manual and PAC wait
++      // for Apply.
++      mode_: {type: String, value: 'system'},
++      errorField_: {type: String, value: ''},
++      errorReason_: {type: String, value: ''},
 +    };
 +  }
 +
 +  declare private state_: ProxyState;
++  declare private form_: ProxyForm;
++  declare private mode_: string;
 +  declare private errorField_: string;
 +  declare private errorReason_: string;
-+  declare private pacMandatory_: boolean;
 +
 +  override connectedCallback() {
 +    super.connectedCallback();
-+    addWebUiListener(
++    // WebUiListenerMixin removes this on disconnect: a detached section must not be kept alive by
++    // the callback, and a reattached one must not end up subscribed twice.
++    this.addWebUiListener(
 +        'roamux-proxy-state-changed',
 +        (state: ProxyState) => this.onState_(state));
 +    sendWithPromise<ProxyState>('roamuxProxyGetState')
@@ -228,15 +291,40 @@ new file mode 100644
 +
 +  private onState_(state: ProxyState) {
 +    this.state_ = state;
-+    this.pacMandatory_ = state.pacMandatory !== false;
++    this.mode_ = state.mode;
++    // Every control is populated from the browser's answer. Reopening the page — or an external
++    // change — must not leave an empty field that Apply would then store, or silently drop a
++    // bypass list the user never touched.
++    this.form_ = {
++      scheme: state.scheme || 'http',
++      host: state.host || '',
++      port: state.port || '',
++      bypassList: state.bypassList || '',
++      pacUrl: state.pacUrl || '',
++      // An existing PAC configuration reports what the network layer will actually do; only a new
++      // one starts at mandatory.
++      pacMandatory: state.mode === 'pac' ? state.pacMandatory !== false : true,
++    };
++    this.errorField_ = '';
++    this.errorReason_ = '';
++    this.syncSelects_();
 +  }
 +
-+  private isManual_(state: ProxyState): boolean {
-+    return !!state && state.mode === 'manual';
++  /**
++   * A native <select> does not follow a Polymer value binding reliably (its options are stamped by
++   * the same template), so the two selectors are set from the model here.
++   */
++  private syncSelects_() {
++    this.$.roamuxProxyMode.value = this.mode_;
++    this.$.roamuxProxyScheme.value = this.form_.scheme;
 +  }
 +
-+  private isPac_(state: ProxyState): boolean {
-+    return !!state && state.mode === 'pac';
++  private isManual_(mode: string): boolean {
++    return mode === 'manual';
++  }
++
++  private isPac_(mode: string): boolean {
++    return mode === 'pac';
 +  }
 +
 +  /** What actually controls routing — never a guess from pref metadata alone. */
@@ -248,8 +336,13 @@ new file mode 100644
 +      case 'policy':
 +        return loadTimeData.getString('roamuxProxyOwnerPolicy');
 +      case 'extension':
++        // In an incognito window the browser can only name the extension controlling the regular
++        // profile's value, so the copy says exactly that instead of claiming more.
 +        return loadTimeData.getStringF(
-+            'roamuxProxyOwnerExtension', state.controllerName || '');
++            state.extensionScope === 'regular_profile' ?
++                'roamuxProxyOwnerExtensionRegularProfile' :
++                'roamuxProxyOwnerExtension',
++            state.controllerName || '');
 +      case 'recommended':
 +        return loadTimeData.getString('roamuxProxyOwnerRecommended');
 +      case 'roamux':
@@ -259,77 +352,101 @@ new file mode 100644
 +    }
 +  }
 +
-+  private errorText_(field: string, reason: string): string {
-+    return field && reason ? `${field}: ${reason}` : '';
++  /** Configured is not the same as in effect; the browser reports both. */
++  private overrideRulesLabel_(state: ProxyState): string {
++    if (!state || !state.overrideRulesConfigured) {
++      return '';
++    }
++    const owner = loadTimeData.getString(
++        state.overrideRulesOwner === 'policy' ?
++            'roamuxProxyRulesOwnerPolicy' :
++            (state.overrideRulesOwner === 'extension' ?
++                 'roamuxProxyRulesOwnerExtension' :
++                 'roamuxProxyRulesOwnerUser'));
++    return loadTimeData.getStringF(
++        state.overrideRulesActive ? 'roamuxProxyOverrideRulesActive' :
++                                    'roamuxProxyOverrideRulesIgnored',
++        owner);
 +  }
 +
-+  private fieldsFromForm_(mode: string): {[key: string]: string|boolean} {
-+    const value = (id: string) => {
-+      const el = this.shadowRoot!.querySelector<HTMLInputElement>('#' + id);
-+      return el ? el.value : '';
-+    };
++  private explain_(field: string, reason: string): string {
++    if (!reason) {
++      return '';
++    }
++    if (field === 'bypass') {
++      return loadTimeData.getStringF('roamuxProxyErrorBypass', reason);
++    }
++    const key = REASON_STRINGS[reason];
++    // An unmapped token is still shown: a silent field is worse than a terse one.
++    return key ? loadTimeData.getString(key) : reason;
++  }
++
++  private fieldInvalid_(field: string, errorField: string): boolean {
++    return !!errorField && errorField === field;
++  }
++
++  private fieldError_(field: string, errorField: string, errorReason: string):
++      string {
++    return errorField === field ? this.explain_(errorField, errorReason) : '';
++  }
++
++  /** Errors that belong to no single input (mode, and the guard refusals). */
++  private generalError_(errorField: string, errorReason: string): string {
++    return errorReason && errorField === 'mode' ?
++        this.explain_(errorField, errorReason) :
++        '';
++  }
++
++  private fieldsFromControls_(): {[key: string]: string|boolean} {
 +    return {
-+      mode: mode,
-+      scheme: value('roamuxProxyScheme') || 'http',
-+      host: value('roamuxProxyHost'),
-+      port: value('roamuxProxyPort'),
-+      bypassList: value('roamuxProxyBypass'),
-+      pacUrl: value('roamuxProxyPacUrl'),
-+      pacMandatory: this.pacMandatory_,
++      mode: this.mode_,
++      scheme: this.$.roamuxProxyScheme.value,
++      host: this.$.roamuxProxyHost.value,
++      port: this.$.roamuxProxyPort.value,
++      bypassList: this.$.roamuxProxyBypass.value,
++      pacUrl: this.$.roamuxProxyPacUrl.value,
++      pacMandatory: this.$.roamuxProxyPacMandatory.checked,
 +    };
++  }
++
++  private setError_(error: ProxyError|null) {
++    this.errorField_ = error && error.field ? error.field : '';
++    this.errorReason_ = error && error.reason ? error.reason : '';
 +  }
 +
 +  private async submit_(fields: {[key: string]: string|boolean}) {
 +    const error = await sendWithPromise<ProxyError>('roamuxProxySet', fields);
-+    this.errorField_ = error && error.field ? error.field : '';
-+    this.errorReason_ = error && error.reason ? error.reason : '';
++    this.setError_(error);
 +    if (!this.errorReason_) {
 +      this.onState_(await sendWithPromise<ProxyState>('roamuxProxyGetState'));
 +    }
 +  }
 +
 +  private onModeChange_() {
-+    // Switching to system or direct needs no other field, so it commits immediately; the
-+    // editable modes wait for Apply.
-+    const mode = this.$.roamuxProxyMode.value;
-+    this.state_ = Object.assign({}, this.state_, {mode: mode});
-+    if (mode === 'system' || mode === 'direct') {
-+      this.submit_({mode: mode});
++    // Switching to system or direct needs no other field, so it commits immediately; the editable
++    // modes wait for Apply.
++    this.mode_ = this.$.roamuxProxyMode.value;
++    this.setError_(null);
++    if (this.mode_ === 'system' || this.mode_ === 'direct') {
++      this.submit_({mode: this.mode_});
 +    }
 +  }
 +
++  private onSchemeChange_() {
++    this.form_ = Object.assign(
++        {}, this.form_, {scheme: this.$.roamuxProxyScheme.value});
++  }
++
 +  private onApplyClick_() {
-+    this.submit_(this.fieldsFromForm_(this.state_.mode));
++    this.submit_(this.fieldsFromControls_());
 +  }
 +
 +  private async onResetClick_() {
 +    const error = await sendWithPromise<ProxyError>('roamuxProxyReset');
-+    this.errorField_ = error && error.field ? error.field : '';
-+    this.errorReason_ = error && error.reason ? error.reason : '';
-+    this.onState_(await sendWithPromise<ProxyState>('roamuxProxyGetState'));
-+  }
-+
-+  // ---- test seams (roamux_proxy_settings_browsertest.cc drives these) ----
-+
-+  async setModeForTesting(mode: string, fields: {[key: string]: string}) {
-+    await this.submit_(Object.assign(
-+        {mode: mode, pacMandatory: this.pacMandatory_}, fields));
-+  }
-+
-+  async resetForTesting() {
-+    await this.onResetClick_();
-+  }
-+
-+  errorFieldForTesting(): string {
-+    return this.errorField_;
-+  }
-+
-+  errorReasonForTesting(): string {
-+    return this.errorReason_;
-+  }
-+
-+  baseOwnerForTesting(): string {
-+    return this.state_ ? this.state_.baseOwner : '';
++    this.setError_(error);
++    if (!this.errorReason_) {
++      this.onState_(await sendWithPromise<ProxyState>('roamuxProxyGetState'));
++    }
 +  }
 +}
 +
@@ -343,7 +460,7 @@ new file mode 100644
 diff --git a/chrome/browser/resources/settings/system_page/system_page.html b/chrome/browser/resources/settings/system_page/system_page.html
 --- a/chrome/browser/resources/settings/system_page/system_page.html
 +++ b/chrome/browser/resources/settings/system_page/system_page.html
-@@ -56,7 +56,14 @@
+@@ -56,7 +56,13 @@
        </template>
      <!-- </if> -->
  
@@ -351,8 +468,7 @@ diff --git a/chrome/browser/resources/settings/system_page/system_page.html b/ch
 +    <!-- Roamux (roam-323): with the feature on, the per-profile section replaces this
 +         link-out row; with it off upstream's row is untouched. -->
 +    <template is="dom-if" if="[[roamuxProxyConfigEnabled_]]" restamp>
-+      <roamux-proxy-section id="roamuxProxySection" prefs="{{prefs}}">
-+      </roamux-proxy-section>
++      <roamux-proxy-section id="roamuxProxySection"></roamux-proxy-section>
 +    </template>
 +    <div id="proxy" class="cr-row" hidden$="[[roamuxProxyConfigEnabled_]]"
 +        on-click="onProxyClick_"
@@ -397,7 +513,7 @@ diff --git a/chrome/browser/resources/settings/system_page/system_page.ts b/chro
 diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -589,6 +589,63 @@ void AddAppearanceStrings(content::WebUIDataSource* html_source,
+@@ -589,6 +589,121 @@ void AddAppearanceStrings(content::WebUIDataSource* html_source,
    html_source->AddBoolean("roamuxTabStripPositionEnabled",
                            base::FeatureList::IsEnabled(
                                roamux::features::kTabStripPosition));
@@ -451,13 +567,71 @@ diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provide
 +  html_source->AddString("roamuxProxyOwnerExtension",
 +                         "The extension \"$1\" controls routing; remove or "
 +                         "disable it to change this.");
++  html_source->AddString("roamuxProxyOwnerExtensionRegularProfile",
++                         "The extension \"$1\" sets the proxy for your "
++                         "regular profile; incognito windows follow whatever "
++                         "that extension is allowed to do.");
++  // A recommended value is upstream's CONFIG_FALLBACK: this Mac's own proxy configuration, when it
++  // has one, still wins. Saying it "controls routing" would be a claim this state cannot support.
 +  html_source->AddString("roamuxProxyOwnerRecommended",
-+                         "A recommended setting controls routing until you "
-+                         "choose something here.");
++                         "A recommended setting applies unless this Mac has "
++                         "its own proxy configuration, or you choose something "
++                         "here.");
 +  html_source->AddString(
-+      "roamuxProxyOverrideRules",
-+      "Extra per-destination proxy rules exist on this profile and are shown "
-+      "in your organization's settings; they are not edited here.");
++      "roamuxProxyOverrideRulesActive",
++      "Extra per-destination proxy rules are also in effect on this profile "
++      "($1); they are not edited here.");
++  html_source->AddString(
++      "roamuxProxyOverrideRulesIgnored",
++      "Extra per-destination proxy rules exist on this profile ($1) but are "
++      "not being applied; they are not edited here.");
++  html_source->AddString("roamuxProxyRulesOwnerPolicy",
++                         "set by your organization");
++  html_source->AddString("roamuxProxyRulesOwnerExtension",
++                         "set by an extension");
++  html_source->AddString("roamuxProxyRulesOwnerUser", "set on this profile");
++  // The builder's rejection tokens as copy, so no internal token ever reaches the user.
++  html_source->AddString("roamuxProxyErrorScheme",
++                         "Choose http, https, or socks5.");
++  html_source->AddString("roamuxProxyErrorHost",
++                         "Enter the proxy's host name or IP address.");
++  html_source->AddString("roamuxProxyErrorPort",
++                         "Enter a port number between 1 and 65535.");
++  html_source->AddString("roamuxProxyErrorUserinfo",
++                         "Leave the username and password out of the host. If "
++                         "the proxy asks for them, you will be prompted.");
++  html_source->AddString("roamuxProxyErrorSocks5NoAuth",
++                         "A SOCKS5 proxy cannot take a username or password "
++                         "here: this browser does not support SOCKS5 "
++                         "authentication.");
++  html_source->AddString("roamuxProxyErrorListSyntax",
++                         "Enter one proxy only, with no commas, semicolons, or "
++                         "\"=\".");
++  html_source->AddString("roamuxProxyErrorNotAnEndpoint",
++                         "Enter just the host, with no scheme, path, or "
++                         "spaces — for example proxy.example.com.");
++  html_source->AddString("roamuxProxyErrorBypass",
++                         "\"$1\" is not a host pattern this browser accepts. "
++                         "Separate entries with commas, for example "
++                         "*.example.com, 10.0.0.0/8.");
++  html_source->AddString("roamuxProxyErrorPacUrl",
++                         "Enter a complete PAC URL.");
++  html_source->AddString("roamuxProxyErrorPacScheme",
++                         "A PAC URL must start with http:, https:, or data:.");
++  html_source->AddString("roamuxProxyErrorPacDataUrl",
++                         "This data: URL cannot be read as a PAC script.");
++  html_source->AddString("roamuxProxyErrorMode",
++                         "That proxy setting could not be applied. Choose one "
++                         "of the options above and try again.");
++  html_source->AddString("roamuxProxyErrorIncognito",
++                         "An incognito window cannot change this profile's "
++                         "proxy.");
++  html_source->AddString("roamuxProxyErrorPolicy",
++                         "Your organization controls this setting, so it "
++                         "cannot be changed here.");
++  html_source->AddString("roamuxProxyErrorExtension",
++                         "An extension controls this setting. Remove or "
++                         "disable it to change the proxy here.");
    // Roamux (roam-277): gates the "New tab position" row on its own feature,
    // independent of kTabStripPosition.
    html_source->AddBoolean(

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "roamux/browser/ui/webui/roamux_proxy_handler.h"
 
+#include <optional>
 #include <string>
 
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/profiles/profile.h"
@@ -12,13 +12,13 @@
 #include "components/proxy_config/proxy_config_dictionary.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/proxy_config/proxy_prefs.h"
-#include "components/proxy_config/proxy_prefs_utils.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/browser/extension_registry.h"
 #include "net/base/proxy_server.h"
 #include "net/base/proxy_string_util.h"
-#include "net/proxy_resolution/proxy_host_matching_rules.h"
+#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "roamux/browser/proxy/proxy_config_builder.h"
 
 namespace roamux {
@@ -62,17 +62,22 @@ std::string StringField(const base::DictValue& fields, std::string_view key) {
   return value ? *value : std::string();
 }
 
-proxy::Input ToInput(const base::DictValue& fields) {
+// A mode we do not recognise is a malformed message, not a request for the
+// system configuration: defaulting it to kSystem would let a misspelling (or a
+// fields dictionary with no mode at all) silently clear a saved proxy.
+std::optional<proxy::Input> ToInput(const base::DictValue& fields) {
   proxy::Input input;
   const std::string mode = StringField(fields, "mode");
-  if (mode == kModeDirect) {
+  if (mode == kModeSystem) {
+    input.mode = proxy::Mode::kSystem;
+  } else if (mode == kModeDirect) {
     input.mode = proxy::Mode::kDirect;
   } else if (mode == kModeManual) {
     input.mode = proxy::Mode::kManual;
   } else if (mode == kModePac) {
     input.mode = proxy::Mode::kPac;
   } else {
-    input.mode = proxy::Mode::kSystem;
+    return std::nullopt;
   }
   input.scheme = StringField(fields, "scheme");
   input.host = StringField(fields, "host");
@@ -147,7 +152,13 @@ void RoamuxProxyHandler::HandleGetState(const base::ListValue& args) {
 
 void RoamuxProxyHandler::HandleSet(const base::ListValue& args) {
   AllowJavascript();
-  if (args.size() < 2u || !args[0].is_string() || !args[1].is_dict()) {
+  if (args.empty() || !args[0].is_string()) {
+    return;
+  }
+  // A malformed payload still gets an answer: leaving the page's promise
+  // pending would strand the section with no error and no state.
+  if (args.size() < 2u || !args[1].is_dict()) {
+    ResolveJavascriptCallback(args[0], Error("mode", "mode"));
     return;
   }
   ResolveJavascriptCallback(args[0], Commit(args[1].GetDict()));
@@ -195,8 +206,15 @@ base::DictValue RoamuxProxyHandler::BuildState() {
   if (dict.GetPacUrl(&pac_url)) {
     state.Set("pacUrl", pac_url);
   }
-  bool pac_mandatory = true;
-  if (dict.GetPacMandatory(&pac_mandatory)) {
+  // Report the value the network layer will act on, not the presence of the
+  // key: ProxyConfigDictionary::GetPacMandatory() (and the conversion to
+  // net::ProxyConfig) treat an absent key as false, so an existing PAC
+  // configuration without it permits fallback and must not be shown as
+  // blocking. (Creating a new PAC configuration still defaults to mandatory —
+  // that default lives in the page, not here.)
+  if (mode == ProxyPrefs::MODE_PAC_SCRIPT) {
+    bool pac_mandatory = false;
+    dict.GetPacMandatory(&pac_mandatory);
     state.Set("pacMandatory", pac_mandatory);
   }
 
@@ -236,24 +254,17 @@ base::DictValue RoamuxProxyHandler::BuildState() {
   state.Set("baseOwner", base_owner);
   state.Set("controllerName", controller_name);
 
-  // Override rules: configured is not the same as in effect. The engine ignores
-  // the list unless its feature is on, the policy-affiliation rules allow it,
-  // and a rule parses.
-  const base::ListValue& rules =
-      prefs->GetList(proxy_config::prefs::kProxyOverrideRules);
-  const bool configured = !rules.empty();
-  bool any_rule_parses = false;
-  for (const base::Value& rule : rules) {
-    if (rule.is_dict() && rule.GetDict().FindString("proxy")) {
-      any_rule_parses = true;
-      break;
-    }
-  }
-  const bool eligible =
-      base::FeatureList::IsEnabled(kEnableProxyOverrideRules) &&
-      proxy_config::ProxyOverrideRulesAllowed(prefs);
-  state.Set("overrideRulesConfigured", configured);
-  state.Set("overrideRulesActive", configured && eligible && any_rule_parses);
+  // Override rules: configured is not the same as in effect. Whether any rule
+  // is actually applied depends on the engine's feature, the policy-affiliation
+  // rules, and each rule's schema ("DestinationMatchers"/"ProxyList"/optional
+  // "Conditions") — so ask the engine's own reader rather than re-implementing
+  // its parser here, which is the only way this cannot drift from it.
+  state.Set("overrideRulesConfigured",
+            !prefs->GetList(proxy_config::prefs::kProxyOverrideRules).empty());
+  net::ProxyConfigWithAnnotation engine_config;
+  PrefProxyConfigTrackerImpl::ReadPrefConfig(prefs, &engine_config);
+  state.Set("overrideRulesActive",
+            !engine_config.value().proxy_override_rules().empty());
   const PrefService::Preference* rules_pref =
       prefs->FindPreference(proxy_config::prefs::kProxyOverrideRules);
   state.Set(
@@ -285,7 +296,11 @@ base::DictValue RoamuxProxyHandler::Commit(const base::DictValue& fields) {
     return Error("mode", pref->IsManaged() ? "policy" : "extension");
   }
 
-  proxy::Outcome outcome = proxy::Build(ToInput(fields));
+  const std::optional<proxy::Input> input = ToInput(fields);
+  if (!input.has_value()) {
+    return Error("mode", "mode");
+  }
+  proxy::Outcome outcome = proxy::Build(*input);
   if (!outcome.ok) {
     return Error(outcome.field, outcome.reason);
   }

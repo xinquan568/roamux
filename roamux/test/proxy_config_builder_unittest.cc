@@ -97,11 +97,28 @@ TEST(ProxyConfigBuilderTest, ManualCanonicalisesBracketedIpv6) {
       << "IPv6 must stay bracketed in the stored URI";
 }
 
-TEST(ProxyConfigBuilderTest, ManualRejectsUnbracketedIpv6) {
+// A bare literal is accepted and canonicalised: the port is a separate field
+// here, so `::1` is not ambiguous, and net::ProxyServer::FromSchemeHostAndPort
+// brackets it itself. Rejecting it would refuse a valid endpoint the engine
+// accepts.
+TEST(ProxyConfigBuilderTest, ManualAcceptsUnbracketedIpv6AndBracketsIt) {
   const Outcome outcome = Build(ManualInput("http", "::1", "3128"));
-  EXPECT_FALSE(outcome.ok);
-  EXPECT_EQ("host", outcome.field);
-  EXPECT_FALSE(outcome.dict.has_value());
+  ASSERT_TRUE(outcome.ok) << outcome.field << "/" << outcome.reason;
+  std::string servers;
+  ASSERT_TRUE(AsDict(outcome).GetProxyServer(&servers));
+  EXPECT_EQ("[::1]:3128", servers)
+      << "the stored URI is the canonical bracketed form either way";
+}
+
+TEST(ProxyConfigBuilderTest, ManualAcceptsAFullIpv6Literal) {
+  for (const char* host : {"2001:db8::1", "[2001:db8::1]"}) {
+    const Outcome outcome = Build(ManualInput("http", host, "3128"));
+    ASSERT_TRUE(outcome.ok)
+        << host << ": " << outcome.field << "/" << outcome.reason;
+    std::string servers;
+    ASSERT_TRUE(AsDict(outcome).GetProxyServer(&servers));
+    EXPECT_EQ("[2001:db8::1]:3128", servers) << host;
+  }
 }
 
 TEST(ProxyConfigBuilderTest, ManualRejectsUserinfo) {
@@ -138,10 +155,40 @@ TEST(ProxyConfigBuilderTest, ManualRejectsPercentEncodedListSyntax) {
 }
 
 TEST(ProxyConfigBuilderTest, ManualRejectsPathQueryFragmentAndSpace) {
-  for (const char* host : {"proxy.example/pac", "proxy.example?x=1",
-                           "proxy.example#f", "proxy example"}) {
+  // The reason is asserted per case because the list-syntax check comes first,
+  // and a query string carrying "=" is caught there — a correct rejection under
+  // a different name.
+  const struct {
+    const char* host;
+    const char* reason;
+  } kCases[] = {
+      {"proxy.example/pac", "not_an_endpoint"},
+      {"proxy.example?x", "not_an_endpoint"},
+      {"proxy.example#f", "not_an_endpoint"},
+      {"proxy example", "not_an_endpoint"},
+      {"proxy.example?x=1", "list_syntax"},
+  };
+  for (const auto& test_case : kCases) {
+    const Outcome outcome = Build(ManualInput("http", test_case.host, "8080"));
+    EXPECT_FALSE(outcome.ok) << test_case.host;
+    EXPECT_EQ("host", outcome.field) << test_case.host;
+    EXPECT_EQ(test_case.reason, outcome.reason) << test_case.host;
+    EXPECT_FALSE(outcome.dict.has_value()) << test_case.host;
+  }
+}
+
+// A pasted endpoint can carry trailing whitespace or a newline, which
+// FromSchemeHostAndPort trims silently — storing something other than what the
+// field showed. The percent-encoded forms matter for the same reason the
+// list-syntax check decodes.
+TEST(ProxyConfigBuilderTest, ManualRejectsWhitespaceAndControlCharacters) {
+  for (const char* host :
+       {"proxy.example\n", "proxy.example\r\n", " proxy.example",
+        "proxy.example\t", "proxy.example%0A", "proxy.example%20",
+        "proxy.exa\x01mple"}) {
     const Outcome outcome = Build(ManualInput("http", host, "8080"));
     EXPECT_FALSE(outcome.ok) << host;
+    EXPECT_EQ("not_an_endpoint", outcome.reason) << host;
     EXPECT_FALSE(outcome.dict.has_value()) << host;
   }
 }
