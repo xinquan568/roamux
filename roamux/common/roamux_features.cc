@@ -73,6 +73,13 @@ BASE_FEATURE(kNewTabPosition,
 BASE_FEATURE(kTabGroupHeaderDoubleClickAll,
              "RoamuxTabGroupHeaderDoubleClickAll",
              base::FEATURE_ENABLED_BY_DEFAULT);
+// roam-323: the Settings > System per-profile proxy section ships DISABLED — a
+// persisted `proxy` value keeps routing even with the editor hidden, so the flag
+// is an experiment switch, not a kill-switch; roam-326 owns graduation and the
+// ownership/restore semantics that a kill-switch needs.
+BASE_FEATURE(kRoamuxProxyConfig,
+             "RoamuxProxyConfig",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 // §7.3 defaults. Validation (out-of-range yields the DEFAULT, never a clip;
 // then min_spacing = min(min_spacing, interval)) lives in the pure scheduler's
 // Params::FromMilliseconds — roam-268 — not here.

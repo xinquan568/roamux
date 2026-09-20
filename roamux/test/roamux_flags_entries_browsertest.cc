@@ -59,6 +59,7 @@ constexpr const char* kExpectedRows[] = {
     "roamux-external-open-profile",
     "roamux-initial-url",
     "roamux-new-tab-position",
+    "roamux-proxy-config",
     "roamux-refresh-all-initial-urls",
     "roamux-signin-opt-in",
     "roamux-tab-group-header-double-click-all",
