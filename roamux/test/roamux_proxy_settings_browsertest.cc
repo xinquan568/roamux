@@ -12,6 +12,7 @@
 #include <tuple>
 
 #include "base/command_line.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/run_until.h"
@@ -46,6 +47,7 @@
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/proxy_config/proxy_prefs.h"
 #include "components/proxy_config/proxy_prefs_utils.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_web_ui.h"
@@ -59,6 +61,8 @@
 #include "roamux/browser/ui/webui/roamux_proxy_handler.h"
 #include "roamux/common/roamux_features.h"
 #include "roamux/test/support/roamux_browser_test.h"
+#include "services/network/public/mojom/clear_data_filter.mojom.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -370,15 +374,10 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesEligibleTest,
   EXPECT_FALSE(Flag(state, "overrideRulesActive", true));
 }
 
-// Eligibility is not only the feature: proxy_config::ProxyOverrideRulesAllowed
-// also weighs the affiliation / all-users / scope prefs and who set the list.
-// This test pins what a browsertest can actually move, and records what it
-// cannot: the affiliation input is owned by the management state, so a write to
-// the pref does not stick (upstream drives it with ManagementContextMixin in
-// chrome/browser/enterprise/net/proxy_override_rules_browsertest.cc). Since our
-// answer IS that predicate's answer — BuildState reports what
-// PrefProxyConfigTrackerImpl::ReadPrefConfig produced — a Roamux test of the
-// affiliation rule would be testing upstream's rule, not our reporting of it.
+// An extension-set list, with the list's owner reported separately from the
+// base configuration's. The affiliation input lives in the MANAGED pref store,
+// so a plain pref write cannot move it; RoamuxProxyOverrideRulesPolicyTest
+// below moves it through policy, the way the production handler does.
 IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesEligibleTest,
                        AnExtensionSetListIsReportedWithItsOwnerAndEligibility) {
   constexpr char kExtensionId[] = "abcdefghijklmnopabcdefghijklmnop";
@@ -408,14 +407,94 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesEligibleTest,
       << "the list's owner is reported separately from the base "
          "configuration's";
 
-  // CHARACTERISATION of the limit above: the affiliation input cannot be moved
-  // from here, which is why there is no unaffiliated leg in this file.
+  // CHARACTERISATION: a plain pref write cannot move affiliation, because the
+  // managed store holds it. The policy test below is where it moves.
   prefs()->SetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation,
                       false);
   EXPECT_TRUE(
-      prefs()->GetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation))
-      << "if this ever fails, the management state became settable from a "
-         "browsertest — add the unaffiliated eligibility legs here";
+      prefs()->GetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation));
+}
+
+// The eligibility inputs the way production moves them:
+// ProxyOverrideRulesPolicyHandler writes kProxyOverrideRulesAffiliation into
+// the managed store from the policy bundle's affiliation ids on every
+// application, and EnableProxyOverrideRulesForAllUsers is a machine policy. The
+// reported answer has to follow both, in both directions.
+class RoamuxProxyOverrideRulesPolicyTest
+    : public RoamuxProxyOverrideRulesEligibleTest {
+ public:
+  void SetUpInProcessBrowserTestFixture() override {
+    RoamuxProxyOverrideRulesEligibleTest::SetUpInProcessBrowserTestFixture();
+    policy_provider_.SetDefaultReturns(
+        /*is_initialization_complete_return=*/true,
+        /*is_first_policy_load_complete_return=*/true);
+    policy::BrowserPolicyConnectorBase::SetPolicyProviderForTesting(
+        &policy_provider_);
+  }
+
+ protected:
+  // `affiliated` false means: the device has affiliation ids and the user is
+  // not one of them — the case the handler turns into affiliation=false.
+  void ApplyRulesPolicy(bool affiliated, int enable_for_all_users) {
+    policy::PolicyMap policies;
+    policies.Set(policy::key::kProxyOverrideRules,
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, base::Value(OneOverrideRule()),
+                 nullptr);
+    policies.Set(policy::key::kEnableProxyOverrideRulesForAllUsers,
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
+                 policy::POLICY_SOURCE_CLOUD, base::Value(enable_for_all_users),
+                 nullptr);
+    policies.SetDeviceAffiliationIds({"device-id"});
+    policies.SetUserAffiliationIds(
+        affiliated ? base::flat_set<std::string>{"device-id"}
+                   : base::flat_set<std::string>{"other-id"});
+    policy_provider_.UpdateChromePolicy(policies);
+  }
+
+  bool ActiveIs(bool expected) {
+    return base::test::RunUntil([&]() {
+      return Flag(MakeHandler(browser()->profile())->GetStateForTesting(),
+                  "overrideRulesActive", !expected) == expected;
+    });
+  }
+
+  testing::NiceMock<policy::MockConfigurationPolicyProvider> policy_provider_;
+};
+
+IN_PROC_BROWSER_TEST_F(RoamuxProxyOverrideRulesPolicyTest,
+                       AffiliationAndAllUsersMoveTheReportedAnswer) {
+  // Every leg changes the all-users VALUE as well, because a policy bundle
+  // whose values are unchanged is not re-applied — moving only the affiliation
+  // ids would leave the handler unrun and the test asserting nothing.
+  ApplyRulesPolicy(/*affiliated=*/true, /*enable_for_all_users=*/0);
+  ASSERT_TRUE(ActiveIs(true)) << "an affiliated user's policy rules apply";
+  const base::DictValue state =
+      MakeHandler(browser()->profile())->GetStateForTesting();
+  EXPECT_TRUE(Flag(state, "overrideRulesConfigured", false));
+  EXPECT_EQ("policy", Str(state, "overrideRulesOwner"));
+  ASSERT_TRUE(
+      prefs()->GetBoolean(proxy_config::prefs::kProxyOverrideRulesAffiliation));
+
+  // Unaffiliated, but allowed for all users: still applied.
+  ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/1);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return !prefs()->GetBoolean(
+        proxy_config::prefs::kProxyOverrideRulesAffiliation);
+  })) << "the policy handler must write affiliation=false";
+  EXPECT_TRUE(ActiveIs(true))
+      << "EnableProxyOverrideRulesForAllUsers=1 applies them even unaffiliated";
+
+  // Unaffiliated and not allowed for all users: the engine ignores the same
+  // list, so the section must stop calling it applied.
+  ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/0);
+  EXPECT_FALSE(proxy_config::ProxyOverrideRulesAllowed(prefs()));
+  EXPECT_TRUE(ActiveIs(false))
+      << "an unaffiliated user's rules are configured but not applied";
+
+  // And back: the answer moves in both directions.
+  ApplyRulesPolicy(/*affiliated=*/false, /*enable_for_all_users=*/1);
+  EXPECT_TRUE(ActiveIs(true));
 }
 
 // The page has to learn about an eligibility change too, not only about the
@@ -538,9 +617,15 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyRoutingTest,
 // PRECONDITION: this fixture installs no base configuration, so mode `system`
 // resolves to a direct connection here — the assertion is that OUR endpoint
 // leaves the path and the request reaches the destination.
-// A distinguishable system configuration cannot be installed from inside a
-// browsertest: the only switch that installs one (--proxy-server) lands ABOVE
-// the user pref layer, which RoamuxProxyCommandLineProxyTest establishes.
+// No browsertest-reachable seam for installing a base (OS) configuration was
+// found at this pin: --proxy-server lands ABOVE the user layer instead
+// (RoamuxProxyCommandLineProxyTest). The pref-vs-base contract — including what
+// the base does once our value is cleared — is upstream's own unit-tested
+// ground: PrefProxyConfigTrackerImplTest.BaseConfiguration and
+// .DynamicPrefOverrides in
+// components/proxy_config/pref_proxy_config_tracker_impl_unittest.cc. What is
+// ours to assert is that we clear the pref, which ResetClearsTheUserLayer and
+// the test below both do.
 IN_PROC_BROWSER_TEST_F(RoamuxProxyRoutingTest,
                        ExplicitSystemModeStopsRoutingThroughUs) {
   auto handler = MakeHandler(browser()->profile());
@@ -646,11 +731,12 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyRoutingTest,
       << "this section writes the profile pref only";
 }
 
-// --proxy-server is the only way to install a proxy configuration from inside a
-// browsertest, and it turns out NOT to be a base configuration: it lands in the
-// command-line pref store, i.e. ABOVE the user layer — which is what this test
-// establishes. It follows that a distinguishable *system* (OS) configuration
-// cannot be installed here at all.
+// --proxy-server was the candidate for installing a base configuration in-process
+// and turns out NOT to be one: it lands in the command-line pref store, i.e.
+// ABOVE the user layer, which is what this test establishes. It is a real
+// configuration in its own right, so it is tested as one — and the honest
+// consequence is recorded where mode `system` is tested: no base-configuration
+// seam was found here, and upstream unit-tests that contract itself.
 class RoamuxProxyCommandLineProxyTest : public RoamuxProxyRoutingTest {
  public:
   RoamuxProxyCommandLineProxyTest() {
@@ -840,14 +926,30 @@ class RoamuxProxyAuthTest : public RoamuxProxyHandlerTest {
                                  std::string());
   }
 
+  // Empties the network layer's HTTP auth cache, so a cached credential cannot
+  // stand in for the password manager.
+  void ClearNetworkAuthCache() {
+    base::RunLoop run_loop;
+    browser()
+        ->profile()
+        ->GetDefaultStoragePartition()
+        ->GetNetworkContext()
+        ->ClearHttpAuthCache(base::Time(), base::Time::Max(),
+                             /*filter=*/nullptr, run_loop.QuitClosure());
+    run_loop.Run();
+  }
+
   net::test_server::EmbeddedTestServer auth_proxy_;
 };
 
 // Records what the password manager delivers for a pending proxy challenge.
 // Upstream's autofill path PREFILLS the dialog
 // (LoginView::OnAutofillDataAvailable) rather than submitting it, so "no second
-// prompt" can never be the evidence for filling — this observer is the seam
-// upstream's own ProxyAuthFilling test uses.
+// prompt" can never be the evidence for filling. This observer implements the
+// same interface LoginView does and is attached through the same
+// HttpAuthManager::SetObserverAndDeliverCredentials call upstream's own
+// http-auth tests use
+// (chrome/browser/password_manager/password_manager_browsertest.cc).
 class RecordingHttpAuthObserver : public password_manager::HttpAuthObserver {
  public:
   void OnAutofillDataAvailable(std::u16string_view username,
@@ -927,9 +1029,15 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyAuthTest,
       << "the 407 credential belongs to the password manager, under "
       << expected_realm;
 
-  // 5. Filled: for a fresh challenge at the proxy's realm the password manager
-  // hands back exactly this credential. The fill path is asked directly, rather
-  // than inferred from the absence of a prompt.
+  // 5. Filled: the network layer's auth cache is emptied, so the next request
+  // is challenged again for real — and for THAT pending challenge the password
+  // manager hands back exactly this credential. The fill path is asked directly
+  // because autofill prefills the dialog: "no prompt" would prove nothing.
+  ClearNetworkAuthCache();
+  Navigate(tab, "/after-cache-clear");
+  ASSERT_TRUE(WaitForPrompt())
+      << "with the auth cache empty the proxy must challenge again — otherwise "
+         "this step would be vacuous";
   RecordingHttpAuthObserver observer;
   password_manager::HttpAuthManager* auth_manager =
       ChromePasswordManagerClient::FromWebContents(tab)->GetHttpAuthManager();
@@ -948,12 +1056,14 @@ IN_PROC_BROWSER_TEST_F(RoamuxProxyAuthTest,
   EXPECT_EQ(u"pass", observer.password());
   auth_manager->DetachObserver(&observer);
 
-  // 6. Reused in this session: a different path is fetched without a second
-  // challenge. That is the network layer's auth cache, not step 5's mechanism.
+  // 6. The auth cache as its own mechanism: answer the challenge still pending
+  // from step 5, then fetch a different path and expect no new challenge.
+  LoginHandler::GetAllLoginHandlersForTest().front()->SetAuth(u"user", u"pass");
+  ASSERT_TRUE(BodyEventuallyShowsPath("/after-cache-clear"));
   Navigate(tab, "/again");
   ASSERT_TRUE(BodyEventuallyShowsPath("/again"));
   EXPECT_TRUE(LoginHandler::GetAllLoginHandlersForTest().empty())
-      << "the credential must be reused, not re-prompted";
+      << "the credential must be reused from the cache, not re-prompted";
 }
 
 // ---- slice 4: the real Settings DOM ---------------------------------------
