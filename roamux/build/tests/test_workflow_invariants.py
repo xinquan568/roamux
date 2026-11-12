@@ -95,8 +95,15 @@ CAPABILITY_VAR = "ROAMUX_CI_CHROMIUM_RUNNER"
 # roam-281: the required tier-2 job selects its runner by expression — the fixed label triple when
 # the capability switch is non-empty, a hosted runner when it is empty (where the first step fails
 # red). Pinned exactly; `self-hosted` must stay on the runs-on line for the enumeration helpers.
+# roam-367: the one hosted macOS image label every hosted job uses (macOS 14 images were retired
+# from GitHub Actions on 2026-11-02 and every macos-14 job was cancelled before its first step).
+# An explicit version, not `macos-latest`, so an image move is a deliberate diff, made here and in
+# the workflows together.
+HOSTED_MACOS_LABEL = "macos-26"
+RETIRED_MACOS_LABELS = ("macos-10.15", "macos-11", "macos-12", "macos-13", "macos-14")
 SELFHOSTED_RUNS_ON_EXPR = ("${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && "
-                           "fromJSON('[\"self-hosted\", \"macos\", \"chromium-builder\"]') || 'macos-14' }}")
+                           "fromJSON('[\"self-hosted\", \"macos\", \"chromium-builder\"]') || "
+                           f"'{HOSTED_MACOS_LABEL}' }}}}")
 MARKER = "ROAMUX_CHROMIUM_DEPENDENT"
 FORK_CONDITION = "head.repo.fork"
 
@@ -849,6 +856,69 @@ def _selfhosted_jobs():
     Parsed structurally — `targeted-suite` merely echoes "self-hosted" in a log line and is
     hosted — for inline `[a, b]` and multiline `- a` label lists alike."""
     return {k: t for k, t in _all_jobs().items() if _runs_on_is_selfhosted(t.splitlines())}
+
+
+class HostedMacosImageTest(unittest.TestCase):
+    """roam-367: every hosted macOS job names the one supported image label; none names a
+    retired one. A retired label does not fail the job, it cancels it with zero steps, so a
+    stale pin shows up only as instant red on the next PR."""
+
+    # Any hosted macOS image label: versioned (macos-26), aliases (macos-latest, macos-26-large)
+    # and Xcode-named images (xcode-27). The self-hosted triple's bare `macos` does not match.
+    LABEL_RE = re.compile(r"(?<![\w-])(?:macos-[0-9a-z][0-9a-z.\-]*|xcode-[0-9][0-9.]*)(?![\w.-])")
+
+    @staticmethod
+    def _runs_on_declaration(job_text):
+        """The whole `runs-on:` declaration: its line plus any deeper-indented continuation
+        lines (a multiline label list or a mapping such as `group:`/`labels:`)."""
+        lines = job_text.splitlines()
+        for i, line in enumerate(lines):
+            if line.strip().startswith("runs-on:"):
+                indent = len(line) - len(line.lstrip())
+                block = [line]
+                for nxt in lines[i + 1:]:
+                    if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
+                        break
+                    block.append(nxt)
+                return "\n".join(l.split("#", 1)[0] for l in block)
+        return ""
+
+    @classmethod
+    def _labels_in(cls, job_text):
+        return cls.LABEL_RE.findall(cls._runs_on_declaration(job_text))
+
+    def _macos_labels(self):
+        found = {}
+        for key, text in _all_jobs().items():
+            for label in self._labels_in(text):
+                found.setdefault(label, []).append(key)
+        return found
+
+    def test_label_scan_sees_every_declaration_form(self):
+        cases = {
+            "scalar": ("    runs-on: macos-14\n    steps:\n", ["macos-14"]),
+            "alias": ("    runs-on: macos-latest\n    steps:\n", ["macos-latest"]),
+            "xcode image": ("    runs-on: xcode-27\n    steps:\n", ["xcode-27"]),
+            "multiline list": ("    runs-on:\n      - macos-14\n    steps:\n", ["macos-14"]),
+            "inline list": ("    runs-on: [macos-15, macos-26]\n    steps:\n", ["macos-15", "macos-26"]),
+            "self-hosted triple": ("    runs-on: [self-hosted, macos, chromium-builder]\n", []),
+            "comment only": ("    runs-on: [self-hosted, macos]  # was macos-14\n", []),
+            "not runs-on": ("    runs-on: ubuntu-latest\n    steps:\n      - name: roamux-macos-universal2\n", []),
+        }
+        for name, (job, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self._labels_in(job), expected)
+
+    def test_no_retired_hosted_macos_label(self):
+        labels = self._macos_labels()
+        stale = {l: jobs for l, jobs in labels.items() if l in RETIRED_MACOS_LABELS}
+        self.assertEqual(stale, {}, "retired hosted macOS image label(s) in runs-on")
+
+    def test_every_hosted_macos_job_uses_the_pinned_label(self):
+        labels = self._macos_labels()
+        self.assertTrue(labels, "expected at least one hosted macOS job")
+        self.assertEqual(sorted(labels), [HOSTED_MACOS_LABEL],
+                         f"hosted macOS jobs must all use {HOSTED_MACOS_LABEL}: {labels}")
 
 
 def _job_key_block(job_text, key):

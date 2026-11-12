@@ -10,7 +10,7 @@ permissions:
   contents: read
 jobs:
   hermetic-suite:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       # roam-261: the suite plus the disk-image mount case, which is opt-in per tier

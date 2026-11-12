@@ -11,7 +11,7 @@ permissions:
   contents: read
 jobs:
   lint:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: SPDX Apache-2.0 headers on roamux/ sources
@@ -34,7 +34,7 @@ jobs:
     # roam-38 (§7.9): the CI MIRROR of the local hooks — runs the SAME checker scripts over the PR's
     # changed files (same --diff-filter=ACM as pre-commit) + commit-message syntax, so --no-verify
     # still fails at the PR. Fork-safe, no secrets, tier-1.
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +77,7 @@ jobs:
   targeted-suite:
     # ROAMUX_CHROMIUM_DEPENDENT (announce): visible tier-2 status for every PR — where the Chromium
     # work runs, or exactly why it is skipped. Never fails; the work happens on self-hosted (roam-36).
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - name: Tier-2 status (visible, never a silent green)
         env:
@@ -125,7 +125,7 @@ jobs:
     # runner when it is empty, so the job can RUN and fail red. The value of the variable is never a
     # label — any non-empty value turns the switch on; a switch that is on with no registered runner
     # matching the triple queues the job (blocks merge, not red) until GitHub's queue timeout.
-    runs-on: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && fromJSON('["self-hosted", "macos", "chromium-builder"]') || 'macos-14' }}
+    runs-on: ${{ vars.ROAMUX_CI_CHROMIUM_RUNNER != '' && fromJSON('["self-hosted", "macos", "chromium-builder"]') || 'macos-26' }}
     steps:
       # roam-281 (grill H7): FIRST, before checkout and before the tier-2 script — with the switch
       # empty this step is the whole job: a loud red on a hosted runner.
