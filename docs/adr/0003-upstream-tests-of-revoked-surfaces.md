@@ -134,9 +134,11 @@ a description of how the failure feels. When the tracing is inconclusive, the fa
   (the `0061`/`0062` flag-pin idiom) or removed **in the same change that adds the suite** — a red
   suite cannot serve as a gate, and a gate that arrives red will be turned off rather than fixed.
 
-- **Easier:** the upstream patch surface stays minimal — this decision adds nothing to the 58-file
-  stack, and therefore nothing to the per-re-pin rebase cost. Contract coverage stays in one place,
-  `roamux/test`, where CI runs it and where it is expressed in Roamux's own terms.
+- **Easier:** the upstream patch surface stays minimal — this decision adds nothing to the patch
+  stack (58 patches when this was accepted; the current list is the inventory in
+  `roamux/patches/README.md`), and therefore nothing to the per-re-pin rebase cost. Contract
+  coverage stays in one place, `roamux/test`, where CI runs it and where it is expressed in
+  Roamux's own terms.
 
 - **Harder:** `interactive_ui_tests` is deliberately left non-green under the current stack — until
   these cases are reconciled under the re-entry condition above — so anyone running it locally must
